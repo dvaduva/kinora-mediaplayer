@@ -1,0 +1,15 @@
+{
+  "name": "kinora",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]
+  },
+  "scripts": {
+    "dev": "corepack pnpm --parallel --filter @kinora/server --filter @kinora/web dev",
+    "start": "corepack pnpm --filter @kinora/server start",
+    "test": "corepack pnpm --filter @kinora/server test",
+    "typecheck": "corepack pnpm --filter @kinora/server --filter @kinora/web typecheck",
+    "build": "corepack pnpm --filter @kinora/web build"
+  }
+}
