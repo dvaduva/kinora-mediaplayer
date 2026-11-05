@@ -18,6 +18,7 @@ export function PlayerPage() {
     started: false,
     status: null,
   });
+  const [captions, setCaptions] = useState(false);
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
   const resumed = useRef(false);
   const subtitleDirty = useRef(false);
@@ -29,6 +30,7 @@ export function PlayerPage() {
     if (!fileId) return;
     resumed.current = false;
     subtitleDirty.current = false;
+    setCaptions(false);
     api<PlaybackView>(`/api/playback/${fileId}`)
       .then((data) => {
         setView(data);
@@ -72,15 +74,10 @@ export function PlayerPage() {
   useEffect(() => {
     const media = mediaRef.current;
     if (!media || !view || view.fileId !== fileId) return;
-    const textTracks = view.subtitles.filter((track) => track.textBased);
     const apply = () => {
       const tracks = media instanceof HTMLVideoElement ? media.textTracks : null;
-      if (!tracks) return;
-      for (let index = 0; index < tracks.length; index += 1) {
-        const track = tracks[index];
-        if (!track) continue;
-        track.mode = textTracks[index]?.id === selected ? "showing" : "disabled";
-      }
+      const track = tracks?.[0];
+      if (track) track.mode = selected ? "showing" : "disabled";
     };
     const resume = () => {
       if (resumed.current || view.plan.mode !== "direct") return;
@@ -113,7 +110,7 @@ export function PlayerPage() {
       media.removeEventListener("pause", send);
       window.clearInterval(timer);
     };
-  }, [view, selected, fileId, play.started]);
+  }, [view, selected, fileId, play.started, captions]);
 
   useEffect(() => {
     if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
@@ -135,12 +132,26 @@ export function PlayerPage() {
       lowLatencyMode: false,
       maxLiveSyncPlaybackRate: 1,
       backBufferLength: Number.POSITIVE_INFINITY,
+      // EVENT playlists are live. A long sync window stays on the resume point instead of the transcode edge.
+      liveSyncDurationCount: 1_000_000,
     });
     hls.loadSource(src);
     hls.attachMedia(media);
+    let corrections = 0;
+    const onSeeking = () => {
+      if (corrections >= 3 || media.currentTime <= start + 8) return;
+      corrections += 1;
+      media.currentTime = start;
+    };
+    const onPlaying = () => {
+      corrections = 3;
+      setCaptions(true);
+    };
     const onParsed = () => {
       void media.play().catch(() => undefined);
     };
+    media.addEventListener("seeking", onSeeking);
+    media.addEventListener("playing", onPlaying);
     hls.on(Hls.Events.MANIFEST_PARSED, onParsed);
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal) return;
@@ -156,13 +167,19 @@ export function PlayerPage() {
         },
       }));
     });
-    return () => hls.destroy();
+    return () => {
+      media.removeEventListener("seeking", onSeeking);
+      media.removeEventListener("playing", onPlaying);
+      hls.destroy();
+    };
   }, [play.started, fileId, view]);
 
   if (error) return <p className="danger">{error}</p>;
   if (!view) return <p className="muted">{t.play}</p>;
   const reason = reasonText(view, t.remux, t.transcode, t.missing);
   const textTracks = view.subtitles.filter((track) => track.textBased);
+  const caption = textTracks.find((track) => track.id === selected);
+  const showCaption = Boolean(caption && (!preparing || captions));
   const showMedia = !preparing || play.started;
   const percent = play.status?.progress == null ? "" : `${Math.round(play.status.progress * 100)}%`;
   return (
@@ -191,9 +208,9 @@ export function PlayerPage() {
                 playsInline
                 crossOrigin="anonymous"
               >
-                {textTracks.map((track) => (
-                  <track key={track.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${track.id}`} srcLang={track.language ?? undefined} label={subtitleLabel(track, locale)} />
-                ))}
+                {showCaption && caption ? (
+                  <track key={caption.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${caption.id}`} srcLang={caption.language ?? undefined} label={subtitleLabel(caption, locale)} default />
+                ) : null}
               </video>
             ) : null}
           </>

@@ -12,8 +12,10 @@ import {
   ensureTranscode,
   hlsArgs,
   parseClock,
+  playlistCursor,
   playlistForClient,
   playlistHasSegment,
+  prepareAppendPlaylist,
 } from "./transcode.js";
 
 test("parses ffmpeg progress clocks", () => {
@@ -43,8 +45,22 @@ test("copies H.264 and encodes other audio for the browser", () => {
   assert.equal(encoded.includes("-c:v") && encoded[encoded.indexOf("-c:v") + 1], "copy");
   assert.ok(encoded.includes("aac"));
   assert.equal(encoded[encoded.indexOf("-hls_list_size") + 1], "0");
+  assert.equal(encoded.includes("-ss"), false);
   const copied = hlsArgs("movie.mkv", "C:\\cache", true);
   assert.equal(copied[copied.indexOf("-c:a") + 1], "copy");
+});
+
+test("continues a partial transcode after the segments already written", () => {
+  const cursor = playlistCursor("#EXTM3U\n#EXTINF:4.5,\nseg00000.ts\n#EXTINF:4,\nseg00001.ts\n");
+  assert.deepEqual(cursor, { seconds: 8.5, count: 2, nextNumber: 2 });
+  const prepared = prepareAppendPlaylist("#EXTM3U\n#EXTINF:4,\nseg00000.ts\n#EXT-X-ENDLIST\n");
+  assert.match(prepared, /#EXT-X-DISCONTINUITY/);
+  assert.equal(prepared.includes("#EXT-X-ENDLIST"), false);
+  const resumed = hlsArgs("movie.mkv", "C:\\cache", false, { seek: 8.5, startNumber: 2 });
+  assert.equal(resumed[resumed.indexOf("-ss") + 1], "8.500");
+  assert.ok(resumed.indexOf("-ss") < resumed.indexOf("-i"));
+  assert.match(resumed[resumed.indexOf("-hls_flags") + 1], /append_list/);
+  assert.equal(resumed[resumed.indexOf("-start_number") + 1], "2");
 });
 
 test("builds a browser playlist from H.264 and E-AC-3", { timeout: 60_000 }, async () => {

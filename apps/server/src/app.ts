@@ -33,7 +33,7 @@ import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError }
 import { repoRoot } from "./paths.js";
 import { contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
-import { ensureTranscode, lookupTranscode, playlistForClient } from "./playback/transcode.js";
+import { ensureTranscode, hasOtherTranscode, lookupTranscode, playlistForClient } from "./playback/transcode.js";
 import { detectTools, tools } from "./process.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
 import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint } from "./settings.js";
@@ -65,11 +65,24 @@ function describePlayback(fileId: string) {
   return { row, filePath, view };
 }
 
+async function waitForFile(file: string, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      if (fs.statSync(file).size > 0) return true;
+    } catch {
+      // The encoder publishes the file when the segment is complete.
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+}
+
 async function beginTranscode(fileId: string, restartError: boolean) {
   const described = describePlayback(fileId);
   if (!described || !described.view.plan.available || described.view.plan.mode === "direct") return null;
   const stat = fs.statSync(described.filePath);
-  return ensureTranscode(
+  const opened = await ensureTranscode(
     {
       fileId,
       sourcePath: described.filePath,
@@ -80,6 +93,7 @@ async function beginTranscode(fileId: string, restartError: boolean) {
     },
     restartError,
   );
+  return opened;
 }
 
 export async function buildApp() {
@@ -313,15 +327,11 @@ export async function buildApp() {
 
   app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => {
     const fileId = (request.params as { fileId: string }).fileId;
-    const opened = lookupTranscode(fileId, false) ?? (await beginTranscode(fileId, false));
+    const opened = lookupTranscode(fileId, false) ?? (hasOtherTranscode(fileId) ? null : await beginTranscode(fileId, false));
     if (!opened) return reply.code(404).send({ error: "not_found" });
     const playlist = path.join(opened.dir, "index.m3u8");
-    let contents = "";
-    try {
-      contents = fs.readFileSync(playlist, "utf8");
-    } catch {
-      return reply.code(404).send({ error: "not_ready" });
-    }
+    if (!(await waitForFile(playlist))) return reply.code(404).send({ error: "not_ready" });
+    const contents = fs.readFileSync(playlist, "utf8");
     reply.type("application/vnd.apple.mpegurl");
     reply.header("Cache-Control", "no-cache");
     return reply.send(playlistForClient(contents));
@@ -330,13 +340,39 @@ export async function buildApp() {
   app.get("/api/stream/:fileId/:segment", async (request, reply) => {
     const params = request.params as { fileId: string; segment: string };
     if (!/^seg\d+\.ts$/.test(params.segment)) return reply.code(404).send({ error: "not_found" });
-    const opened = lookupTranscode(params.fileId, false) ?? (await beginTranscode(params.fileId, false));
+    const opened = lookupTranscode(params.fileId, false) ?? (hasOtherTranscode(params.fileId) ? null : await beginTranscode(params.fileId, false));
     if (!opened) return reply.code(404).send({ error: "not_found" });
     const file = path.join(opened.dir, params.segment);
-    if (!fs.existsSync(file)) return reply.code(404).send({ error: "not_ready" });
-    reply.type("video/mp2t");
-    reply.header("Cache-Control", "public, max-age=86400");
-    return reply.send(fs.createReadStream(file));
+    if (!(await waitForFile(file, 1000))) return reply.code(404).send({ error: "not_ready" });
+    const bytes = fs.readFileSync(file);
+    const range = typeof request.headers.range === "string" ? request.headers.range : undefined;
+    let status = 200;
+    let start = 0;
+    let end = bytes.length - 1;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (!match) return reply.code(416).send();
+      start = match[1] ? Number(match[1]) : 0;
+      end = match[2] ? Number(match[2]) : bytes.length - 1;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= bytes.length) {
+        reply.header("Content-Range", `bytes */${bytes.length}`);
+        return reply.code(416).send();
+      }
+      end = Math.min(end, bytes.length - 1);
+      status = 206;
+    }
+    const slice = bytes.subarray(start, end + 1);
+    const headers: Record<string, string | number> = {
+      "Content-Type": "video/mp2t",
+      "Content-Length": slice.length,
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "public, max-age=86400",
+    };
+    if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${bytes.length}`;
+    reply.hijack();
+    reply.raw.socket?.resume();
+    reply.raw.writeHead(status, headers);
+    reply.raw.end(slice);
   });
 
   app.get("/api/stream/:fileId", async (request, reply) => {
