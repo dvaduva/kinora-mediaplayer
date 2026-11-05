@@ -2,10 +2,12 @@ import { buildApp } from "./app.js";
 import { db } from "./db/index.js";
 import { libraries } from "./db/schema.js";
 import { detectTools } from "./process.js";
+import { stopOrphanEncoders } from "./playback/transcode.js";
 import { restartWatches, startScan } from "./scan.js";
 import { getSetting, isLocalHost, seedProfile } from "./settings.js";
 
 detectTools();
+stopOrphanEncoders();
 seedProfile();
 
 const host = getSetting("bindHost") ?? "127.0.0.1";

@@ -6,6 +6,7 @@ export interface PlanInput {
   videoCodec: string | null;
   audioCodec: string | null;
   kind: "video" | "audio";
+  ffmpeg?: boolean;
 }
 
 const AUDIO_DIRECT = new Set(["mp3", "flac", "aac", "m4a", "mp4", "ogg", "opus", "wav", "oga", "aiff"]);
@@ -23,6 +24,7 @@ export function playbackPlan(input: PlanInput): PlaybackPlan {
   const video = (input.videoCodec ?? "").toLowerCase();
   const audio = (input.audioCodec ?? "").toLowerCase();
   const base = { container: container || null, videoCodec: input.videoCodec, audioCodec: input.audioCodec };
+  const ffmpeg = input.ffmpeg === true;
   if (input.missing) return { mode: "direct", available: false, reasonCode: "missing", ...base };
   if (input.kind === "audio") {
     const available = AUDIO_DIRECT.has(container);
@@ -44,7 +46,12 @@ export function playbackPlan(input: PlanInput): PlaybackPlan {
       (video === "vp9" && container === "webm" && webAudio));
   if (direct) return { mode: "direct", available: true, reasonCode: "ok", ...base };
 
-  const remux = (isH264(video) && aacFamily(audio)) || (video === "vp9" && (!audio || audio === "opus" || audio === "vorbis"));
+  if (isH264(video)) {
+    if (aacFamily(audio)) return { mode: "remux", available: ffmpeg, reasonCode: "remux_required", ...base };
+    return { mode: "transcode", available: ffmpeg, reasonCode: "transcode_required", ...base };
+  }
+
+  const remux = video === "vp9" && (!audio || audio === "opus" || audio === "vorbis");
   if (remux) return { mode: "remux", available: false, reasonCode: "remux_required", ...base };
   return { mode: "transcode", available: false, reasonCode: "transcode_required", ...base };
 }

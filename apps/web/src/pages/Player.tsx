@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { PlaybackView } from "@kinora/shared";
+import Hls from "hls.js";
+import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
+import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
 import { codecLabel, subtitleLabel } from "../media";
@@ -11,13 +13,22 @@ export function PlayerPage() {
   const [view, setView] = useState<PlaybackView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [play, setPlay] = useState<{ id: string | undefined; started: boolean; status: TranscodeStatus | null }>({
+    id: undefined,
+    started: false,
+    status: null,
+  });
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
   const resumed = useRef(false);
   const subtitleDirty = useRef(false);
+  const copyRef = useRef(t);
+  copyRef.current = t;
+  if (play.id !== fileId) setPlay({ id: fileId, started: false, status: null });
 
   useEffect(() => {
     if (!fileId) return;
     resumed.current = false;
+    subtitleDirty.current = false;
     api<PlaybackView>(`/api/playback/${fileId}`)
       .then((data) => {
         setView(data);
@@ -27,9 +38,40 @@ export function PlayerPage() {
       .catch((reason: Error) => setError(reason.message));
   }, [fileId]);
 
+  const preparing = Boolean(view && view.plan.available && view.plan.mode !== "direct");
+
+  useEffect(() => {
+    if (!fileId || !view || view.fileId !== fileId || !preparing || play.started || play.status?.state === "error") return;
+    let cancel = false;
+    const tick = () => {
+      api<TranscodeStatus>(`/api/stream/${fileId}/status`)
+        .then((data) => {
+          if (cancel) return;
+          setPlay((current) =>
+            current.id !== fileId
+              ? current
+              : {
+                  id: fileId,
+                  status: data,
+                  started: current.started || transcodePlaybackReady(data, view.resumeSeconds),
+                },
+          );
+        })
+        .catch((reason: Error) => {
+          if (!cancel) setError(reason.message);
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => {
+      cancel = true;
+      window.clearInterval(timer);
+    };
+  }, [fileId, view, preparing, play.started, play.status?.state]);
+
   useEffect(() => {
     const media = mediaRef.current;
-    if (!media || !view) return;
+    if (!media || !view || view.fileId !== fileId) return;
     const textTracks = view.subtitles.filter((track) => track.textBased);
     const apply = () => {
       const tracks = media instanceof HTMLVideoElement ? media.textTracks : null;
@@ -41,7 +83,7 @@ export function PlayerPage() {
       }
     };
     const resume = () => {
-      if (resumed.current) return;
+      if (resumed.current || view.plan.mode !== "direct") return;
       resumed.current = true;
       if (view.resumeSeconds > 5 && (!media.duration || view.resumeSeconds < media.duration - 5)) {
         media.currentTime = view.resumeSeconds;
@@ -49,13 +91,14 @@ export function PlayerPage() {
       apply();
     };
     const send = () => {
-      if (!fileId || !media.duration) return;
+      const reportedDuration = view.plan.mode === "direct" ? media.duration : (view.duration ?? media.duration);
+      if (!fileId || !reportedDuration || !Number.isFinite(reportedDuration) || !Number.isFinite(media.currentTime)) return;
       void api("/api/playback/progress", {
         method: "POST",
         body: JSON.stringify({
           fileId,
           position: media.currentTime,
-          duration: media.duration,
+          duration: reportedDuration,
           subtitleChoice: subtitleDirty.current ? selected ?? "off" : view.selectedSubtitleId,
         }),
       }).catch(() => undefined);
@@ -70,12 +113,58 @@ export function PlayerPage() {
       media.removeEventListener("pause", send);
       window.clearInterval(timer);
     };
-  }, [view, selected, fileId]);
+  }, [view, selected, fileId, play.started]);
+
+  useEffect(() => {
+    if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
+    const media = mediaRef.current;
+    if (!(media instanceof HTMLVideoElement)) return;
+    const src = `/api/stream/${fileId}/index.m3u8`;
+    const start = view.resumeSeconds > 5 ? view.resumeSeconds : 0;
+    if (!Hls.isSupported()) {
+      if (media.canPlayType("application/vnd.apple.mpegurl")) {
+        media.src = src;
+        return;
+      }
+      setError(copyRef.current.playbackFailed);
+      return;
+    }
+    const hls = new Hls({
+      enableWorker: false,
+      startPosition: start,
+      lowLatencyMode: false,
+      maxLiveSyncPlaybackRate: 1,
+      backBufferLength: Number.POSITIVE_INFINITY,
+    });
+    hls.loadSource(src);
+    hls.attachMedia(media);
+    const onParsed = () => {
+      void media.play().catch(() => undefined);
+    };
+    hls.on(Hls.Events.MANIFEST_PARSED, onParsed);
+    hls.on(Hls.Events.ERROR, (_event, data) => {
+      if (!data.fatal) return;
+      setPlay((current) => ({
+        ...current,
+        status: {
+          state: "error",
+          seconds: 0,
+          duration: view.duration,
+          progress: null,
+          playlist: true,
+          error: copyRef.current.playbackFailed,
+        },
+      }));
+    });
+    return () => hls.destroy();
+  }, [play.started, fileId, view]);
 
   if (error) return <p className="danger">{error}</p>;
   if (!view) return <p className="muted">{t.play}</p>;
   const reason = reasonText(view, t.remux, t.transcode, t.missing);
   const textTracks = view.subtitles.filter((track) => track.textBased);
+  const showMedia = !preparing || play.started;
+  const percent = play.status?.progress == null ? "" : `${Math.round(play.status.progress * 100)}%`;
   return (
     <article className="player-stage">
       <p className="crumb"><Link to="/">{t.home}</Link></p>
@@ -85,11 +174,29 @@ export function PlayerPage() {
         view.kind === "track" ? (
           <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={`/api/stream/${view.fileId}`} controls autoPlay />
         ) : (
-          <video ref={mediaRef as RefObject<HTMLVideoElement>} src={`/api/stream/${view.fileId}`} controls autoPlay crossOrigin="anonymous">
-            {textTracks.map((track) => (
-              <track key={track.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${track.id}`} srcLang={track.language ?? undefined} label={subtitleLabel(track, locale)} />
-            ))}
-          </video>
+          <>
+            {preparing && !play.started && play.status?.state !== "error" ? (
+              <div className="prepare">
+                <p>{t.preparing.replace("{progress}", percent).trim()}</p>
+                {play.status?.progress != null ? <progress value={play.status.progress} max={1} /> : null}
+              </div>
+            ) : null}
+            {play.status?.state === "error" ? <p className="danger">{play.status.error || t.transcodeFailed}</p> : null}
+            {showMedia ? (
+              <video
+                ref={mediaRef as RefObject<HTMLVideoElement>}
+                src={preparing ? undefined : `/api/stream/${view.fileId}`}
+                controls
+                autoPlay={!preparing}
+                playsInline
+                crossOrigin="anonymous"
+              >
+                {textTracks.map((track) => (
+                  <track key={track.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${track.id}`} srcLang={track.language ?? undefined} label={subtitleLabel(track, locale)} />
+                ))}
+              </video>
+            ) : null}
+          </>
         )
       ) : (
         <div className="unsupported">

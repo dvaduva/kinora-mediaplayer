@@ -33,7 +33,8 @@ import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError }
 import { repoRoot } from "./paths.js";
 import { contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
-import { tools } from "./process.js";
+import { ensureTranscode, lookupTranscode, playlistForClient } from "./playback/transcode.js";
+import { detectTools, tools } from "./process.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
 import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint } from "./settings.js";
 import { profiles } from "./db/schema.js";
@@ -47,6 +48,38 @@ function sameToken(left: string, right: string) {
 
 function asRecord(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function refreshTools() {
+  if (!tools.ffmpeg || !tools.ffprobe) detectTools();
+}
+
+function describePlayback(fileId: string) {
+  refreshTools();
+  const row = db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId)).get();
+  if (!row) return null;
+  const filePath = resolveMediaPath(row);
+  if (!filePath) return null;
+  const view = playbackView(fileId);
+  if (!view) return null;
+  return { row, filePath, view };
+}
+
+async function beginTranscode(fileId: string, restartError: boolean) {
+  const described = describePlayback(fileId);
+  if (!described || !described.view.plan.available || described.view.plan.mode === "direct") return null;
+  const stat = fs.statSync(described.filePath);
+  return ensureTranscode(
+    {
+      fileId,
+      sourcePath: described.filePath,
+      size: stat.size,
+      mtime: Math.round(stat.mtimeMs),
+      duration: described.row.duration,
+      copyAudio: described.view.plan.mode === "remux",
+    },
+    restartError,
+  );
 }
 
 export async function buildApp() {
@@ -226,7 +259,13 @@ export async function buildApp() {
   });
 
   app.get("/api/playback/:fileId", async (request, reply) => {
-    return playbackView((request.params as { fileId: string }).fileId) ?? reply.code(404).send({ error: "not_found" });
+    const fileId = (request.params as { fileId: string }).fileId;
+    const described = describePlayback(fileId);
+    if (!described) return reply.code(404).send({ error: "not_found" });
+    if (described.view.plan.available && described.view.plan.mode !== "direct") {
+      void beginTranscode(fileId, true).catch(() => undefined);
+    }
+    return described.view;
   });
 
   app.post("/api/playback/progress", async (request, reply) => {
@@ -240,14 +279,76 @@ export async function buildApp() {
     return { ok: true };
   });
 
+  app.get("/api/stream/:fileId/status", async (request, reply) => {
+    const fileId = (request.params as { fileId: string }).fileId;
+    reply.header("Cache-Control", "no-store");
+    const cached = lookupTranscode(fileId);
+    if (cached) return cached.status;
+    const described = describePlayback(fileId);
+    if (!described) return reply.code(404).send({ error: "not_found" });
+    if (!described.view.plan.available) {
+      return {
+        state: "error",
+        seconds: 0,
+        duration: described.view.duration,
+        progress: null,
+        playlist: false,
+        error: described.view.plan.reasonCode,
+      };
+    }
+    if (described.view.plan.mode === "direct") {
+      return {
+        state: "ready",
+        seconds: described.view.duration ?? 0,
+        duration: described.view.duration,
+        progress: 1,
+        playlist: false,
+        error: null,
+      };
+    }
+    const opened = await beginTranscode(fileId, false);
+    if (!opened) return reply.code(404).send({ error: "not_found" });
+    return opened.status;
+  });
+
+  app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => {
+    const fileId = (request.params as { fileId: string }).fileId;
+    const opened = lookupTranscode(fileId, false) ?? (await beginTranscode(fileId, false));
+    if (!opened) return reply.code(404).send({ error: "not_found" });
+    const playlist = path.join(opened.dir, "index.m3u8");
+    let contents = "";
+    try {
+      contents = fs.readFileSync(playlist, "utf8");
+    } catch {
+      return reply.code(404).send({ error: "not_ready" });
+    }
+    reply.type("application/vnd.apple.mpegurl");
+    reply.header("Cache-Control", "no-cache");
+    return reply.send(playlistForClient(contents));
+  });
+
+  app.get("/api/stream/:fileId/:segment", async (request, reply) => {
+    const params = request.params as { fileId: string; segment: string };
+    if (!/^seg\d+\.ts$/.test(params.segment)) return reply.code(404).send({ error: "not_found" });
+    const opened = lookupTranscode(params.fileId, false) ?? (await beginTranscode(params.fileId, false));
+    if (!opened) return reply.code(404).send({ error: "not_found" });
+    const file = path.join(opened.dir, params.segment);
+    if (!fs.existsSync(file)) return reply.code(404).send({ error: "not_ready" });
+    reply.type("video/mp2t");
+    reply.header("Cache-Control", "public, max-age=86400");
+    return reply.send(fs.createReadStream(file));
+  });
+
   app.get("/api/stream/:fileId", async (request, reply) => {
     const fileId = (request.params as { fileId: string }).fileId;
     const row = db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId)).get();
     if (!row) return reply.code(404).send({ error: "not_found" });
     const filePath = resolveMediaPath(row);
     if (!filePath) return reply.code(404).send({ error: "not_found" });
+    refreshTools();
     const view = playbackView(fileId);
     if (!view?.plan.available) return reply.code(415).send({ error: view?.plan.reasonCode ?? "missing" });
+    if (view.plan.mode !== "direct") return reply.code(415).send({ error: view.plan.reasonCode });
     const stat = fs.statSync(filePath);
     const type = contentTypeFor(row.container, row.trackId ? "audio" : "video");
     reply.header("Accept-Ranges", "bytes");

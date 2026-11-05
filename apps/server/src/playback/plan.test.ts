@@ -21,9 +21,31 @@ test("asks for a transcode for HEVC and for AC-3", () => {
     "transcode_required",
   );
   assert.equal(
-    playbackPlan({ kind: "video", container: "mkv", videoCodec: "h264", audioCodec: "ac3" }).reasonCode,
-    "transcode_required",
+    playbackPlan({ kind: "video", container: "mkv", videoCodec: "h264", audioCodec: "ac3" }).available,
+    false,
   );
+});
+
+test("converts H.264 with E-AC-3 when ffmpeg is available", () => {
+  const plan = playbackPlan({ kind: "video", container: "mkv", videoCodec: "h264", audioCodec: "eac3", ffmpeg: true });
+  assert.equal(plan.mode, "transcode");
+  assert.equal(plan.available, true);
+  assert.equal(
+    playbackPlan({ kind: "video", container: "mp4", videoCodec: "h264", audioCodec: "eac3" }).available,
+    false,
+  );
+});
+
+test("remuxes H.264 and AAC in MKV when ffmpeg is available", () => {
+  const plan = playbackPlan({ kind: "video", container: "mkv", videoCodec: "h264", audioCodec: "aac", ffmpeg: true });
+  assert.equal(plan.mode, "remux");
+  assert.equal(plan.available, true);
+});
+
+test("keeps HEVC unavailable even with ffmpeg", () => {
+  const plan = playbackPlan({ kind: "video", container: "mp4", videoCodec: "hevc", audioCodec: "aac", ffmpeg: true });
+  assert.equal(plan.available, false);
+  assert.equal(plan.mode, "transcode");
 });
 
 test("plays common audio files directly", () => {

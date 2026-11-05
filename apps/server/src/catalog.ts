@@ -89,6 +89,7 @@ function versionOf(file: typeof mediaFiles.$inferSelect): MediaVersion {
     container: file.container,
     videoCodec: file.videoCodec,
     audioCodec: audio[0]?.codec ?? null,
+    ffmpeg: tools.ffmpeg,
   });
   return {
     fileId: file.id,

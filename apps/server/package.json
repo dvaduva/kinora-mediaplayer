@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/parse/names.test.ts src/metadata/trailer.test.ts src/playback/plan.test.ts src/playback/srt.test.ts"
+    "test": "tsx --test src/parse/names.test.ts src/metadata/trailer.test.ts src/playback/plan.test.ts src/playback/srt.test.ts src/playback/transcode.test.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

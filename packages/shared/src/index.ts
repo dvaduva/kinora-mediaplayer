@@ -235,6 +235,25 @@ export interface MusicCandidate {
   year: number | null;
 }
 
+export interface TranscodeStatus {
+  state: "running" | "ready" | "error";
+  seconds: number;
+  duration: number | null;
+  progress: number | null;
+  playlist: boolean;
+  error: string | null;
+}
+
+export function transcodePlaybackReady(
+  status: Pick<TranscodeStatus, "state" | "seconds" | "playlist">,
+  resumeSeconds: number,
+) {
+  if (!status.playlist || status.state === "error") return false;
+  if (status.state === "ready") return true;
+  if (resumeSeconds <= 5) return true;
+  return status.seconds >= resumeSeconds + 4;
+}
+
 export interface PlaybackView {
   fileId: string;
   title: string;

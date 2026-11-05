@@ -15,6 +15,7 @@ export function ensureDataDirs() {
     path.join(dataDir, "cache", "images"),
     path.join(dataDir, "cache", "subtitles"),
     path.join(dataDir, "cache", "covers"),
+    path.join(dataDir, "cache", "transcode"),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
