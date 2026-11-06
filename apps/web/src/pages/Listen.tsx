@@ -81,14 +81,22 @@ export function IdentifyPage() {
   );
 }
 
+function identifyQuery(item: IdentifyItem) {
+  if (item.kind === "album") return item.title;
+  return item.year ? `${item.title} ${item.year}` : item.title;
+}
+
 function IdentifyRow(props: { item: IdentifyItem; onDone: (id: string) => void }) {
   const { t } = useLocale();
-  const [query, setQuery] = useState(props.item.title);
+  const [query, setQuery] = useState(() => identifyQuery(props.item));
   const [movies, setMovies] = useState<TmdbCandidate[]>([]);
   const [releases, setReleases] = useState<MusicCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [choosing, setChoosing] = useState<number | string | null>(null);
   async function lookup() {
     setError(null);
+    setSearching(true);
     try {
       if (props.item.kind === "album") {
         const artist = props.item.hint && props.item.hint !== "Necunoscut" ? props.item.hint : query;
@@ -109,39 +117,73 @@ function IdentifyRow(props: { item: IdentifyItem; onDone: (id: string) => void }
     } catch (reason) {
       const code = reason instanceof Error ? reason.message : "error";
       setError(code === "tmdb_not_configured" ? t.tmdbMissing : code);
+    } finally {
+      setSearching(false);
     }
   }
   async function chooseMovie(tmdbId: number) {
-    const path = props.item.kind === "series" ? `/api/series/${props.item.id}/match` : `/api/movies/${props.item.id}/match`;
-    await api(path, { method: "POST", body: JSON.stringify({ tmdbId }) });
-    props.onDone(props.item.id);
+    if (choosing != null) return;
+    setError(null);
+    setChoosing(tmdbId);
+    try {
+      const path = props.item.kind === "series" ? `/api/series/${props.item.id}/match` : `/api/movies/${props.item.id}/match`;
+      await api(path, { method: "POST", body: JSON.stringify({ tmdbId }) });
+      props.onDone(props.item.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "error";
+      setError(code === "tmdb_not_configured" ? t.tmdbMissing : code);
+      setChoosing(null);
+    }
   }
   async function chooseAlbum(mbid: string) {
-    await api(`/api/albums/${props.item.id}/match`, { method: "POST", body: JSON.stringify({ mbid }) });
-    props.onDone(props.item.id);
+    if (choosing != null) return;
+    setError(null);
+    setChoosing(mbid);
+    try {
+      await api(`/api/albums/${props.item.id}/match`, { method: "POST", body: JSON.stringify({ mbid }) });
+      props.onDone(props.item.id);
+    } catch (reason) {
+      const code = reason instanceof Error ? reason.message : "error";
+      setError(code);
+      setChoosing(null);
+    }
   }
   return (
     <section className="library-block">
       <h2>{props.item.title} {props.item.year ? <span className="year">{props.item.year}</span> : null}</h2>
       {props.item.hint ? <p className="muted">{props.item.hint}</p> : null}
       <div className="inline-form">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t.lookup} />
-        <button className="text-button" type="button" onClick={() => void lookup()}>{t.lookup}</button>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t.lookup} disabled={searching || choosing != null} />
+        <button className="text-button" type="button" onClick={() => void lookup()} disabled={searching || choosing != null}>
+          {searching ? t.matching : t.lookup}
+        </button>
       </div>
       {error ? <p className="danger">{error}</p> : null}
       <div className="candidates">
         {movies.map((movie) => (
-          <button className="candidate" type="button" key={movie.tmdbId} onClick={() => void chooseMovie(movie.tmdbId)}>
-            {movie.posterPath ? <img src={imageUrl(movie.posterPath, "w185") ?? ""} alt="" /> : <span />}
+          <button
+            className="candidate"
+            type="button"
+            key={movie.tmdbId}
+            disabled={choosing != null}
+            onClick={() => void chooseMovie(movie.tmdbId)}
+          >
+            {movie.posterPath ? <img src={imageUrl(movie.posterPath, "w185") ?? ""} alt="" loading="lazy" /> : <span />}
             <span>{movie.title} {movie.year ? `(${movie.year})` : ""}</span>
-            <span>{t.choose}</span>
+            <span>{choosing === movie.tmdbId ? t.matching : t.choose}</span>
           </button>
         ))}
         {releases.map((release) => (
-          <button className="candidate" type="button" key={release.mbid} onClick={() => void chooseAlbum(release.mbid)}>
+          <button
+            className="candidate"
+            type="button"
+            key={release.mbid}
+            disabled={choosing != null}
+            onClick={() => void chooseAlbum(release.mbid)}
+          >
             <span />
             <span>{release.artist} — {release.title}</span>
-            <span>{t.choose}</span>
+            <span>{choosing === release.mbid ? t.matching : t.choose}</span>
           </button>
         ))}
       </div>

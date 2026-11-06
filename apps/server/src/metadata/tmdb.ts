@@ -9,7 +9,7 @@ import { createGate } from "./gate.js";
 import { downloadTmdbImages } from "./images.js";
 import { pickTrailer, type TrailerCandidate } from "./trailer.js";
 
-const wait = createGate(250);
+const wait = createGate(80);
 
 export class TmdbNotConfiguredError extends Error {
   constructor() {
@@ -33,15 +33,38 @@ function list(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-async function tmdbGet(urlPath: string) {
+/** Prefer "Arrival 2016" style queries — TMDB ranks them much tighter than title alone. */
+export function withYearQuery(query: string, year: number | null) {
+  const trimmed = query.trim().replace(/\s+/g, " ");
+  if (year == null) return trimmed;
+  if (new RegExp(`\\b${year}\\b`).test(trimmed)) return trimmed;
+  return `${trimmed} ${year}`;
+}
+
+async function tmdbGet(urlPath: string, attempt = 0): Promise<unknown> {
   const token = getSetting("tmdbReadToken");
   if (!token) throw new TmdbNotConfiguredError();
   const cacheFile = path.join(dataDir, "cache", "tmdb", `${createHash("sha1").update(urlPath).digest("hex")}.json`);
   if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
   await wait();
-  const response = await fetch(`https://api.themoviedb.org/3${urlPath}`, {
-    headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`https://api.themoviedb.org/3${urlPath}`, {
+      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+  } catch (error) {
+    if (attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+      return tmdbGet(urlPath, attempt + 1);
+    }
+    throw error;
+  }
+  if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 400 * (attempt + 1);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return tmdbGet(urlPath, attempt + 1);
+  }
   if (!response.ok) throw new Error(`tmdb_${response.status}`);
   const body = (await response.json()) as unknown;
   fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
@@ -120,14 +143,17 @@ export function chooseMatch(title: string, year: number | null, hits: TmdbHit[])
 }
 
 export async function searchMovies(query: string, year: number | null) {
-  const params = new URLSearchParams({ query, language: "ro-RO", include_adult: "false" });
-  if (year) params.set("primary_release_year", String(year));
+  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO", include_adult: "false" });
+  if (year) {
+    params.set("primary_release_year", String(year));
+    params.set("year", String(year));
+  }
   const body = record(await tmdbGet(`/search/movie?${params}`));
   return list(body?.results).map(movieHit).filter((hit): hit is TmdbHit => hit != null);
 }
 
 export async function searchSeries(query: string, year: number | null) {
-  const params = new URLSearchParams({ query, language: "ro-RO" });
+  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO" });
   if (year) params.set("first_air_date_year", String(year));
   const body = record(await tmdbGet(`/search/tv?${params}`));
   return list(body?.results).map(seriesHit).filter((hit): hit is TmdbHit => hit != null);
@@ -144,8 +170,11 @@ export function toCandidates(hits: TmdbHit[], posters: (string | null)[]): TmdbC
 }
 
 export async function searchMovieCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
-  const params = new URLSearchParams({ query, language: "ro-RO", include_adult: "false" });
-  if (year) params.set("primary_release_year", String(year));
+  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO", include_adult: "false" });
+  if (year) {
+    params.set("primary_release_year", String(year));
+    params.set("year", String(year));
+  }
   const body = record(await tmdbGet(`/search/movie?${params}`));
   return list(body?.results)
     .map((item) => {
@@ -159,7 +188,7 @@ export async function searchMovieCandidates(query: string, year: number | null):
 }
 
 export async function searchSeriesCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
-  const params = new URLSearchParams({ query, language: "ro-RO" });
+  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO" });
   if (year) params.set("first_air_date_year", String(year));
   const body = record(await tmdbGet(`/search/tv?${params}`));
   return list(body?.results)
@@ -289,14 +318,14 @@ export interface MovieMetadata {
 }
 
 export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
-  const details = record(
-    await tmdbGet(
-      `/movie/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,release_dates`,
-    ),
-  );
+  const [detailsBody, images, videoBody] = await Promise.all([
+    tmdbGet(`/movie/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,release_dates`),
+    tmdbGet(`/movie/${tmdbId}/images?include_image_language=ro,en,null`),
+    tmdbGet(`/movie/${tmdbId}/videos?include_video_language=ro,en,null`),
+  ]);
+  const details = record(detailsBody);
   if (!details) throw new Error("tmdb_empty");
-  const images = await tmdbGet(`/movie/${tmdbId}/images?include_image_language=ro,en,null`);
-  const videos = videosOf(await tmdbGet(`/movie/${tmdbId}/videos?include_video_language=ro,en,null`));
+  const videos = videosOf(videoBody);
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
@@ -304,9 +333,12 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
   const stills = stillsOf(images);
   const similar = similarOf(details, "title");
   const trailer = pickTrailer(videos);
+  // Poster + backdrop first so match can finish; cast/stills warm the cache in the background.
   await downloadTmdbImages([
     { size: "w342", path: poster },
     { size: "w1280", path: backdropPath },
+  ]);
+  void downloadTmdbImages([
     ...stills.map((item) => ({ size: "w780", path: item })),
     ...cast.map((person) => ({ size: "w185", path: person.profilePath })),
     ...similar.map((item) => ({ size: "w342", path: item.posterPath })),
@@ -357,12 +389,14 @@ export interface SeriesMetadata {
 }
 
 export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
-  const details = record(
-    await tmdbGet(`/tv/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations`),
-  );
+  const [detailsBody, images, videoBody] = await Promise.all([
+    tmdbGet(`/tv/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations`),
+    tmdbGet(`/tv/${tmdbId}/images?include_image_language=ro,en,null`),
+    tmdbGet(`/tv/${tmdbId}/videos?include_video_language=ro,en,null`),
+  ]);
+  const details = record(detailsBody);
   if (!details) throw new Error("tmdb_empty");
-  const images = await tmdbGet(`/tv/${tmdbId}/images?include_image_language=ro,en,null`);
-  const videos = videosOf(await tmdbGet(`/tv/${tmdbId}/videos?include_video_language=ro,en,null`));
+  const videos = videosOf(videoBody);
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
@@ -373,6 +407,8 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
   await downloadTmdbImages([
     { size: "w342", path: poster },
     { size: "w1280", path: backdropPath },
+  ]);
+  void downloadTmdbImages([
     ...cast.map((person) => ({ size: "w185", path: person.profilePath })),
     ...similar.map((item) => ({ size: "w342", path: item.posterPath })),
   ]);
@@ -425,9 +461,7 @@ export async function fetchSeason(tmdbId: number, seasonNumber: number) {
       } satisfies EpisodeMetadata;
     })
     .filter((episode): episode is EpisodeMetadata => episode != null);
-  await downloadTmdbImages([
-    { size: "w342", path: text(body?.poster_path) },
-    ...episodes.map((episode) => ({ size: "w780", path: episode.stillPath })),
-  ]);
+  await downloadTmdbImages([{ size: "w342", path: text(body?.poster_path) }]);
+  void downloadTmdbImages(episodes.map((episode) => ({ size: "w780", path: episode.stillPath })));
   return { name: text(body?.name), overview: text(body?.overview), posterPath: text(body?.poster_path), episodes };
 }

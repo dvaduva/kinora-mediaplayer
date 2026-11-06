@@ -27,7 +27,7 @@ import {
 import { db } from "./db/index.js";
 import { mediaFiles } from "./db/schema.js";
 import { eq } from "drizzle-orm";
-import { cachedImageFile, downloadTmdbImage, isTmdbImagePath } from "./metadata/images.js";
+import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from "./metadata/images.js";
 import { searchReleases } from "./metadata/musicbrainz.js";
 import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
@@ -220,13 +220,20 @@ export async function buildApp() {
   app.post("/api/tmdb/search", async (request, reply) => {
     const body = asRecord(request.body);
     const query = typeof body.query === "string" ? body.query.trim() : "";
-    const year = typeof body.year === "number" ? body.year : null;
+    const yearRaw = body.year;
+    const year =
+      typeof yearRaw === "number" && Number.isFinite(yearRaw)
+        ? yearRaw
+        : typeof yearRaw === "string" && /^\d{4}$/.test(yearRaw.trim())
+          ? Number(yearRaw.trim())
+          : null;
     if (!query) return reply.code(400).send({ error: "bad_query" });
     try {
       const results = body.kind === "series" ? await searchSeriesCandidates(query, year) : await searchMovieCandidates(query, year);
       return { results };
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }
   });
@@ -251,6 +258,7 @@ export async function buildApp() {
       await matchMovie(id, tmdbId);
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }
     return movieDetail(id) ?? reply.code(404).send({ error: "not_found" });
@@ -264,6 +272,7 @@ export async function buildApp() {
       await matchSeries(id, tmdbId);
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }
     return seriesDetail(id) ?? reply.code(404).send({ error: "not_found" });
@@ -438,16 +447,15 @@ export async function buildApp() {
     const imagePath = query.path ?? "";
     const size = query.size && /^[a-z0-9]+$/.test(query.size) ? query.size : "w342";
     if (!isTmdbImagePath(imagePath)) return reply.code(400).send({ error: "bad_path" });
-    try {
-      await downloadTmdbImage(size, imagePath);
-    } catch {
-      // The cached file is checked below.
-    }
     const file = cachedImageFile(size, imagePath);
-    if (!fs.existsSync(file)) return reply.code(404).send({ error: "not_found" });
-    reply.type(imagePath.endsWith(".png") ? "image/png" : "image/jpeg");
-    reply.header("Cache-Control", "private, max-age=86400");
-    return reply.send(fs.createReadStream(file));
+    if (fs.existsSync(file)) {
+      reply.type(imagePath.endsWith(".png") ? "image/png" : "image/jpeg");
+      reply.header("Cache-Control", "private, max-age=86400");
+      return reply.send(fs.createReadStream(file));
+    }
+    // Serve from TMDB immediately; warm the local cache without blocking the poster.
+    void downloadTmdbImage(size, imagePath).catch(() => undefined);
+    return reply.redirect(tmdbCdnUrl(size, imagePath));
   });
 
   app.get("/api/covers/:name", async (request, reply) => {

@@ -122,27 +122,31 @@ export function deleteLibrary(id: string) {
 }
 
 export async function matchMovie(movieId: string, tmdbId: number) {
-  await enqueue(async () => {
-    await enrichMovie(movieId, tmdbId);
-  });
+  // Manual identify must not wait behind a full library scan.
+  await enrichMovie(movieId, tmdbId);
 }
 
 export async function matchSeries(seriesId: string, tmdbId: number) {
-  await enqueue(async () => {
-    await enrichSeries(seriesId, tmdbId);
-    const owned = db.select().from(episodes).where(eq(episodes.seriesId, seriesId)).all();
-    const seasonsPresent = [...new Set(owned.map((episode) => episode.seasonNumber).filter((season) => season > 0))];
-    for (const seasonNumber of seasonsPresent) await applySeason(seriesId, tmdbId, seasonNumber);
-  });
+  await enrichSeries(seriesId, tmdbId);
+  const owned = db.select().from(episodes).where(eq(episodes.seriesId, seriesId)).all();
+  const seasonsPresent = [...new Set(owned.map((episode) => episode.seasonNumber).filter((season) => season > 0))];
+  // Season episode art can finish after the match response.
+  void (async () => {
+    for (const seasonNumber of seasonsPresent) {
+      try {
+        await applySeason(seriesId, tmdbId, seasonNumber);
+      } catch {
+        // Keep the series match even if a season refresh fails.
+      }
+    }
+  })();
 }
 
 export async function matchAlbum(albumId: string, mbid: string) {
-  await enqueue(async () => {
-    const album = db.select().from(albums).where(eq(albums.id, albumId)).get();
-    if (!album) throw new Error("not_found");
-    const cover = album.coverPath ?? (await downloadReleaseCover(mbid, albumId));
-    db.update(albums).set({ mbid, coverPath: cover, matched: true }).where(eq(albums.id, albumId)).run();
-  });
+  const album = db.select().from(albums).where(eq(albums.id, albumId)).get();
+  if (!album) throw new Error("not_found");
+  const cover = album.coverPath ?? (await downloadReleaseCover(mbid, albumId));
+  db.update(albums).set({ mbid, coverPath: cover, matched: true }).where(eq(albums.id, albumId)).run();
 }
 
 export async function restartWatches() {
