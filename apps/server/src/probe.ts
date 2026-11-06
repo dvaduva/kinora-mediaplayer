@@ -1,6 +1,6 @@
 import type { AudioStream } from "@kinora/shared";
 import { languageCode } from "./parse/names.js";
-import { run, tools } from "./process.js";
+import { bins, run, tools } from "./process.js";
 
 export interface ProbeResult {
   duration: number | null;
@@ -37,7 +37,7 @@ interface ProbeStream {
 export async function probeFile(file: string): Promise<ProbeResult | null> {
   if (!tools.ffprobe) return null;
   try {
-    const result = await run("ffprobe", ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", file]);
+    const result = await run(bins.ffprobe, ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", file]);
     if (result.code !== 0) return null;
     const parsed = JSON.parse(result.stdout) as {
       format?: { duration?: string };

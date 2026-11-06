@@ -13,16 +13,27 @@ import { Mark } from "./ui";
 
 export function App() {
   const [setup, setSetup] = useState<AppSetup | null>(null);
+  const [serverDown, setServerDown] = useState(false);
   const [authed, setAuthed] = useState(false);
   useEffect(() => {
     setUnauthorized(() => setAuthed(false));
     api<AppSetup>("/api/setup")
       .then((data) => {
+        setServerDown(false);
         setSetup(data);
         setAuthed(!data.tokenRequired);
       })
-      .catch(() => setSetup({ tokenRequired: false, ffmpeg: false, ffprobe: false }));
+      .catch(() => setServerDown(true));
   }, []);
+  if (serverDown) {
+    return (
+      <LocaleProvider>
+        <main className="gate">
+          <ServerDown />
+        </main>
+      </LocaleProvider>
+    );
+  }
   if (!setup) return null;
   if (setup.tokenRequired && !authed) return <Gate onSuccess={() => setAuthed(true)} />;
   return (
@@ -33,6 +44,16 @@ export function App() {
         </AudioProvider>
       </LocaleProvider>
     </BrowserRouter>
+  );
+}
+
+function ServerDown() {
+  const { t } = useLocale();
+  return (
+    <>
+      <h1>Kinora</h1>
+      <p className="banner">{t.serverDown}</p>
+    </>
   );
 }
 

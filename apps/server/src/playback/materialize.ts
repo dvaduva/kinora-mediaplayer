@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { subtitleAssets } from "../db/schema.js";
 import { dataDir } from "../paths.js";
-import { run, tools } from "../process.js";
+import { bins, run, tools } from "../process.js";
 import { decodeSubtitle, ensureVtt, romanianOrthography, srtToVtt } from "./srt.js";
 
 const TEXT_EXTERNAL = new Set(["srt", "vtt", "subrip"]);
@@ -35,7 +35,7 @@ export async function materializeSubtitle(
     asset.origin === "external" && asset.path
       ? ["-y", "-i", asset.path, "-f", "webvtt", destination]
       : ["-y", "-i", videoPath, "-map", `0:${asset.streamIndex}`, "-f", "webvtt", destination];
-  const result = await run("ffmpeg", args, 60_000);
+  const result = await run(bins.ffmpeg, args, 60_000);
   if (result.code !== 0 || !fs.existsSync(destination)) throw new Error("extract_failed");
   return destination;
 }

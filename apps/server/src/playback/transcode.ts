@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TranscodeStatus } from "@kinora/shared";
 import { dataDir } from "../paths.js";
+import { bins } from "../process.js";
 
 export interface TranscodeRequest {
   fileId: string;
@@ -272,7 +273,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   }
   if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
 
-  const child = spawn("ffmpeg", hlsArgs(input.sourcePath, dir, input.copyAudio, resume), {
+  const child = spawn(bins.ffmpeg, hlsArgs(input.sourcePath, dir, input.copyAudio, resume), {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -114,13 +114,19 @@ export async function buildApp() {
     return reply.code(401).send({ error: "unauthorized" });
   });
 
-  app.get("/api/health", async () => ({ ok: true, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe }));
+  app.get("/api/health", async () => {
+    refreshTools();
+    return { ok: true, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe };
+  });
 
-  app.get("/api/setup", async () => ({
-    tokenRequired: Boolean(getSetting("accessToken")),
-    ffmpeg: tools.ffmpeg,
-    ffprobe: tools.ffprobe,
-  }));
+  app.get("/api/setup", async () => {
+    refreshTools();
+    return {
+      tokenRequired: Boolean(getSetting("accessToken")),
+      ffmpeg: tools.ffmpeg,
+      ffprobe: tools.ffprobe,
+    };
+  });
 
   app.post("/api/session", async (request, reply) => {
     const configured = getSetting("accessToken");
@@ -131,15 +137,18 @@ export async function buildApp() {
     return { ok: true };
   });
 
-  app.get("/api/settings", async () => ({
-    tmdbConfigured: Boolean(getSetting("tmdbReadToken")),
-    tmdbHint: tokenHint(getSetting("tmdbReadToken")),
-    bindHost: getSetting("bindHost") ?? "127.0.0.1",
-    tokenRequired: Boolean(getSetting("accessToken")),
-    ffmpeg: tools.ffmpeg,
-    ffprobe: tools.ffprobe,
-    subtitleLanguage: getProfile().subtitleLanguage,
-  }));
+  app.get("/api/settings", async () => {
+    refreshTools();
+    return {
+      tmdbConfigured: Boolean(getSetting("tmdbReadToken")),
+      tmdbHint: tokenHint(getSetting("tmdbReadToken")),
+      bindHost: getSetting("bindHost") ?? "127.0.0.1",
+      tokenRequired: Boolean(getSetting("accessToken")),
+      ffmpeg: tools.ffmpeg,
+      ffprobe: tools.ffprobe,
+      subtitleLanguage: getProfile().subtitleLanguage,
+    };
+  });
 
   app.put("/api/settings", async (request, reply) => {
     const body = asRecord(request.body);
