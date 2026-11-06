@@ -45,12 +45,30 @@ function isConnectFailure(error: unknown) {
   return /connect timeout|fetch failed|network|econnreset|enotfound|etimedout|undici/i.test(message);
 }
 
-/** Prefer "Arrival 2016" style queries — TMDB ranks them much tighter than title alone. */
-export function withYearQuery(query: string, year: number | null) {
+/**
+ * UI may send "Arrival 2016". TMDB often returns nothing when the year is inside `query`
+ * (especially with ro-RO), so we split title/year and filter with API params + local ranking.
+ */
+export function parseSearchInput(query: string, year: number | null) {
   const trimmed = query.trim().replace(/\s+/g, " ");
-  if (year == null) return trimmed;
-  if (new RegExp(`\\b${year}\\b`).test(trimmed)) return trimmed;
-  return `${trimmed} ${year}`;
+  const fromQuery = trimmed.match(/^(.*?)(?:\s*[(\[]?\s*)((?:19|20)\d{2})(?:\s*[)\]]?\s*)?$/);
+  const parsedYear = fromQuery ? Number(fromQuery[2]) : null;
+  const title = (fromQuery?.[1] ?? trimmed).replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+  const resolvedYear = year ?? (Number.isFinite(parsedYear) ? parsedYear : null);
+  return { title: title || trimmed, year: resolvedYear };
+}
+
+/** @deprecated kept for tests — prefer parseSearchInput */
+export function withYearQuery(query: string, year: number | null) {
+  const { title, year: resolved } = parseSearchInput(query, year);
+  return resolved == null ? title : `${title} ${resolved}`;
+}
+
+function shouldCacheBody(urlPath: string, body: unknown) {
+  if (!urlPath.includes("/search/")) return true;
+  const results = list(record(body)?.results);
+  // Empty search hits used to stick forever and made Identify look broken.
+  return results.length > 0;
 }
 
 async function tmdbGet(urlPath: string): Promise<unknown> {
@@ -77,8 +95,10 @@ async function tmdbGet(urlPath: string): Promise<unknown> {
         }
         if (!response.ok) throw new Error(`tmdb_${response.status}`);
         const body = (await response.json()) as unknown;
-        fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-        fs.writeFileSync(cacheFile, JSON.stringify(body));
+        if (shouldCacheBody(urlPath, body)) {
+          fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+          fs.writeFileSync(cacheFile, JSON.stringify(body));
+        }
         return body;
       } catch (error) {
         lastError = error;
@@ -165,21 +185,49 @@ export function chooseMatch(title: string, year: number | null, hits: TmdbHit[])
   return exactTitle.length === 1 ? exactTitle[0] : null;
 }
 
-export async function searchMovies(query: string, year: number | null) {
-  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO", include_adult: "false" });
-  if (year) {
-    params.set("primary_release_year", String(year));
-    params.set("year", String(year));
-  }
+async function movieSearchRaw(title: string, year: number | null, mode: "primary" | "any" | "none") {
+  const params = new URLSearchParams({ query: title, language: "ro-RO", include_adult: "false" });
+  if (year != null && mode === "primary") params.set("primary_release_year", String(year));
+  if (year != null && mode === "any") params.set("year", String(year));
   const body = record(await tmdbGet(`/search/movie?${params}`));
   return list(body?.results).map(movieHit).filter((hit): hit is TmdbHit => hit != null);
 }
 
+function rankHits(hits: TmdbHit[], year: number | null) {
+  const scored = hits.map((hit, index) => ({
+    hit,
+    index,
+    yearScore: year == null ? 0 : hit.year != null && Math.abs(hit.year - year) <= 1 ? 0 : hit.year == null ? 2 : 5,
+  }));
+  scored.sort((a, b) => a.yearScore - b.yearScore || a.index - b.index);
+  return scored.map((item) => item.hit);
+}
+
+export async function searchMovies(query: string, year: number | null) {
+  const parsed = parseSearchInput(query, year);
+  if (parsed.year != null) {
+    const primary = await movieSearchRaw(parsed.title, parsed.year, "primary");
+    if (primary.length) return primary;
+    const anyYear = await movieSearchRaw(parsed.title, parsed.year, "any");
+    if (anyYear.length) return anyYear;
+  }
+  return rankHits(await movieSearchRaw(parsed.title, null, "none"), parsed.year);
+}
+
 export async function searchSeries(query: string, year: number | null) {
-  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO" });
-  if (year) params.set("first_air_date_year", String(year));
-  const body = record(await tmdbGet(`/search/tv?${params}`));
-  return list(body?.results).map(seriesHit).filter((hit): hit is TmdbHit => hit != null);
+  const parsed = parseSearchInput(query, year);
+  const params = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+  if (parsed.year != null) params.set("first_air_date_year", String(parsed.year));
+  let hits = list(record(await tmdbGet(`/search/tv?${params}`))?.results)
+    .map(seriesHit)
+    .filter((hit): hit is TmdbHit => hit != null);
+  if (!hits.length && parsed.year != null) {
+    const fallback = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+    hits = list(record(await tmdbGet(`/search/tv?${fallback}`))?.results)
+      .map(seriesHit)
+      .filter((hit): hit is TmdbHit => hit != null);
+  }
+  return rankHits(hits, parsed.year);
 }
 
 export function toCandidates(hits: TmdbHit[], posters: (string | null)[]): TmdbCandidate[] {
@@ -192,37 +240,59 @@ export function toCandidates(hits: TmdbHit[], posters: (string | null)[]): TmdbC
   }));
 }
 
-export async function searchMovieCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
-  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO", include_adult: "false" });
-  if (year) {
-    params.set("primary_release_year", String(year));
-    params.set("year", String(year));
-  }
+function candidateFrom(item: unknown): TmdbCandidate | null {
+  const hit = movieHit(item) ?? seriesHit(item);
+  const row = record(item);
+  if (!hit) return null;
+  return { tmdbId: hit.tmdbId, title: hit.title, year: hit.year, overview: text(row?.overview), posterPath: text(row?.poster_path) };
+}
+
+function rankCandidates(items: TmdbCandidate[], year: number | null) {
+  const scored = items.map((item, index) => ({
+    item,
+    index,
+    yearScore: year == null ? 0 : item.year != null && Math.abs(item.year - year) <= 1 ? 0 : item.year == null ? 2 : 5,
+  }));
+  scored.sort((a, b) => a.yearScore - b.yearScore || a.index - b.index);
+  return scored.map((entry) => entry.item);
+}
+
+async function movieCandidateSearch(title: string, year: number | null, mode: "primary" | "any" | "none") {
+  const params = new URLSearchParams({ query: title, language: "ro-RO", include_adult: "false" });
+  if (year != null && mode === "primary") params.set("primary_release_year", String(year));
+  if (year != null && mode === "any") params.set("year", String(year));
   const body = record(await tmdbGet(`/search/movie?${params}`));
   return list(body?.results)
-    .map((item) => {
-      const hit = movieHit(item);
-      const row = record(item);
-      if (!hit) return null;
-      return { tmdbId: hit.tmdbId, title: hit.title, year: hit.year, overview: text(row?.overview), posterPath: text(row?.poster_path) };
-    })
-    .filter((item): item is TmdbCandidate => item != null)
-    .slice(0, 8);
+    .map(candidateFrom)
+    .filter((item): item is TmdbCandidate => item != null);
+}
+
+export async function searchMovieCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
+  const parsed = parseSearchInput(query, year);
+  if (parsed.year != null) {
+    const primary = await movieCandidateSearch(parsed.title, parsed.year, "primary");
+    if (primary.length) return rankCandidates(primary, parsed.year).slice(0, 8);
+    const anyYear = await movieCandidateSearch(parsed.title, parsed.year, "any");
+    if (anyYear.length) return rankCandidates(anyYear, parsed.year).slice(0, 8);
+  }
+  const loose = await movieCandidateSearch(parsed.title, null, "none");
+  return rankCandidates(loose, parsed.year).slice(0, 8);
 }
 
 export async function searchSeriesCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
-  const params = new URLSearchParams({ query: withYearQuery(query, year), language: "ro-RO" });
-  if (year) params.set("first_air_date_year", String(year));
-  const body = record(await tmdbGet(`/search/tv?${params}`));
-  return list(body?.results)
-    .map((item) => {
-      const hit = seriesHit(item);
-      const row = record(item);
-      if (!hit) return null;
-      return { tmdbId: hit.tmdbId, title: hit.title, year: hit.year, overview: text(row?.overview), posterPath: text(row?.poster_path) };
-    })
-    .filter((item): item is TmdbCandidate => item != null)
-    .slice(0, 8);
+  const parsed = parseSearchInput(query, year);
+  const params = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+  if (parsed.year != null) params.set("first_air_date_year", String(parsed.year));
+  let results = list(record(await tmdbGet(`/search/tv?${params}`))?.results)
+    .map(candidateFrom)
+    .filter((item): item is TmdbCandidate => item != null);
+  if (!results.length && parsed.year != null) {
+    const fallback = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+    results = list(record(await tmdbGet(`/search/tv?${fallback}`))?.results)
+      .map(candidateFrom)
+      .filter((item): item is TmdbCandidate => item != null);
+  }
+  return rankCandidates(results, parsed.year).slice(0, 8);
 }
 
 function namesOf(credits: Record<string, unknown> | null, job: string) {

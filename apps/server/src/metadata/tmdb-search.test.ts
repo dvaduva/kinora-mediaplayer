@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { withYearQuery } from "./tmdb.js";
+import { parseSearchInput, withYearQuery } from "./tmdb.js";
 
-test("appends year when missing from the query", () => {
+test("parseSearchInput splits Arrival 2016 style queries", () => {
+  assert.deepEqual(parseSearchInput("Arrival 2016", null), { title: "Arrival", year: 2016 });
+  assert.deepEqual(parseSearchInput("Dune (2021)", null), { title: "Dune", year: 2021 });
+  assert.deepEqual(parseSearchInput("Dune 2021", 2021), { title: "Dune", year: 2021 });
+});
+
+test("parseSearchInput keeps an explicit year when the query has none", () => {
+  assert.deepEqual(parseSearchInput("Dune", 2021), { title: "Dune", year: 2021 });
+  assert.deepEqual(parseSearchInput("Spider-Man Homecoming", null), { title: "Spider-Man Homecoming", year: null });
+});
+
+test("withYearQuery still formats title plus year for display-style strings", () => {
   assert.equal(withYearQuery("Arrival", 2016), "Arrival 2016");
-});
-
-test("keeps an existing year in the query", () => {
   assert.equal(withYearQuery("Arrival 2016", 2016), "Arrival 2016");
-  assert.equal(withYearQuery("Dune (2021)", 2021), "Dune (2021)");
-});
-
-test("leaves the query alone without a year", () => {
   assert.equal(withYearQuery("  Arrival  ", null), "Arrival");
 });
