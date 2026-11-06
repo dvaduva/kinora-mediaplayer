@@ -74,6 +74,7 @@ const copy = {
     typeMusic: "Muzică",
     identifyHint: "Alege titlul corect. Kinora nu redenumește fișierul.",
     tmdbMissing: "Pune cheia TMDB în setări ca să cauți titlul.",
+    tmdbUnreachable: "TMDB nu răspunde acum. Reîncearcă peste câteva secunde.",
     matching: "Se potrivește…",
   },
   en: {
@@ -149,6 +150,7 @@ const copy = {
     typeMusic: "Music",
     identifyHint: "Choose the right title. Kinora does not rename the file.",
     tmdbMissing: "Add a TMDB key in settings before searching.",
+    tmdbUnreachable: "TMDB is unreachable right now. Try again in a few seconds.",
     matching: "Matching…",
   },
 } as const;

@@ -5,15 +5,22 @@ import type { CastMember, TmdbCandidate, Trailer } from "@kinora/shared";
 import { dataDir } from "../paths.js";
 import { getSetting } from "../settings.js";
 import { titlesEqual } from "../parse/names.js";
-import { createGate } from "./gate.js";
+import { createQueue } from "./gate.js";
 import { downloadTmdbImages } from "./images.js";
 import { pickTrailer, type TrailerCandidate } from "./trailer.js";
 
-const wait = createGate(80);
+// One in-flight TMDB call at a time — parallel connects pile up and hit Connect Timeout on flaky links.
+const enqueueTmdb = createQueue();
 
 export class TmdbNotConfiguredError extends Error {
   constructor() {
     super("tmdb_not_configured");
+  }
+}
+
+export class TmdbUnreachableError extends Error {
+  constructor() {
+    super("tmdb_unreachable");
   }
 }
 
@@ -33,6 +40,11 @@ function list(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function isConnectFailure(error: unknown) {
+  const message = error instanceof Error ? `${error.message} ${error.cause ?? ""}` : String(error);
+  return /connect timeout|fetch failed|network|econnreset|enotfound|etimedout|undici/i.test(message);
+}
+
 /** Prefer "Arrival 2016" style queries — TMDB ranks them much tighter than title alone. */
 export function withYearQuery(query: string, year: number | null) {
   const trimmed = query.trim().replace(/\s+/g, " ");
@@ -41,35 +53,46 @@ export function withYearQuery(query: string, year: number | null) {
   return `${trimmed} ${year}`;
 }
 
-async function tmdbGet(urlPath: string, attempt = 0): Promise<unknown> {
+async function tmdbGet(urlPath: string): Promise<unknown> {
   const token = getSetting("tmdbReadToken");
   if (!token) throw new TmdbNotConfiguredError();
   const cacheFile = path.join(dataDir, "cache", "tmdb", `${createHash("sha1").update(urlPath).digest("hex")}.json`);
   if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
-  await wait();
-  let response: Response;
-  try {
-    response = await fetch(`https://api.themoviedb.org/3${urlPath}`, {
-      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
-    });
-  } catch (error) {
-    if (attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
-      return tmdbGet(urlPath, attempt + 1);
+
+  return enqueueTmdb(async () => {
+    if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
+
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const response = await fetch(`https://api.themoviedb.org/3${urlPath}`, {
+          headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+          signal: AbortSignal.timeout(30_000),
+        });
+        if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+          const retryAfter = Number(response.headers.get("retry-after"));
+          const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 600 * (attempt + 1);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        if (!response.ok) throw new Error(`tmdb_${response.status}`);
+        const body = (await response.json()) as unknown;
+        fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+        fs.writeFileSync(cacheFile, JSON.stringify(body));
+        return body;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof Error && /^tmdb_\d+$/.test(error.message)) throw error;
+        if (attempt < 3 && isConnectFailure(error)) {
+          await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+          continue;
+        }
+        break;
+      }
     }
-    throw error;
-  }
-  if ((response.status === 429 || response.status >= 500) && attempt < 3) {
-    const retryAfter = Number(response.headers.get("retry-after"));
-    const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 400 * (attempt + 1);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return tmdbGet(urlPath, attempt + 1);
-  }
-  if (!response.ok) throw new Error(`tmdb_${response.status}`);
-  const body = (await response.json()) as unknown;
-  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-  fs.writeFileSync(cacheFile, JSON.stringify(body));
-  return body;
+    if (isConnectFailure(lastError)) throw new TmdbUnreachableError();
+    throw lastError instanceof Error ? lastError : new TmdbUnreachableError();
+  });
 }
 
 function yearFrom(date: string | null) {
@@ -318,14 +341,15 @@ export interface MovieMetadata {
 }
 
 export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
-  const [detailsBody, images, videoBody] = await Promise.all([
-    tmdbGet(`/movie/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,release_dates`),
-    tmdbGet(`/movie/${tmdbId}/images?include_image_language=ro,en,null`),
-    tmdbGet(`/movie/${tmdbId}/videos?include_video_language=ro,en,null`),
-  ]);
-  const details = record(detailsBody);
+  // One round-trip: parallel detail/image/video calls were timing out on this network.
+  const details = record(
+    await tmdbGet(
+      `/movie/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,release_dates,images,videos&include_image_language=ro,en,null&include_video_language=ro,en,null`,
+    ),
+  );
   if (!details) throw new Error("tmdb_empty");
-  const videos = videosOf(videoBody);
+  const images = details.images;
+  const videos = videosOf(details.videos);
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
@@ -333,12 +357,10 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
   const stills = stillsOf(images);
   const similar = similarOf(details, "title");
   const trailer = pickTrailer(videos);
-  // Poster + backdrop first so match can finish; cast/stills warm the cache in the background.
-  await downloadTmdbImages([
+  // Never block matching on CDN downloads — posters load via redirect.
+  void downloadTmdbImages([
     { size: "w342", path: poster },
     { size: "w1280", path: backdropPath },
-  ]);
-  void downloadTmdbImages([
     ...stills.map((item) => ({ size: "w780", path: item })),
     ...cast.map((person) => ({ size: "w185", path: person.profilePath })),
     ...similar.map((item) => ({ size: "w342", path: item.posterPath })),
@@ -389,14 +411,14 @@ export interface SeriesMetadata {
 }
 
 export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
-  const [detailsBody, images, videoBody] = await Promise.all([
-    tmdbGet(`/tv/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations`),
-    tmdbGet(`/tv/${tmdbId}/images?include_image_language=ro,en,null`),
-    tmdbGet(`/tv/${tmdbId}/videos?include_video_language=ro,en,null`),
-  ]);
-  const details = record(detailsBody);
+  const details = record(
+    await tmdbGet(
+      `/tv/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,images,videos&include_image_language=ro,en,null&include_video_language=ro,en,null`,
+    ),
+  );
   if (!details) throw new Error("tmdb_empty");
-  const videos = videosOf(videoBody);
+  const images = details.images;
+  const videos = videosOf(details.videos);
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
@@ -404,11 +426,9 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
   const similar = similarOf(details, "name");
   const trailer = pickTrailer(videos);
   const airDate = text(details.first_air_date);
-  await downloadTmdbImages([
+  void downloadTmdbImages([
     { size: "w342", path: poster },
     { size: "w1280", path: backdropPath },
-  ]);
-  void downloadTmdbImages([
     ...cast.map((person) => ({ size: "w185", path: person.profilePath })),
     ...similar.map((item) => ({ size: "w342", path: item.posterPath })),
   ]);

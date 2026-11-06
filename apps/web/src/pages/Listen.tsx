@@ -86,6 +86,13 @@ function identifyQuery(item: IdentifyItem) {
   return item.year ? `${item.title} ${item.year}` : item.title;
 }
 
+function tmdbError(reason: unknown, t: { tmdbMissing: string; tmdbUnreachable: string }) {
+  const code = reason instanceof Error ? reason.message : "error";
+  if (code === "tmdb_not_configured") return t.tmdbMissing;
+  if (code === "tmdb_unreachable" || code === "tmdb_failed") return t.tmdbUnreachable;
+  return code;
+}
+
 function IdentifyRow(props: { item: IdentifyItem; onDone: (id: string) => void }) {
   const { t } = useLocale();
   const [query, setQuery] = useState(() => identifyQuery(props.item));
@@ -115,8 +122,7 @@ function IdentifyRow(props: { item: IdentifyItem; onDone: (id: string) => void }
         setReleases([]);
       }
     } catch (reason) {
-      const code = reason instanceof Error ? reason.message : "error";
-      setError(code === "tmdb_not_configured" ? t.tmdbMissing : code);
+      setError(tmdbError(reason, t));
     } finally {
       setSearching(false);
     }
@@ -130,8 +136,7 @@ function IdentifyRow(props: { item: IdentifyItem; onDone: (id: string) => void }
       await api(path, { method: "POST", body: JSON.stringify({ tmdbId }) });
       props.onDone(props.item.id);
     } catch (reason) {
-      const code = reason instanceof Error ? reason.message : "error";
-      setError(code === "tmdb_not_configured" ? t.tmdbMissing : code);
+      setError(tmdbError(reason, t));
       setChoosing(null);
     }
   }

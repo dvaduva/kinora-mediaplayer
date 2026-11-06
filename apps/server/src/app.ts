@@ -29,7 +29,7 @@ import { mediaFiles } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from "./metadata/images.js";
 import { searchReleases } from "./metadata/musicbrainz.js";
-import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError } from "./metadata/tmdb.js";
+import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
@@ -233,6 +233,7 @@ export async function buildApp() {
       return { results };
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      if (error instanceof TmdbUnreachableError) return reply.code(503).send({ error: "tmdb_unreachable" });
       request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }
@@ -258,6 +259,7 @@ export async function buildApp() {
       await matchMovie(id, tmdbId);
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      if (error instanceof TmdbUnreachableError) return reply.code(503).send({ error: "tmdb_unreachable" });
       request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }
@@ -272,6 +274,7 @@ export async function buildApp() {
       await matchSeries(id, tmdbId);
     } catch (error) {
       if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      if (error instanceof TmdbUnreachableError) return reply.code(503).send({ error: "tmdb_unreachable" });
       request.log.error(error);
       return reply.code(502).send({ error: "tmdb_failed" });
     }

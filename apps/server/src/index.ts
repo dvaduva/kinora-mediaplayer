@@ -1,3 +1,5 @@
+import dns from "node:dns";
+import { Agent, setGlobalDispatcher } from "undici";
 import { buildApp } from "./app.js";
 import { db } from "./db/index.js";
 import { libraries } from "./db/schema.js";
@@ -5,6 +7,15 @@ import { detectTools } from "./process.js";
 import { stopOrphanEncoders } from "./playback/transcode.js";
 import { restartWatches, startScan } from "./scan.js";
 import { getSetting, isLocalHost, seedProfile } from "./settings.js";
+
+// Windows often tries IPv6 first; TMDB connects hang until undici's default 10s timeout.
+dns.setDefaultResultOrder("ipv4first");
+setGlobalDispatcher(
+  new Agent({
+    connect: { timeout: 30_000, family: 4 },
+    connections: 4,
+  }),
+);
 
 detectTools();
 stopOrphanEncoders();
