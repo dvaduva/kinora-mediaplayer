@@ -295,12 +295,17 @@ export async function searchSeriesCandidates(query: string, year: number | null)
   return rankCandidates(results, parsed.year).slice(0, 8);
 }
 
-function namesOf(credits: Record<string, unknown> | null, job: string) {
+interface CrewName {
+  id: number | null;
+  name: string;
+}
+
+function namesOf(credits: Record<string, unknown> | null, job: string): CrewName[] {
   return list(credits?.crew)
     .map(record)
     .filter((person) => person?.job === job)
-    .map((person) => text(person?.name))
-    .filter((name): name is string => name != null);
+    .map((person) => ({ id: numberValue(person?.id), name: text(person?.name) }))
+    .filter((person): person is CrewName => person.name != null);
 }
 
 function castOf(credits: Record<string, unknown> | null): CastMember[] {
@@ -309,10 +314,81 @@ function castOf(credits: Record<string, unknown> | null): CastMember[] {
     .filter((person) => text(person?.name))
     .slice(0, 12)
     .map((person) => ({
+      tmdbPersonId: numberValue(person?.id),
       name: text(person?.name) ?? "",
       character: text(person?.character),
       profilePath: text(person?.profile_path),
     }));
+}
+
+/** True when the name contains letters outside the Latin script (Cyrillic, Greek, CJK, ...). */
+export function isNonLatinName(name: string) {
+  return /\p{L}/u.test(name) && /(?![\p{Script=Latin}])\p{L}/u.test(name);
+}
+
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  а: "a", б: "b", в: "v", г: "g", ґ: "g", д: "d", е: "e", ё: "yo", є: "ye", ж: "zh", з: "z", и: "i", і: "i",
+  ї: "yi", й: "y", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f",
+  х: "kh", ц: "ts", ч: "ch", ш: "sh", щ: "shch", ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+  ђ: "đ", ј: "j", љ: "lj", њ: "nj", ћ: "ć", џ: "dž", ў: "u",
+};
+
+/** Last-resort transliteration when TMDB has no Latin form of a name. */
+export function transliterateName(name: string) {
+  let output = "";
+  const chars = [...name];
+  chars.forEach((char, index) => {
+    const lower = char.toLowerCase();
+    let mapped = CYRILLIC_TO_LATIN[lower];
+    if (mapped == null) {
+      output += char;
+      return;
+    }
+    // "Е" at the start of a word reads "Ye" in Russian (Екамасова -> Yekamasova).
+    if (lower === "е" && (index === 0 || !/\p{L}/u.test(chars[index - 1] ?? ""))) mapped = "ye";
+    if (char !== lower && mapped.length > 0) {
+      const nextUpper = chars[index + 1] != null && chars[index + 1] !== chars[index + 1]!.toLowerCase();
+      mapped = nextUpper ? mapped.toUpperCase() : mapped[0]!.toUpperCase() + mapped.slice(1);
+    }
+    output += mapped;
+  });
+  return output;
+}
+
+function latinCandidate(value: unknown) {
+  const name = text(value);
+  return name && !isNonLatinName(name) ? name : null;
+}
+
+async function latinPersonName(personId: number | null, name: string): Promise<string> {
+  if (!isNonLatinName(name)) return name;
+  if (personId != null) {
+    try {
+      const person = record(await tmdbGet(`/person/${personId}?language=en-US&append_to_response=translations`));
+      const translations = list(record(person?.translations)?.translations).map(record);
+      const preferred = ["en", "ro"]
+        .map((language) => translations.find((item) => item?.iso_639_1 === language))
+        .map((item) => latinCandidate(record(item?.data)?.name))
+        .find((value) => value != null);
+      const alias = list(person?.also_known_as).map(latinCandidate).find((value) => value != null);
+      const resolved = preferred ?? alias;
+      if (resolved) return resolved;
+    } catch {
+      // Fall through to local transliteration — a missing name must never block matching.
+    }
+  }
+  return transliterateName(name);
+}
+
+async function latinizeCast(cast: CastMember[]) {
+  return Promise.all(
+    cast.map(async (member) => ({ ...member, name: await latinPersonName(member.tmdbPersonId ?? null, member.name) })),
+  );
+}
+
+async function latinizeCrew(people: CrewName[]) {
+  const names = await Promise.all(people.map((person) => latinPersonName(person.id, person.name)));
+  return names.filter((name, index, all) => all.indexOf(name) === index);
 }
 
 function videosOf(body: unknown): TrailerCandidate[] {
@@ -423,7 +499,13 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
-  const cast = castOf(credits);
+  const cast = await latinizeCast(castOf(credits));
+  const directors = await latinizeCrew(namesOf(credits, "Director"));
+  const writers = await latinizeCrew([
+    ...namesOf(credits, "Screenplay"),
+    ...namesOf(credits, "Writer"),
+    ...namesOf(credits, "Story"),
+  ]);
   const stills = stillsOf(images);
   const similar = similarOf(details, "title");
   const trailer = pickTrailer(videos);
@@ -452,10 +534,8 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
     genres: list(details.genres)
       .map((genre) => text(record(genre)?.name))
       .filter((name): name is string => name != null),
-    directors: namesOf(credits, "Director"),
-    writers: [...namesOf(credits, "Screenplay"), ...namesOf(credits, "Writer"), ...namesOf(credits, "Story")].filter(
-      (name, index, all) => all.indexOf(name) === index,
-    ),
+    directors,
+    writers,
     cast,
     stills,
     similar,
@@ -492,7 +572,13 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
   const credits = record(details.credits);
   const poster = preferredPoster(images, text(details.poster_path));
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
-  const cast = castOf(credits);
+  const cast = await latinizeCast(castOf(credits));
+  const creators = await latinizeCrew(
+    list(details.created_by)
+      .map(record)
+      .map((person) => ({ id: numberValue(person?.id), name: text(person?.name) }))
+      .filter((person): person is CrewName => person.name != null),
+  );
   const similar = similarOf(details, "name");
   const trailer = pickTrailer(videos);
   const airDate = text(details.first_air_date);
@@ -515,9 +601,7 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
     genres: list(details.genres)
       .map((genre) => text(record(genre)?.name))
       .filter((name): name is string => name != null),
-    creators: list(details.created_by)
-      .map((person) => text(record(person)?.name))
-      .filter((name): name is string => name != null),
+    creators,
     cast,
     similar,
     trailer,

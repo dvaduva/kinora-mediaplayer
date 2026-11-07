@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { MediaVersion, MovieDetail, SeriesDetail, SimilarTitle } from "@kinora/shared";
 import { api } from "../api";
@@ -12,6 +12,18 @@ export function MoviePage() {
   const [movie, setMovie] = useState<MovieDetail | null>(null);
   const [versionId, setVersionId] = useState<string | null>(null);
   const [trailerOpen, setTrailerOpen] = useState(false);
+  // Image load order: poster → hero → cast → stills → similar titles.
+  const imageStages = useMemo(() => {
+    if (!movie) return [];
+    return [
+      [imageUrl(movie.posterPath, "w342")],
+      [imageUrl(movie.backdropPath, "w1280")],
+      movie.cast.map((person) => imageUrl(person.profilePath, "w185")),
+      movie.stills.map((still) => imageUrl(still, "w780")),
+      movie.similar.map((item) => imageUrl(item.posterPath, "w342"))
+    ];
+  }, [movie]);
+  const stage = useImageStages(imageStages);
   useEffect(() => {
     if (!id) return;
     api<MovieDetail>(`/api/movies/${id}`).then((data) => {
@@ -26,7 +38,7 @@ export function MoviePage() {
       <DossierHero
         title={movie.title}
         year={movie.year}
-        backdrop={movie.backdropPath}
+        backdrop={stage >= STAGE.hero ? movie.backdropPath : null}
         poster={movie.posterPath}
         overview={movie.overview}
         facts={[formatRuntime(movie.runtime), movie.genres.join(", "), formatDate(movie.releaseDate, locale)].filter(Boolean).join(" · ")}
@@ -51,9 +63,9 @@ export function MoviePage() {
         unmatched={movie.matched ? null : t.unmatched}
         ratingLabel={t.rating}
       />
-      <Stills stills={movie.stills} />
-      <Cast cast={movie.cast} title={t.cast} />
-      <Similar items={movie.similar} title={t.similar} absent={t.absent} />
+      <Stills stills={movie.stills} load={stage >= STAGE.stills} />
+      <Cast cast={movie.cast} title={t.cast} load={stage >= STAGE.cast} />
+      <Similar items={movie.similar} title={t.similar} absent={t.absent} load={stage >= STAGE.similar} />
       {trailerOpen && movie.trailer ? (
         <TrailerModal youtubeKey={movie.trailer.key} name={movie.trailer.name} closeLabel={t.close} openLabel={t.openYoutube} onClose={() => setTrailerOpen(false)} />
       ) : null}
@@ -126,6 +138,48 @@ export function SeriesPage() {
       ) : null}
     </article>
   );
+}
+
+const STAGE = { poster: 0, hero: 1, cast: 2, stills: 3, similar: 4 } as const;
+const STAGE_TIMEOUT_MS = 8000;
+
+function preloadImage(url: string) {
+  return new Promise<void>((resolve) => {
+    const img = new Image();
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, STAGE_TIMEOUT_MS);
+    img.onload = done;
+    img.onerror = done;
+    img.src = url;
+  });
+}
+
+/**
+ * Loads image groups one after another. Returns the index of the stage currently allowed
+ * to render: stage N's images are requested only after every image in stage N-1 settled
+ * (loaded, failed, or timed out), so earlier sections never compete for bandwidth.
+ */
+function useImageStages(stages: (string | null)[][]) {
+  const [ready, setReady] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    setReady(0);
+    void (async () => {
+      for (let index = 0; index < stages.length; index += 1) {
+        const urls = stages[index].filter((url): url is string => Boolean(url));
+        await Promise.all(urls.map(preloadImage));
+        if (cancelled) return;
+        setReady(index + 1);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [stages]);
+  return ready;
 }
 
 function DossierHero(props: {
@@ -222,26 +276,28 @@ function People(props: { label: string; names: string[] }) {
   );
 }
 
-function Stills(props: { stills: string[] }) {
+function Stills(props: { stills: string[]; load?: boolean }) {
   if (props.stills.length === 0) return null;
+  const load = props.load ?? true;
   return (
     <section className="section still-rail">
-      {props.stills.map((still) => (
-        <img key={still} className="still" src={imageUrl(still, "w780") ?? ""} alt="" />
-      ))}
+      {props.stills.map((still) =>
+        load ? <img key={still} className="still" src={imageUrl(still, "w780") ?? ""} alt="" /> : <div key={still} className="still" />
+      )}
     </section>
   );
 }
 
-function Cast(props: { cast: { name: string; character: string | null; profilePath: string | null }[]; title: string }) {
+function Cast(props: { cast: { name: string; character: string | null; profilePath: string | null }[]; title: string; load?: boolean }) {
   if (props.cast.length === 0) return null;
+  const load = props.load ?? true;
   return (
     <section className="section">
       <h2>{props.title}</h2>
       <div className="cast-rail">
         {props.cast.map((person) => (
           <article className="cast-card" key={`${person.name}-${person.character}`}>
-            {person.profilePath ? <img src={imageUrl(person.profilePath, "w185") ?? ""} alt="" /> : <div className="face" />}
+            {person.profilePath && load ? <img src={imageUrl(person.profilePath, "w185") ?? ""} alt="" /> : <div className="face" />}
             <span>{person.name}</span>
             {person.character ? <small>{person.character}</small> : null}
           </article>
@@ -251,8 +307,9 @@ function Cast(props: { cast: { name: string; character: string | null; profilePa
   );
 }
 
-function Similar(props: { items: SimilarTitle[]; title: string; absent: string }) {
+function Similar(props: { items: SimilarTitle[]; title: string; absent: string; load?: boolean }) {
   if (props.items.length === 0) return null;
+  const load = props.load ?? true;
   return (
     <section className="section">
       <h2>{props.title}</h2>
@@ -260,7 +317,7 @@ function Similar(props: { items: SimilarTitle[]; title: string; absent: string }
         {props.items.map((item) => {
           const body = (
             <>
-              <Poster src={item.posterPath} alt="" />
+              <Poster src={load ? item.posterPath : null} alt="" />
               <span>{item.title}</span>
               <small>{item.inLibrary ? item.year : props.absent}</small>
             </>

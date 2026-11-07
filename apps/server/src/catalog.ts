@@ -24,6 +24,7 @@ import type {
   Trailer,
 } from "@kinora/shared";
 import { db, parseJson } from "./db/index.js";
+import { isNonLatinName, transliterateName } from "./metadata/tmdb.js";
 import {
   albums,
   artists,
@@ -43,6 +44,16 @@ import { playbackPlan } from "./playback/plan.js";
 import { isInsideRoot } from "./paths.js";
 import { tools } from "./process.js";
 import { getProfile, PROFILE_ID } from "./settings.js";
+
+
+/** Rows matched before cast names were latinized may still hold Cyrillic; re-match fetches the proper TMDB form. */
+function latinNames(names: string[]) {
+  return names.map((name) => (isNonLatinName(name) ? transliterateName(name) : name));
+}
+
+function latinCast(cast: CastMember[]) {
+  return cast.map((member) => (isNonLatinName(member.name) ? { ...member, name: transliterateName(member.name) } : member));
+}
 
 interface StoredSimilar {
   tmdbId: number;
@@ -179,9 +190,9 @@ export function movieDetail(id: string): MovieDetail | null {
     releaseDate: movie.releaseDate,
     backdropPath: movie.backdropPath,
     genres: parseJson<string[]>(movie.genresJson, []),
-    directors: parseJson<string[]>(movie.directorsJson, []),
-    writers: parseJson<string[]>(movie.writersJson, []),
-    cast: parseJson<CastMember[]>(movie.castJson, []),
+    directors: latinNames(parseJson<string[]>(movie.directorsJson, [])),
+    writers: latinNames(parseJson<string[]>(movie.writersJson, [])),
+    cast: latinCast(parseJson<CastMember[]>(movie.castJson, [])),
     stills: parseJson<string[]>(movie.stillsJson, []),
     similar: decorateSimilar(parseJson<StoredSimilar[]>(movie.similarJson, [])),
     trailer: parseJson<Trailer | null>(movie.trailerJson, null),
@@ -240,8 +251,8 @@ export function seriesDetail(id: string): SeriesDetail | null {
     overview: show.overview,
     backdropPath: show.backdropPath,
     genres: parseJson<string[]>(show.genresJson, []),
-    creators: parseJson<string[]>(show.creatorsJson, []),
-    cast: parseJson<CastMember[]>(show.castJson, []),
+    creators: latinNames(parseJson<string[]>(show.creatorsJson, [])),
+    cast: latinCast(parseJson<CastMember[]>(show.castJson, [])),
     similar: decorateSimilar(parseJson<StoredSimilar[]>(show.similarJson, [])),
     trailer: parseJson<Trailer | null>(show.trailerJson, null),
     tmdbId: show.tmdbId,

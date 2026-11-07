@@ -47,6 +47,7 @@ export interface MediaVersion {
 }
 
 export interface CastMember {
+  tmdbPersonId?: number | null;
   name: string;
   character: string | null;
   profilePath: string | null;
