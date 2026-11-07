@@ -38,6 +38,7 @@ import { detectTools, tools } from "./process.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
 import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint } from "./settings.js";
 import { profiles } from "./db/schema.js";
+import { isAllowedHost, isAllowedOrigin, trustedOrigins } from "./security.js";
 
 function sameToken(left: string, right: string) {
   const a = Buffer.from(left);
@@ -96,13 +97,20 @@ async function beginTranscode(fileId: string, restartError: boolean) {
   return opened;
 }
 
-export async function buildApp() {
-  const app = Fastify({ logger: true });
-  await app.register(cors, { origin: true, credentials: true });
+export async function buildApp(options: { bindHost?: string; logger?: boolean } = {}) {
+  const bindHost = options.bindHost ?? "127.0.0.1";
+  const app = Fastify({ logger: options.logger ?? true });
+  const trusted = trustedOrigins();
+  // Same-origin requests need no CORS; only the dev server and configured origins get CORS headers.
+  await app.register(cors, { origin: trusted, credentials: true });
   await app.register(cookie);
 
   app.addHook("onRequest", async (request, reply) => {
+    if (!isAllowedHost(request.headers.host, bindHost)) return reply.code(421).send({ error: "bad_host" });
     if (!request.url.startsWith("/api")) return;
+    if (!isAllowedOrigin(request.headers.origin, request.headers.host, trusted)) {
+      return reply.code(403).send({ error: "bad_origin" });
+    }
     const open = request.url.startsWith("/api/health") || request.url.startsWith("/api/setup") || request.url.startsWith("/api/session");
     if (open) return;
     const configured = getSetting("accessToken");

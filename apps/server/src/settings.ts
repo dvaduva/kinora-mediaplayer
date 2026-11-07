@@ -39,6 +39,4 @@ export function tokenHint(token: string | null) {
   return `••••${token.slice(-4)}`;
 }
 
-export function isLocalHost(host: string) {
-  return host === "127.0.0.1" || host === "localhost" || host === "::1";
-}
+export { isLocalHost } from "./security.js";

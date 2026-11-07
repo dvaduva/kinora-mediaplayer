@@ -28,7 +28,7 @@ if (!isLocalHost(host) && !getSetting("accessToken")) {
 }
 
 const port = Number(process.env.PORT ?? 3001);
-const app = await buildApp();
+const app = await buildApp({ bindHost: host });
 await app.listen({ host, port });
 await restartWatches();
 for (const library of db.select().from(libraries).all()) startScan(library.id);
