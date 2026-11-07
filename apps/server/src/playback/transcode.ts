@@ -11,7 +11,41 @@ export interface TranscodeRequest {
   size: number;
   mtime: number;
   duration: number | null;
+  copyVideo: boolean;
   copyAudio: boolean;
+}
+
+export interface HlsCodecs {
+  copyVideo: boolean;
+  copyAudio: boolean;
+  /** ffmpeg H.264 encoder; libx264 by default, or e.g. h264_nvenc / h264_qsv / h264_amf. */
+  videoEncoder?: string;
+}
+
+const SEGMENT_SECONDS = 4;
+
+export function videoEncoder(value = process.env.KINORA_VIDEO_ENCODER) {
+  const encoder = (value ?? "").trim();
+  return /^[\w-]+$/.test(encoder) ? encoder : "libx264";
+}
+
+export function videoEncodeArgs(encoder: string) {
+  const quality =
+    encoder === "libx264"
+      ? ["-preset", "veryfast", "-crf", "21", "-profile:v", "high"]
+      : ["-b:v", "8M", "-maxrate", "10M", "-bufsize", "16M"];
+  return [
+    "-c:v",
+    encoder,
+    ...quality,
+    // Browsers decode 8-bit 4:2:0 H.264 everywhere; keep at most 1080p so a CPU encoder stays ahead of playback.
+    "-vf",
+    "scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p",
+    // Keyframes on segment boundaries keep every segment independently playable.
+    "-force_key_frames",
+    `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
+    ...(encoder === "libx264" ? ["-sc_threshold", "0"] : []),
+  ];
 }
 
 interface Job {
@@ -35,7 +69,8 @@ export interface HlsResume {
   startNumber: number;
 }
 
-export function hlsArgs(source: string, directory: string, copyAudio: boolean, resume?: HlsResume) {
+export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, resume?: HlsResume) {
+  const { copyVideo, copyAudio } = codecs;
   return [
     "-hide_banner",
     "-loglevel",
@@ -58,13 +93,12 @@ export function hlsArgs(source: string, directory: string, copyAudio: boolean, r
     copyAudio ? "0:a:0?" : "0:a:0",
     "-sn",
     "-dn",
-    "-c:v",
-    "copy",
+    ...(copyVideo ? ["-c:v", "copy"] : videoEncodeArgs(codecs.videoEncoder ?? "libx264")),
     ...(copyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "192k"]),
     "-f",
     "hls",
     "-hls_time",
-    "4",
+    String(SEGMENT_SECONDS),
     "-hls_list_size",
     "0",
     "-hls_playlist_type",
@@ -273,7 +307,12 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   }
   if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
 
-  const child = spawn(bins.ffmpeg, hlsArgs(input.sourcePath, dir, input.copyAudio, resume), {
+  const child = spawn(bins.ffmpeg, hlsArgs(
+      input.sourcePath,
+      dir,
+      { copyVideo: input.copyVideo, copyAudio: input.copyAudio, videoEncoder: videoEncoder() },
+      resume,
+    ), {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });

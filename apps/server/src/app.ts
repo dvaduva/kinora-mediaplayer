@@ -31,7 +31,7 @@ import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from 
 import { searchReleases } from "./metadata/musicbrainz.js";
 import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
-import { contentTypeFor } from "./playback/plan.js";
+import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
 import { ensureTranscode, hasOtherTranscode, lookupTranscode, playlistForClient } from "./playback/transcode.js";
 import { detectTools, tools } from "./process.js";
@@ -90,7 +90,8 @@ async function beginTranscode(fileId: string, restartError: boolean) {
       size: stat.size,
       mtime: Math.round(stat.mtimeMs),
       duration: described.row.duration,
-      copyAudio: described.view.plan.mode === "remux",
+      copyVideo: canCopyVideo(described.view.plan.videoCodec),
+      copyAudio: canCopyAudio(described.view.plan.audioCodec),
     },
     restartError,
   );

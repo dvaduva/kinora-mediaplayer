@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { playbackPlan } from "./plan.js";
+import { canCopyAudio, canCopyVideo, playbackPlan } from "./plan.js";
 
 test("plays browser-safe mp4 directly", () => {
   const plan = playbackPlan({ kind: "video", container: "mp4", videoCodec: "h264", audioCodec: "aac" });
@@ -42,10 +42,25 @@ test("remuxes H.264 and AAC in MKV when ffmpeg is available", () => {
   assert.equal(plan.available, true);
 });
 
-test("keeps HEVC unavailable even with ffmpeg", () => {
-  const plan = playbackPlan({ kind: "video", container: "mp4", videoCodec: "hevc", audioCodec: "aac", ffmpeg: true });
-  assert.equal(plan.available, false);
-  assert.equal(plan.mode, "transcode");
+test("encodes HEVC, VP9 in MKV and MPEG-4 video when ffmpeg is available", () => {
+  for (const [container, videoCodec] of [["mp4", "hevc"], ["mkv", "vp9"], ["avi", "mpeg4"], ["mkv", "av1"]]) {
+    const plan = playbackPlan({ kind: "video", container, videoCodec, audioCodec: "aac", ffmpeg: true });
+    assert.equal(plan.available, true, `${container}/${videoCodec}`);
+    assert.equal(plan.mode, "transcode");
+  }
+  assert.equal(playbackPlan({ kind: "video", container: "mp4", videoCodec: "hevc", audioCodec: "aac" }).available, false);
+});
+
+test("leaves files without a known video stream unavailable", () => {
+  assert.equal(playbackPlan({ kind: "video", container: "mkv", videoCodec: null, audioCodec: "aac", ffmpeg: true }).available, false);
+});
+
+test("copies only streams the browser understands", () => {
+  assert.equal(canCopyVideo("h264"), true);
+  assert.equal(canCopyVideo("hevc"), false);
+  assert.equal(canCopyAudio("aac"), true);
+  assert.equal(canCopyAudio(null), true);
+  assert.equal(canCopyAudio("eac3"), false);
 });
 
 test("plays common audio files directly", () => {

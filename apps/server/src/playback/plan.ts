@@ -19,6 +19,16 @@ function aacFamily(codec: string) {
   return !codec || codec === "aac" || codec === "mp3" || codec === "mp4a" || codec.includes("aac");
 }
 
+/** Video that can go into HLS segments untouched. Everything else is encoded to H.264. */
+export function canCopyVideo(codec: string | null) {
+  return isH264((codec ?? "").toLowerCase());
+}
+
+/** Audio that can go into HLS segments untouched. Everything else is encoded to AAC. */
+export function canCopyAudio(codec: string | null) {
+  return aacFamily((codec ?? "").toLowerCase());
+}
+
 export function playbackPlan(input: PlanInput): PlaybackPlan {
   const container = (input.container ?? "").toLowerCase();
   const video = (input.videoCodec ?? "").toLowerCase();
@@ -46,14 +56,10 @@ export function playbackPlan(input: PlanInput): PlaybackPlan {
       (video === "vp9" && container === "webm" && webAudio));
   if (direct) return { mode: "direct", available: true, reasonCode: "ok", ...base };
 
-  if (isH264(video)) {
-    if (aacFamily(audio)) return { mode: "remux", available: ffmpeg, reasonCode: "remux_required", ...base };
-    return { mode: "transcode", available: ffmpeg, reasonCode: "transcode_required", ...base };
-  }
-
-  const remux = video === "vp9" && (!audio || audio === "opus" || audio === "vorbis");
-  if (remux) return { mode: "remux", available: false, reasonCode: "remux_required", ...base };
-  return { mode: "transcode", available: false, reasonCode: "transcode_required", ...base };
+  if (!video) return { mode: "transcode", available: false, reasonCode: "transcode_required", ...base };
+  if (isH264(video) && aacFamily(audio)) return { mode: "remux", available: ffmpeg, reasonCode: "remux_required", ...base };
+  // H.264 with other audio converts only the sound; any other video (HEVC, VP9 outside WebM, MPEG-4, AV1) is encoded to H.264.
+  return { mode: "transcode", available: ffmpeg, reasonCode: "transcode_required", ...base };
 }
 
 export function contentTypeFor(container: string | null, kind: "audio" | "video") {
