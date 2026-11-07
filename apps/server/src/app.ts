@@ -33,7 +33,7 @@ import { searchReleases } from "./metadata/musicbrainz.js";
 import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
-import { materializeSubtitle } from "./playback/materialize.js";
+import { materializeSubtitle, subtitleStatus } from "./playback/materialize.js";
 import { gigabytes } from "./playback/cache.js";
 import {
   ensureTranscode,
@@ -360,6 +360,12 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     if (described.view.plan.available && described.view.plan.mode !== "direct") {
       void beginTranscode(fileId, true).catch(() => undefined);
     }
+    const selectedSubtitle = described.view.selectedSubtitleId;
+    if (selectedSubtitle) {
+      // Embedded subtitles need a full read of the file, so start as soon as the player opens.
+      const resolved = resolveSubtitlePath(fileId, selectedSubtitle);
+      if (resolved?.asset.origin === "embedded") subtitleStatus(resolved.asset, resolved.file.path);
+    }
     return described.view;
   });
 
@@ -489,6 +495,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     }
     reply.header("Content-Length", String(stat.size));
     return reply.send(fs.createReadStream(filePath));
+  });
+
+  app.get("/api/subtitles/:fileId/:subtitleId/status", async (request, reply) => {
+    const params = request.params as { fileId: string; subtitleId: string };
+    const resolved = resolveSubtitlePath(params.fileId, params.subtitleId);
+    if (!resolved) return reply.code(404).send({ error: "not_found" });
+    return subtitleStatus(resolved.asset, resolved.file.path);
   });
 
   app.get("/api/subtitles/:fileId/:subtitleId", async (request, reply) => {

@@ -30,6 +30,11 @@ export interface SubtitleTrack {
   unavailableReason: "bitmap" | "needs_ffmpeg" | null;
 }
 
+export type SubtitleStatus =
+  | { state: "ready" }
+  | { state: "extracting"; progress: number | null }
+  | { state: "error"; error: string };
+
 export interface MediaVersion {
   fileId: string;
   filename: string;

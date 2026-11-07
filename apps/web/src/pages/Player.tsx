@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
 import Hls from "hls.js";
-import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
+import type { PlaybackView, SubtitleStatus, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
@@ -19,6 +19,7 @@ export function PlayerPage() {
     status: null,
   });
   const [captions, setCaptions] = useState(false);
+  const [subStatus, setSubStatus] = useState<{ id: string; status: SubtitleStatus } | null>(null);
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
   const resumed = useRef(false);
   const subtitleDirty = useRef(false);
@@ -39,6 +40,31 @@ export function PlayerPage() {
       })
       .catch((reason: Error) => setError(reason.message));
   }, [fileId]);
+
+  const selectedTrack = view?.subtitles.find((track) => track.id === selected && track.textBased) ?? null;
+  const embeddedId = selectedTrack?.origin === "embedded" ? selectedTrack.id : null;
+
+  useEffect(() => {
+    if (!fileId || !embeddedId) return;
+    let cancel = false;
+    let timer = 0;
+    const tick = () => {
+      api<SubtitleStatus>(`/api/subtitles/${fileId}/${embeddedId}/status`)
+        .then((status) => {
+          if (cancel) return;
+          setSubStatus({ id: embeddedId, status });
+          if (status.state === "extracting") timer = window.setTimeout(tick, 2000);
+        })
+        .catch(() => {
+          if (!cancel) timer = window.setTimeout(tick, 5000);
+        });
+    };
+    tick();
+    return () => {
+      cancel = true;
+      window.clearTimeout(timer);
+    };
+  }, [fileId, embeddedId]);
 
   const preparing = Boolean(view && view.plan.available && view.plan.mode !== "direct");
 
@@ -110,7 +136,7 @@ export function PlayerPage() {
       media.removeEventListener("pause", send);
       window.clearInterval(timer);
     };
-  }, [view, selected, fileId, play.started, captions]);
+  }, [view, selected, fileId, play.started, captions, subStatus]);
 
   useEffect(() => {
     if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
@@ -179,7 +205,9 @@ export function PlayerPage() {
   const reason = reasonText(view, t.remux, t.transcode, t.missing);
   const textTracks = view.subtitles.filter((track) => track.textBased);
   const caption = textTracks.find((track) => track.id === selected);
-  const showCaption = Boolean(caption && (!preparing || captions));
+  const embeddedStatus = caption?.origin === "embedded" ? (subStatus?.id === caption.id ? subStatus.status : { state: "extracting" as const, progress: null }) : null;
+  const captionReady = !embeddedStatus || embeddedStatus.state === "ready";
+  const showCaption = Boolean(caption && captionReady && (!preparing || captions));
   const showMedia = !preparing || play.started;
   const percent = play.status?.progress == null ? "" : `${Math.round(play.status.progress * 100)}%`;
   return (
@@ -237,6 +265,12 @@ export function PlayerPage() {
               </option>
             ))}
           </select>
+          {embeddedStatus?.state === "extracting" ? (
+            <span className="muted">
+              {t.extractingSubtitles.replace("{progress}", embeddedStatus.progress == null ? "" : `${Math.round(embeddedStatus.progress * 100)}%`).trim()}
+            </span>
+          ) : null}
+          {embeddedStatus?.state === "error" ? <span className="danger">{t.subtitlesFailed}</span> : null}
         </label>
       ) : null}
     </article>
