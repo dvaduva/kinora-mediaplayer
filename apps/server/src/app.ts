@@ -33,10 +33,19 @@ import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, 
 import { repoRoot } from "./paths.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
-import { ensureTranscode, hasOtherTranscode, lookupTranscode, playlistForClient } from "./playback/transcode.js";
+import { gigabytes } from "./playback/cache.js";
+import {
+  ensureTranscode,
+  hasOtherTranscode,
+  lookupTranscode,
+  playlistForClient,
+  pruneTranscodes,
+  setTranscodeCacheLimit,
+  transcodeCacheUsage,
+} from "./playback/transcode.js";
 import { detectTools, tools } from "./process.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
-import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint } from "./settings.js";
+import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
 import { profiles } from "./db/schema.js";
 import { isAllowedHost, isAllowedOrigin, trustedOrigins } from "./security.js";
 
@@ -156,7 +165,14 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       ffmpeg: tools.ffmpeg,
       ffprobe: tools.ffprobe,
       subtitleLanguage: getProfile().subtitleLanguage,
+      transcodeCacheGb: transcodeCacheGb(),
+      transcodeCacheBytes: transcodeCacheUsage(),
     };
+  });
+
+  app.post("/api/cache/transcode/clear", async () => {
+    const result = pruneTranscodes(0);
+    return { ok: true, removed: result.removed, freed: result.freed, transcodeCacheBytes: transcodeCacheUsage() };
   });
 
   app.put("/api/settings", async (request, reply) => {
@@ -167,6 +183,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       const token = typeof body.accessToken === "string" && body.accessToken.trim() ? body.accessToken.trim() : getSetting("accessToken");
       if (!isLocalHost(host) && !token) return reply.code(400).send({ error: "token_required" });
       setSetting("bindHost", host);
+    }
+    if (body.transcodeCacheGb !== undefined) {
+      const gb = typeof body.transcodeCacheGb === "number" ? body.transcodeCacheGb : Number(body.transcodeCacheGb);
+      if (!Number.isFinite(gb) || gb < 1 || gb > 100_000) return reply.code(400).send({ error: "bad_cache_limit" });
+      setSetting("transcodeCacheGb", String(gb));
+      setTranscodeCacheLimit(gigabytes(gb));
+      pruneTranscodes();
     }
     if (body.clearAccessToken === true) setSetting("accessToken", null);
     if (typeof body.accessToken === "string" && body.accessToken.trim()) {

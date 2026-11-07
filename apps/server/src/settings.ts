@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db/index.js";
 import { profiles, settings } from "./db/schema.js";
+import { DEFAULT_CACHE_GB } from "./playback/cache.js";
 
 export const PROFILE_ID = "home";
 
@@ -40,3 +41,9 @@ export function tokenHint(token: string | null) {
 }
 
 export { isLocalHost } from "./security.js";
+
+/** Disk budget for converted HLS copies, in GB. */
+export function transcodeCacheGb() {
+  const value = Number(getSetting("transcodeCacheGb"));
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_CACHE_GB;
+}

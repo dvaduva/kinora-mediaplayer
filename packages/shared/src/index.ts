@@ -282,6 +282,8 @@ export interface AppSettings {
   ffmpeg: boolean;
   ffprobe: boolean;
   subtitleLanguage: string;
+  transcodeCacheGb: number;
+  transcodeCacheBytes: number;
 }
 
 export const LANGUAGE_NAMES: Record<string, { ro: string; en: string }> = {

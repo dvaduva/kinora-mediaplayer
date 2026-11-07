@@ -4,6 +4,7 @@ import path from "node:path";
 import type { TranscodeStatus } from "@kinora/shared";
 import { dataDir } from "../paths.js";
 import { bins } from "../process.js";
+import { DEFAULT_CACHE_GB, gigabytes, listCache, markUsed, MAX_CACHE_AGE_MS, pruneCache } from "./cache.js";
 
 export interface TranscodeRequest {
   fileId: string;
@@ -58,10 +59,33 @@ interface Job {
 const jobs = new Map<string, Job>();
 const sessions = new Map<string, TranscodeRequest>();
 
+export const transcodeRoot = path.join(dataDir, "cache", "transcode");
+let cacheLimitBytes = gigabytes(DEFAULT_CACHE_GB);
+
 export function transcodeLocation(input: Pick<TranscodeRequest, "fileId" | "size" | "mtime">) {
   const key = `${input.fileId}-${input.size}-${input.mtime}`;
-  const dir = path.join(dataDir, "cache", "transcode", key);
+  const dir = path.join(transcodeRoot, key);
   return { key, dir };
+}
+
+export function setTranscodeCacheLimit(bytes: number) {
+  if (Number.isFinite(bytes) && bytes >= 0) cacheLimitBytes = bytes;
+}
+
+function activeTranscodeKeys() {
+  const keys = new Set<string>();
+  for (const input of sessions.values()) keys.add(transcodeLocation(input).key);
+  for (const [key, job] of jobs) if (job.state === "running") keys.add(key);
+  return keys;
+}
+
+/** Drops old and least recently watched conversions; the open session and running encoders stay. */
+export function pruneTranscodes(maxBytes = cacheLimitBytes) {
+  return pruneCache(transcodeRoot, { maxBytes, maxAgeMs: MAX_CACHE_AGE_MS, protectedKeys: activeTranscodeKeys() });
+}
+
+export function transcodeCacheUsage() {
+  return listCache(transcodeRoot).reduce((sum, entry) => sum + entry.bytes, 0);
 }
 
 export interface HlsResume {
@@ -268,7 +292,10 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   sessions.set(input.fileId, input);
   const { key, dir } = transcodeLocation(input);
   const done = path.join(dir, "done");
-  if (fs.existsSync(done)) return { status: readyStatus(input.duration), dir };
+  if (fs.existsSync(done)) {
+    markUsed(dir);
+    return { status: readyStatus(input.duration), dir };
+  }
   const existing = jobs.get(key);
   if (existing?.state === "running") {
     return { status: statusFor("running", existing.seconds, input.duration, playlistHasSegment(readPlaylist(dir)), null), dir };
@@ -300,6 +327,9 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
       job.error = "partial cache has no playlist";
       return { status: statusFor("error", 0, input.duration, false, job.error), dir };
     }
+    markUsed(dir);
+    // Make room before a new conversion starts writing; this session is protected.
+    pruneTranscodes();
   } catch (error) {
     job.state = "error";
     job.error = error instanceof Error ? error.message : "cache";
@@ -347,7 +377,9 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     const covered = input.duration == null || job.seconds >= input.duration - 20;
     if (code === 0 && playlistHasSegment(readPlaylist(dir)) && covered) {
       fs.writeFileSync(done, "");
+      markUsed(dir);
       jobs.delete(key);
+      pruneTranscodes();
       return;
     }
     fail(tail(stderr) || `ffmpeg exited with ${code ?? "no code"}`);
