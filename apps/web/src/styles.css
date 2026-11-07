@@ -168,7 +168,29 @@ h2 { font-size: 34px; }
 .tech { color: var(--muted); }
 .file-disclosure { color: var(--faint); }
 .file-disclosure summary { cursor: pointer; }
-.cast-rail { grid-auto-columns: 132px; margin-top: 18px; }
+.cast-rail { grid-auto-columns: 132px; }
+.no-scrollbar { scrollbar-width: none; padding-bottom: 0; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.scroll-rail { display: flex; align-items: center; gap: 10px; }
+h2 + .scroll-rail { margin-top: 18px; }
+.scroll-rail > .no-scrollbar { flex: 1; min-width: 0; }
+.rail-arrow {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--paper);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 0 3px;
+  cursor: pointer;
+}
+.rail-arrow:hover:not(:disabled) { border-color: var(--brass); color: var(--brass); }
+.rail-arrow:disabled { opacity: 0.3; cursor: default; }
+.cast-rail + .rail-arrow, .rail-arrow:has(+ .cast-rail) { margin-bottom: 40px; }
+.rail + .rail-arrow, .rail-arrow:has(+ .rail) { margin-bottom: 56px; }
 .cast-card img, .face {
   width: 96px;
   height: 96px;

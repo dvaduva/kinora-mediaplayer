@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { MediaVersion, MovieDetail, SeriesDetail, SimilarTitle } from "@kinora/shared";
 import { api } from "../api";
@@ -280,11 +280,52 @@ function Stills(props: { stills: string[]; load?: boolean }) {
   if (props.stills.length === 0) return null;
   const load = props.load ?? true;
   return (
-    <section className="section still-rail">
-      {props.stills.map((still) =>
-        load ? <img key={still} className="still" src={imageUrl(still, "w780") ?? ""} alt="" /> : <div key={still} className="still" />
-      )}
+    <section className="section">
+      <ScrollRail className="still-rail">
+        {props.stills.map((still) =>
+          load ? <img key={still} className="still" src={imageUrl(still, "w780") ?? ""} alt="" /> : <div key={still} className="still" />
+        )}
+      </ScrollRail>
     </section>
+  );
+}
+
+/** Horizontal rail without a scrollbar, paged with [ ‹ ] … [ › ] buttons. */
+function ScrollRail(props: { className: string; children: ReactNode }) {
+  const { t } = useLocale();
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ start: true, end: true });
+  const update = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    setEdges({ start: el.scrollLeft <= 1, end: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1 });
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    for (const child of Array.from(el.children)) observer.observe(child);
+    return () => observer.disconnect();
+  }, [update, props.children]);
+  const page = (direction: 1 | -1) => {
+    const el = ref.current;
+    if (el) el.scrollBy({ left: direction * el.clientWidth * 0.85, behavior: "smooth" });
+  };
+  const overflow = !(edges.start && edges.end);
+  return (
+    <div className={`scroll-rail${overflow ? " has-overflow" : ""}`}>
+      {overflow ? (
+        <button className="rail-arrow" type="button" aria-label={t.scrollBack} disabled={edges.start} onClick={() => page(-1)}>‹</button>
+      ) : null}
+      <div ref={ref} className={`${props.className} no-scrollbar`} onScroll={update}>
+        {props.children}
+      </div>
+      {overflow ? (
+        <button className="rail-arrow" type="button" aria-label={t.scrollForward} disabled={edges.end} onClick={() => page(1)}>›</button>
+      ) : null}
+    </div>
   );
 }
 
@@ -294,7 +335,7 @@ function Cast(props: { cast: { name: string; character: string | null; profilePa
   return (
     <section className="section">
       <h2>{props.title}</h2>
-      <div className="cast-rail">
+      <ScrollRail className="cast-rail">
         {props.cast.map((person) => (
           <article className="cast-card" key={`${person.name}-${person.character}`}>
             {person.profilePath && load ? <img src={imageUrl(person.profilePath, "w185") ?? ""} alt="" /> : <div className="face" />}
@@ -302,7 +343,7 @@ function Cast(props: { cast: { name: string; character: string | null; profilePa
             {person.character ? <small>{person.character}</small> : null}
           </article>
         ))}
-      </div>
+      </ScrollRail>
     </section>
   );
 }
@@ -313,7 +354,7 @@ function Similar(props: { items: SimilarTitle[]; title: string; absent: string; 
   return (
     <section className="section">
       <h2>{props.title}</h2>
-      <div className="rail">
+      <ScrollRail className="rail">
         {props.items.map((item) => {
           const body = (
             <>
@@ -326,7 +367,7 @@ function Similar(props: { items: SimilarTitle[]; title: string; absent: string; 
           const to = item.mediaType === "tv" ? `/series/${item.localId}` : `/movies/${item.localId}`;
           return <Link className="poster-card" to={to} key={item.tmdbId}>{body}</Link>;
         })}
-      </div>
+      </ScrollRail>
     </section>
   );
 }
