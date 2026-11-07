@@ -15,6 +15,7 @@ import type {
   MediaVersion,
   MovieDetail,
   MovieSummary,
+  PersonCredit,
   PlaybackView,
   SearchHit,
   SeriesDetail,
@@ -201,6 +202,37 @@ export function movieDetail(id: string): MovieDetail | null {
     versions,
     defaultFileId: versions[0]?.fileId ?? null,
   };
+}
+
+/** Library titles whose stored cast lists this TMDB person (name match only for rows saved without person ids). */
+export function personCredits(tmdbPersonId: number): { credits: PersonCredit[]; fallback: { name: string; profilePath: string | null } | null } {
+  let fallback: { name: string; profilePath: string | null } | null = null;
+  const roleIn = (castJson: string) => {
+    const member = latinCast(parseJson<CastMember[]>(castJson, [])).find((item) => item.tmdbPersonId === tmdbPersonId);
+    if (member && !fallback) fallback = { name: member.name, profilePath: member.profilePath };
+    return member;
+  };
+  const credits: PersonCredit[] = [];
+  for (const movie of db.select().from(movies).all()) {
+    const member = roleIn(movie.castJson);
+    if (!member || !visibleMovie(movie.id)) continue;
+    credits.push({ kind: "movie", id: movie.id, title: movie.title, year: movie.year, posterPath: movie.posterPath, character: member.character });
+  }
+  const visibleSeries = new Set(
+    db
+      .select()
+      .from(episodes)
+      .all()
+      .filter((episode) => episodeHasFile(episode.id))
+      .map((episode) => episode.seriesId),
+  );
+  for (const show of db.select().from(series).all()) {
+    const member = roleIn(show.castJson);
+    if (!member || !visibleSeries.has(show.id)) continue;
+    credits.push({ kind: "series", id: show.id, title: show.title, year: show.year, posterPath: show.posterPath, character: member.character });
+  }
+  credits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || a.title.localeCompare(b.title));
+  return { credits, fallback };
 }
 
 export function listSeries(): SeriesSummary[] {

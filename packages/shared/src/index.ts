@@ -53,6 +53,30 @@ export interface CastMember {
   profilePath: string | null;
 }
 
+export interface PersonCredit {
+  kind: "movie" | "series";
+  id: string;
+  title: string;
+  year: number | null;
+  posterPath: string | null;
+  character: string | null;
+}
+
+export interface PersonDetail {
+  tmdbId: number;
+  name: string;
+  biography: string | null;
+  birthday: string | null;
+  deathday: string | null;
+  placeOfBirth: string | null;
+  profilePath: string | null;
+  knownFor: string | null;
+  imdbId: string | null;
+  /** False when TMDB is not configured or unreachable — only library data is shown. */
+  profileLoaded: boolean;
+  credits: PersonCredit[];
+}
+
 export interface SimilarTitle {
   tmdbId: number;
   title: string;

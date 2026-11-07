@@ -380,6 +380,36 @@ async function latinPersonName(personId: number | null, name: string): Promise<s
   return transliterateName(name);
 }
 
+export interface TmdbPerson {
+  name: string;
+  biography: string | null;
+  birthday: string | null;
+  deathday: string | null;
+  placeOfBirth: string | null;
+  profilePath: string | null;
+  knownFor: string | null;
+  imdbId: string | null;
+}
+
+/** Person profile; Romanian biography when TMDB has one, English otherwise. Shares the cache entry used by name latinization. */
+export async function fetchPerson(personId: number): Promise<TmdbPerson | null> {
+  const person = record(await tmdbGet(`/person/${personId}?language=en-US&append_to_response=translations`));
+  if (!person) return null;
+  const translations = list(record(person.translations)?.translations).map(record);
+  const romanian = text(record(translations.find((item) => item?.iso_639_1 === "ro")?.data)?.biography);
+  const name = text(person.name) ?? "";
+  return {
+    name: await latinPersonName(personId, name),
+    biography: romanian ?? text(person.biography),
+    birthday: text(person.birthday),
+    deathday: text(person.deathday),
+    placeOfBirth: text(person.place_of_birth),
+    profilePath: text(person.profile_path),
+    knownFor: text(person.known_for_department),
+    imdbId: text(person.imdb_id),
+  };
+}
+
 async function latinizeCast(cast: CastMember[]) {
   return Promise.all(
     cast.map(async (member) => ({ ...member, name: await latinPersonName(member.tmdbPersonId ?? null, member.name) })),

@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import type { LibraryType } from "@kinora/shared";
+import type { LibraryType, PersonDetail } from "@kinora/shared";
 import {
   albumDetail,
   artistDetail,
@@ -17,6 +17,7 @@ import {
   listMovies,
   listSeries,
   movieDetail,
+  personCredits,
   playbackView,
   resolveMediaPath,
   resolveSubtitlePath,
@@ -29,7 +30,7 @@ import { mediaFiles } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from "./metadata/images.js";
 import { searchReleases } from "./metadata/musicbrainz.js";
-import { searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
+import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle } from "./playback/materialize.js";
@@ -242,6 +243,33 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   app.get("/api/movies/:id", async (request, reply) => movieDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/series", async () => listSeries());
   app.get("/api/series/:id", async (request, reply) => seriesDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.get("/api/people/:id", async (request, reply) => {
+    const tmdbId = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(tmdbId) || tmdbId <= 0) return reply.code(400).send({ error: "bad_id" });
+    const { credits, fallback } = personCredits(tmdbId);
+    let profile: Awaited<ReturnType<typeof fetchPerson>> = null;
+    try {
+      profile = await fetchPerson(tmdbId);
+    } catch (error) {
+      // Without TMDB the page still lists the library titles from stored cast data.
+      if (!(error instanceof TmdbNotConfiguredError || error instanceof TmdbUnreachableError)) request.log.warn(error);
+    }
+    if (!profile && !fallback) return reply.code(404).send({ error: "not_found" });
+    const detail: PersonDetail = {
+      tmdbId,
+      name: profile?.name ?? fallback?.name ?? "",
+      biography: profile?.biography ?? null,
+      birthday: profile?.birthday ?? null,
+      deathday: profile?.deathday ?? null,
+      placeOfBirth: profile?.placeOfBirth ?? null,
+      profilePath: profile?.profilePath ?? fallback?.profilePath ?? null,
+      knownFor: profile?.knownFor ?? null,
+      imdbId: profile?.imdbId ?? null,
+      profileLoaded: profile != null,
+      credits,
+    };
+    return detail;
+  });
   app.get("/api/albums", async () => listAlbums());
   app.get("/api/albums/:id", async (request, reply) => albumDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/artists", async () => listArtists());

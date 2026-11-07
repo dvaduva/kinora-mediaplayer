@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { MediaVersion, MovieDetail, SeriesDetail, SimilarTitle } from "@kinora/shared";
+import type { CastMember, MediaVersion, MovieDetail, SeriesDetail, SimilarTitle } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
 import { codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel } from "../media";
@@ -329,20 +329,28 @@ function ScrollRail(props: { className: string; children: ReactNode }) {
   );
 }
 
-function Cast(props: { cast: { name: string; character: string | null; profilePath: string | null }[]; title: string; load?: boolean }) {
+function Cast(props: { cast: CastMember[]; title: string; load?: boolean }) {
   if (props.cast.length === 0) return null;
   const load = props.load ?? true;
   return (
     <section className="section">
       <h2>{props.title}</h2>
       <ScrollRail className="cast-rail">
-        {props.cast.map((person) => (
-          <article className="cast-card" key={`${person.name}-${person.character}`}>
-            {person.profilePath && load ? <img src={imageUrl(person.profilePath, "w185") ?? ""} alt="" /> : <div className="face" />}
-            <span>{person.name}</span>
-            {person.character ? <small>{person.character}</small> : null}
-          </article>
-        ))}
+        {props.cast.map((person) => {
+          const body = (
+            <>
+              {person.profilePath && load ? <img src={imageUrl(person.profilePath, "w185") ?? ""} alt="" /> : <div className="face" />}
+              <span>{person.name}</span>
+              {person.character ? <small>{person.character}</small> : null}
+            </>
+          );
+          const key = `${person.name}-${person.character}`;
+          return person.tmdbPersonId ? (
+            <Link className="cast-card linked" to={`/people/${person.tmdbPersonId}`} key={key}>{body}</Link>
+          ) : (
+            <article className="cast-card" key={key}>{body}</article>
+          );
+        })}
       </ScrollRail>
     </section>
   );
