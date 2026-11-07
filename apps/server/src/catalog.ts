@@ -636,9 +636,10 @@ export function playbackView(fileId: string): PlaybackView | null {
     .from(progress)
     .where(and(eq(progress.profileId, PROFILE_ID), eq(progress.fileId, fileId)))
     .get();
+  const profile = getProfile();
   const selected = chooseSubtitle(
     version.subtitles,
-    getProfile().subtitleLanguage,
+    profile.subtitleLanguage,
     saved?.subtitleChoice ?? null,
     version.audio[0]?.language ?? null,
   );
@@ -683,10 +684,12 @@ export function playbackView(fileId: string): PlaybackView | null {
     selectedSubtitleId: selected,
     resumeSeconds: saved && !saved.watched ? saved.position : 0,
     duration: file.duration,
+    subtitleStyle: { size: profile.subtitleSize, color: profile.subtitleColor },
+    subtitleDelay: saved?.subtitleDelay ?? 0,
   };
 }
 
-export function saveProgress(input: { fileId: string; position: number; duration: number; subtitleChoice: string | null }) {
+export function saveProgress(input: { fileId: string; position: number; duration: number; subtitleChoice: string | null; subtitleDelay?: number }) {
   const file = db.select().from(mediaFiles).where(eq(mediaFiles.id, input.fileId)).get();
   if (!file) return false;
   const watched = input.duration > 0 && input.position / input.duration >= 0.9;
@@ -698,6 +701,7 @@ export function saveProgress(input: { fileId: string; position: number; duration
       duration: input.duration,
       watched,
       subtitleChoice: input.subtitleChoice,
+      subtitleDelay: input.subtitleDelay ?? 0,
       updatedAt: Date.now(),
     })
     .onConflictDoUpdate({
@@ -707,6 +711,7 @@ export function saveProgress(input: { fileId: string; position: number; duration
         duration: input.duration,
         watched,
         subtitleChoice: input.subtitleChoice,
+        ...(input.subtitleDelay === undefined ? {} : { subtitleDelay: input.subtitleDelay }),
         updatedAt: Date.now(),
       },
     })

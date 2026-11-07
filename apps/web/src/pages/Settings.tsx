@@ -1,8 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { AppSettings, LibraryType, LibraryView } from "@kinora/shared";
+import { SUBTITLE_SIZES } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
 import { formatBytes } from "../media";
+
+const SUBTITLE_COLORS = ["#ffffff", "#ffe36e", "#9be7ff", "#b6f3a5", "#ffb3c7"];
 
 export function SettingsPage() {
   const { t, locale } = useLocale();
@@ -15,6 +18,8 @@ export function SettingsPage() {
   const [access, setAccess] = useState("");
   const [bindHost, setBindHost] = useState("127.0.0.1");
   const [subtitleLanguage, setSubtitleLanguage] = useState("ro");
+  const [subtitleSize, setSubtitleSize] = useState(100);
+  const [subtitleColor, setSubtitleColor] = useState("#ffffff");
   const [cacheGb, setCacheGb] = useState("30");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -23,6 +28,8 @@ export function SettingsPage() {
       setSettings(data);
       setBindHost(data.bindHost);
       setSubtitleLanguage(data.subtitleLanguage);
+      setSubtitleSize(data.subtitleStyle.size);
+      setSubtitleColor(data.subtitleStyle.color);
       setCacheGb(String(data.transcodeCacheGb));
     }).catch(() => undefined);
     api<LibraryView[]>("/api/libraries").then(setLibraries).catch(() => setLibraries([]));
@@ -76,7 +83,7 @@ export function SettingsPage() {
         transcodeCacheGb: Number(cacheGb),
       }),
     });
-    await api("/api/profile", { method: "PUT", body: JSON.stringify({ subtitleLanguage }) });
+    await api("/api/profile", { method: "PUT", body: JSON.stringify({ subtitleLanguage, subtitleSize, subtitleColor }) });
     setTmdb("");
     setAccess("");
     setMessage(t.saved);
@@ -155,6 +162,35 @@ export function SettingsPage() {
             <option value="off">{t.off}</option>
           </select>
         </label>
+        <fieldset className="field subtitle-look">
+          <legend>{t.subtitleLook}</legend>
+          <label className="field">
+            {t.subtitleSize}
+            <select value={subtitleSize} onChange={(event) => setSubtitleSize(Number(event.target.value))}>
+              {(SUBTITLE_SIZES.includes(subtitleSize as (typeof SUBTITLE_SIZES)[number]) ? SUBTITLE_SIZES : [...SUBTITLE_SIZES, subtitleSize].sort((a, b) => a - b)).map((size) => (
+                <option key={size} value={size}>{size}%</option>
+              ))}
+            </select>
+          </label>
+          <span>{t.subtitleColor}</span>
+          <div className="swatches">
+            {SUBTITLE_COLORS.map((color) => (
+              <button
+                key={color}
+                className="swatch"
+                type="button"
+                style={{ background: color }}
+                aria-label={color}
+                aria-pressed={subtitleColor.toLowerCase() === color}
+                onClick={() => setSubtitleColor(color)}
+              />
+            ))}
+            <input type="color" value={subtitleColor} onChange={(event) => setSubtitleColor(event.target.value)} aria-label={t.subtitleColor} />
+          </div>
+          <div className="cue-preview" aria-hidden="true">
+            <span style={{ color: subtitleColor, fontSize: `${(5 * subtitleSize) / 100}cqh` }}>{t.subtitlePreview}</span>
+          </div>
+        </fieldset>
         <label className="field">
           {t.cacheLimit}
           <input value={cacheGb} onChange={(event) => setCacheGb(event.target.value)} type="number" min={1} step={1} />

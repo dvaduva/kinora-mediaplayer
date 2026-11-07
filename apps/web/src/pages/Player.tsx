@@ -2,11 +2,14 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { Link, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
-import { transcodePlaybackReady } from "@kinora/shared";
+import { SUBTITLE_DELAY_LIMIT, transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
 import { embeddedTextTrack, useEmbeddedSubtitles } from "../embeddedSubtitles";
 import { useLocale } from "../i18n";
 import { codecLabel, formatClock, subtitleLabel } from "../media";
+import { cueStyleSheet, formatDelay, setSubtitleDelay, shiftCues } from "../subtitleTiming";
+
+const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
 
 export function PlayerPage() {
   const { fileId } = useParams();
@@ -22,6 +25,9 @@ export function PlayerPage() {
     from: null,
   });
   const [captions, setCaptions] = useState(false);
+  const [delay, setDelay] = useState(0);
+  const delayRef = useRef(0);
+  delayRef.current = delay;
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const videoRef = useCallback((element: HTMLVideoElement | null) => {
@@ -43,6 +49,7 @@ export function PlayerPage() {
       .then((data) => {
         setView(data);
         setSelected(data.selectedSubtitleId);
+        setDelay(data.subtitleDelay);
         setError(null);
       })
       .catch((reason: Error) => setError(reason.message));
@@ -112,6 +119,7 @@ export function PlayerPage() {
           position: media.currentTime,
           duration: reportedDuration,
           subtitleChoice: subtitleDirty.current ? selected ?? "off" : view.selectedSubtitleId,
+          subtitleDelay: delayRef.current,
         }),
       }).catch(() => undefined);
     };
@@ -189,6 +197,44 @@ export function PlayerPage() {
     };
   }, [play.started, fileId, view]);
 
+  // Cues of a <track> arrive after it loads, those of embedded subtitles chunk by chunk (shifted by the loader).
+  useEffect(() => {
+    if (!video) return;
+    setSubtitleDelay(video, delay);
+    const elements = Array.from(video.querySelectorAll("track"));
+    const onLoad = (event: Event) => shiftCues((event.currentTarget as HTMLTrackElement).track, delayRef.current);
+    for (const element of elements) element.addEventListener("load", onLoad);
+    return () => {
+      for (const element of elements) element.removeEventListener("load", onLoad);
+    };
+  }, [video, delay, selected, captions, play.started]);
+
+  const hasCaption = Boolean(view && view.subtitles.some((track) => track.id === selected && track.textBased));
+  const changeDelay = useCallback((step: number | null) => {
+    setDelay((current) => {
+      if (step === null) return 0;
+      const next = Math.round((current + step) * 10) / 10;
+      return Math.max(-SUBTITLE_DELAY_LIMIT, Math.min(SUBTITLE_DELAY_LIMIT, next));
+    });
+  }, []);
+
+  // G and H move the captions earlier and later, as in VLC.
+  useEffect(() => {
+    if (!hasCaption) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      const key = event.key.toLowerCase();
+      if (key === "g") changeDelay(-0.1);
+      else if (key === "h") changeDelay(0.1);
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hasCaption, changeDelay]);
+
   if (error) return <p className="danger">{error}</p>;
   if (!view) {
     return (
@@ -209,6 +255,7 @@ export function PlayerPage() {
   const convertedClock = play.status && play.status.seconds > 0 ? formatClock(play.status.seconds) : null;
   return (
     <article className="player-stage">
+      <style>{cueStyleSheet("video.player-video", view.subtitleStyle)}</style>
       <p className="crumb"><Link to="/">{t.home}</Link></p>
       <h1>{view.title}</h1>
       {view.subtitle ? <p className="muted">{view.subtitle}</p> : null}
@@ -232,6 +279,7 @@ export function PlayerPage() {
             {play.status?.state === "error" ? <p className="danger">{play.status.error || t.transcodeFailed}</p> : null}
             {showMedia ? (
               <video
+                className="player-video"
                 ref={videoRef}
                 src={preparing ? undefined : `/api/stream/${view.fileId}`}
                 controls
@@ -271,6 +319,28 @@ export function PlayerPage() {
           {embeddedState === "loading" ? <span className="muted">{t.loadingSubtitles}</span> : null}
           {embeddedState === "error" ? <span className="danger">{t.subtitlesFailed}</span> : null}
         </label>
+      ) : null}
+      {view.kind !== "track" && hasCaption ? (
+        <div className="sub-delay" role="group" aria-label={t.subtitleDelay}>
+          <span>{t.subtitleDelay}</span>
+          <div className="sub-delay-controls">
+            {DELAY_STEPS.slice(0, 2).map((step) => (
+              <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                {formatDelay(step, locale)}
+              </button>
+            ))}
+            <output aria-live="polite">{formatDelay(delay, locale)}</output>
+            {DELAY_STEPS.slice(2).map((step) => (
+              <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                {formatDelay(step, locale)}
+              </button>
+            ))}
+            <button className="text-button small" type="button" onClick={() => changeDelay(null)} disabled={delay === 0}>
+              {t.reset}
+            </button>
+          </div>
+          <span className="muted">{t.subtitleDelayHelp}</span>
+        </div>
       ) : null}
     </article>
   );

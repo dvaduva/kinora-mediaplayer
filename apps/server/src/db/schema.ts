@@ -172,6 +172,9 @@ export const profiles = sqliteTable("profiles", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   subtitleLanguage: text("subtitle_language").notNull(),
+  /** Caption size as a percentage of the player's default. */
+  subtitleSize: integer("subtitle_size").notNull().default(100),
+  subtitleColor: text("subtitle_color").notNull().default("#ffffff"),
 });
 
 export const progress = sqliteTable(
@@ -183,6 +186,8 @@ export const progress = sqliteTable(
     duration: real("duration").notNull(),
     watched: integer("watched", { mode: "boolean" }).notNull(),
     subtitleChoice: text("subtitle_choice"),
+    /** Seconds the captions are shifted against the picture for this file; positive shows them later. */
+    subtitleDelay: real("subtitle_delay").notNull().default(0),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.profileId, table.fileId] }), index("progress_file").on(table.fileId)],

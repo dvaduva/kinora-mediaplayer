@@ -19,13 +19,13 @@ function foreignKeys(sqlite: Database.Database, table: string) {
 function seed(sqlite: Database.Database) {
   const now = Date.now();
   sqlite.prepare("INSERT INTO libraries VALUES ('lib', 'Filme', 'movie', '[]', ?)").run(now);
-  sqlite.prepare("INSERT INTO profiles VALUES ('home', 'Acasă', 'ro')").run();
+  sqlite.prepare("INSERT INTO profiles (id, name, subtitle_language) VALUES ('home', 'Acasă', 'ro')").run();
   sqlite.prepare("INSERT INTO movies (id, library_id, group_key, title, added_at) VALUES ('m1', 'lib', 'g', 'Film', ?)").run(now);
   sqlite
     .prepare("INSERT INTO media_files (id, library_id, movie_id, path, size, mtime, updated_at) VALUES ('f1', 'lib', 'm1', 'C:/f.mkv', 1, 1, ?)")
     .run(now);
   sqlite.prepare("INSERT INTO subtitle_assets (id, file_id, origin) VALUES ('s1', 'f1', 'external')").run();
-  sqlite.prepare("INSERT INTO progress VALUES ('home', 'f1', 10, 100, 0, NULL, ?)").run(now);
+  sqlite.prepare("INSERT INTO progress (profile_id, file_id, position, duration, watched, subtitle_choice, updated_at) VALUES ('home', 'f1', 10, 100, 0, NULL, ?)").run(now);
 }
 
 test("creates the full schema with foreign keys on a new database", () => {
@@ -60,6 +60,8 @@ test("upgrades a database from before migrations without losing rows", () => {
   assert.equal((sqlite.prepare("SELECT count(*) AS c FROM progress").get() as { c: number }).c, 1);
   assert.equal((sqlite.prepare("SELECT movie_id FROM media_files WHERE id = 'f1'").get() as { movie_id: string }).movie_id, "m1");
   assert.equal(sqlite.pragma("foreign_keys", { simple: true }), 1);
+  assert.deepEqual(sqlite.prepare("SELECT subtitle_size, subtitle_color FROM profiles").get(), { subtitle_size: 100, subtitle_color: "#ffffff" });
+  assert.deepEqual(sqlite.prepare("SELECT subtitle_delay FROM progress WHERE file_id = 'f1'").get(), { subtitle_delay: 0 });
 
   // Running again is a no-op.
   assert.equal(runMigrations(sqlite).adopted, false);

@@ -6,6 +6,7 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import type { LibraryType, PersonDetail } from "@kinora/shared";
+import { isSubtitleColor, isSubtitleSize, SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import {
   albumDetail,
   artistDetail,
@@ -169,6 +170,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       ffmpeg: tools.ffmpeg,
       ffprobe: tools.ffprobe,
       subtitleLanguage: getProfile().subtitleLanguage,
+      subtitleStyle: { size: getProfile().subtitleSize, color: getProfile().subtitleColor },
       transcodeCacheGb: transcodeCacheGb(),
       transcodeCacheBytes: transcodeCacheUsage(),
     };
@@ -205,9 +207,23 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   });
 
   app.put("/api/profile", async (request, reply) => {
-    const language = String(asRecord(request.body).subtitleLanguage ?? "");
-    if (!/^(off|[a-z]{2})$/.test(language)) return reply.code(400).send({ error: "bad_language" });
-    db.update(profiles).set({ subtitleLanguage: language }).where(eq(profiles.id, PROFILE_ID)).run();
+    const body = asRecord(request.body);
+    const change: Partial<typeof profiles.$inferInsert> = {};
+    if (body.subtitleLanguage !== undefined) {
+      const language = String(body.subtitleLanguage);
+      if (!/^(off|[a-z]{2})$/.test(language)) return reply.code(400).send({ error: "bad_language" });
+      change.subtitleLanguage = language;
+    }
+    if (body.subtitleSize !== undefined) {
+      if (!isSubtitleSize(body.subtitleSize)) return reply.code(400).send({ error: "bad_subtitle_size" });
+      change.subtitleSize = body.subtitleSize;
+    }
+    if (body.subtitleColor !== undefined) {
+      if (!isSubtitleColor(body.subtitleColor)) return reply.code(400).send({ error: "bad_subtitle_color" });
+      change.subtitleColor = body.subtitleColor.toLowerCase();
+    }
+    getProfile();
+    if (Object.keys(change).length > 0) db.update(profiles).set(change).where(eq(profiles.id, PROFILE_ID)).run();
     return { ok: true };
   });
 
@@ -379,8 +395,10 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const position = typeof body.position === "number" ? body.position : Number.NaN;
     const duration = typeof body.duration === "number" ? body.duration : Number.NaN;
     const subtitleChoice = typeof body.subtitleChoice === "string" ? body.subtitleChoice : null;
+    const subtitleDelay = typeof body.subtitleDelay === "number" ? body.subtitleDelay : undefined;
     if (!fileId || !Number.isFinite(position) || !Number.isFinite(duration)) return reply.code(400).send({ error: "bad_progress" });
-    if (!saveProgress({ fileId, position, duration, subtitleChoice })) return reply.code(404).send({ error: "not_found" });
+    if (subtitleDelay !== undefined && !(Math.abs(subtitleDelay) <= SUBTITLE_DELAY_LIMIT)) return reply.code(400).send({ error: "bad_subtitle_delay" });
+    if (!saveProgress({ fileId, position, duration, subtitleChoice, subtitleDelay })) return reply.code(404).send({ error: "not_found" });
     return { ok: true };
   });
 

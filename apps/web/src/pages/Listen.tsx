@@ -19,7 +19,7 @@ export function AlbumPage() {
   }, [id]);
   if (!album) return <p className="muted">{t.albums}</p>;
   return (
-    <article className="dossier-grid">
+    <article className="dossier-grid album-dossier">
       {album.coverPath ? <img className="cover" src={imageUrl(album.coverPath, "w342") ?? ""} alt="" /> : <div className="cover poster empty" />}
       <div>
         <p className="crumb"><Link to={`/music/artists/${album.artistId}`}>{album.artistName}</Link></p>

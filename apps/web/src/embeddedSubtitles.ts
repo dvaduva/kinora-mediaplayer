@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SubtitleChunk, SubtitleTrack } from "@kinora/shared";
 import { api } from "./api";
+import { shiftCues, subtitleDelay } from "./subtitleTiming";
 
 /** Must match CHUNK_SECONDS on the server. */
 const CHUNK_SECONDS = 60;
@@ -71,6 +72,7 @@ export function useEmbeddedSubtitles(media: HTMLVideoElement | null, fileId: str
             entry.seen.add(key);
             entry.track.addCue(new VTTCue(cue.start, cue.end, cue.text));
           }
+          shiftCues(entry.track, subtitleDelay(media));
           if (chunk.complete) entry.done.add(index);
           else entry.retryAt.set(index, Date.now() + PARTIAL_RETRY_MS);
           cuesShown = true;
@@ -84,7 +86,8 @@ export function useEmbeddedSubtitles(media: HTMLVideoElement | null, fileId: str
         .finally(() => entry.inflight.delete(index));
     };
     const want = () => {
-      const index = Math.floor((media.currentTime || 0) / CHUNK_SECONDS);
+      // With a delay the cues on screen come from earlier or later in the file.
+      const index = Math.max(0, Math.floor(((media.currentTime || 0) - subtitleDelay(media)) / CHUNK_SECONDS));
       // Windows away from the playhead are no longer needed; the server stops reading them.
       for (const [other, controller] of entry.inflight) {
         if (other !== index && other !== index + 1) controller.abort();

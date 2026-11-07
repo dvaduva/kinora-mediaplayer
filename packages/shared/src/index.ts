@@ -311,6 +311,27 @@ export interface PlaybackView {
   selectedSubtitleId: string | null;
   resumeSeconds: number;
   duration: number | null;
+  subtitleStyle: SubtitleStyle;
+  /** Seconds the captions are shifted for this file; positive shows them later. */
+  subtitleDelay: number;
+}
+
+export interface SubtitleStyle {
+  /** Percentage of the player's default caption size. */
+  size: number;
+  /** Hex color, #rrggbb. */
+  color: string;
+}
+
+export const SUBTITLE_SIZES = [75, 100, 125, 150, 175, 200] as const;
+export const SUBTITLE_DELAY_LIMIT = 600;
+
+export function isSubtitleColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
+export function isSubtitleSize(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 50 && value <= 300;
 }
 
 export interface AppSetup {
@@ -327,6 +348,7 @@ export interface AppSettings {
   ffmpeg: boolean;
   ffprobe: boolean;
   subtitleLanguage: string;
+  subtitleStyle: SubtitleStyle;
   transcodeCacheGb: number;
   transcodeCacheBytes: number;
 }
