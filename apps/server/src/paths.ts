@@ -26,6 +26,11 @@ export function pathKey(file: string) {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
+/** UNC paths (\\server\share or //server/share). Mapped drive letters are not detected. */
+export function isNetworkPath(root: string) {
+  return /^(\\\\|\/\/)/.test(root);
+}
+
 export function isInsideRoot(file: string, roots: string[]) {
   let realFile: string;
   try {

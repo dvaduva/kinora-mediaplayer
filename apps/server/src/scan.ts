@@ -23,6 +23,7 @@ import { downloadReleaseCover, searchReleases } from "./metadata/musicbrainz.js"
 import { chooseMatch, fetchMovie, fetchSeason, fetchSeries, searchMovies, searchSeries } from "./metadata/tmdb.js";
 import {
   AUDIO_EXTENSIONS,
+  SUBTITLE_EXTENSIONS,
   VIDEO_EXTENSIONS,
   discoverExternalSubtitles,
   extensionOf,
@@ -30,10 +31,11 @@ import {
   parseMovieName,
   parseMusicPath,
   parseSeriesFile,
+  shouldSkipDir,
   walkFiles,
   type ExternalSubtitle,
 } from "./parse/names.js";
-import { dataDir, pathKey } from "./paths.js";
+import { dataDir, isNetworkPath, pathKey } from "./paths.js";
 import { probeFile, type EmbeddedSubtitle } from "./probe.js";
 import { getSetting } from "./settings.js";
 
@@ -41,6 +43,7 @@ const states = new Map<string, ScanState>();
 const running = new Set<string>();
 let queue: Promise<unknown> = Promise.resolve();
 const watchers: FSWatcher[] = [];
+const rescanTimers: NodeJS.Timeout[] = [];
 
 function enqueue<T>(task: () => Promise<T>) {
   const run = queue.then(task, task);
@@ -129,18 +132,43 @@ export async function matchAlbum(albumId: string, mbid: string) {
   db.update(albums).set({ mbid, coverPath: cover, matched: true }).where(eq(albums.id, albumId)).run();
 }
 
+// A network share is rescanned on a timer instead of being watched: polling stats every file on every
+// interval, and over SMB those stats fill the libuv thread pool so static files and HLS stall for minutes.
+export const NETWORK_RESCAN_MS = 15 * 60 * 1000;
+
+function watchedExtension(type: LibraryType, extension: string) {
+  if (SUBTITLE_EXTENSIONS.has(extension)) return type !== "music";
+  return type === "music" ? AUDIO_EXTENSIONS.has(extension) : VIDEO_EXTENSIONS.has(extension);
+}
+
 export async function restartWatches() {
   await Promise.all(watchers.splice(0).map((watcher) => watcher.close().catch(() => undefined)));
+  for (const timer of rescanTimers.splice(0)) clearInterval(timer);
   for (const library of db.select().from(libraries).all()) {
     const roots = (JSON.parse(library.roots) as string[]).filter((root) => fs.existsSync(root));
     if (roots.length === 0) continue;
-    const watcher = watch(roots, {
+    const type = library.type as LibraryType;
+    if (roots.some(isNetworkPath)) {
+      const timer = setInterval(() => startScan(library.id), NETWORK_RESCAN_MS);
+      timer.unref();
+      rescanTimers.push(timer);
+    }
+    const localRoots = roots.filter((root) => !isNetworkPath(root));
+    if (localRoots.length === 0) continue;
+    const watcher = watch(localRoots, {
       ignoreInitial: true,
       // Native recursive watches die on Windows for large or remote folders and take the process with them.
       usePolling: process.platform === "win32",
       interval: 10_000,
       binaryInterval: 10_000,
       awaitWriteFinish: { stabilityThreshold: 1500, pollInterval: 200 },
+      // Only folders and media files are polled; artwork, NFOs and torrent leftovers are not.
+      ignored: (file, stats) => {
+        const name = path.basename(file);
+        if (stats?.isDirectory()) return shouldSkipDir(name);
+        if (!stats?.isFile()) return false;
+        return !watchedExtension(type, extensionOf(name));
+      },
     });
     let timer: NodeJS.Timeout | undefined;
     const kick = () => {
@@ -221,13 +249,13 @@ async function scanLibrary(libraryId: string) {
 }
 
 async function ingestFile(libraryId: string, type: LibraryType, file: string, root: string, touchedSeasons: Set<string>) {
-  const stat = fs.statSync(file);
+  const stat = await fs.promises.stat(file);
   const fileId = stableId("file", pathKey(file));
   const existing = db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId)).get();
   const unchanged =
     existing && existing.size === stat.size && existing.mtime === Math.round(stat.mtimeMs) && !existing.missing;
   if (unchanged) {
-    refreshExternalSubtitles(fileId, file);
+    await refreshExternalSubtitles(fileId, file);
     if (existing.movieId) return Boolean(db.select().from(movies).where(eq(movies.id, existing.movieId)).get()?.matched);
     if (existing.episodeId) {
       const episode = db.select().from(episodes).where(eq(episodes.id, existing.episodeId)).get();
@@ -266,7 +294,7 @@ async function ingestFile(libraryId: string, type: LibraryType, file: string, ro
     const movieId = stableId("movie", `${libraryId}|${groupKey}`);
     ensureMovie(libraryId, movieId, groupKey, parsed.title || path.basename(file), parsed.year);
     writeFile({ ...base, movieId, episodeId: null, trackId: null });
-    replaceSubtitles(fileId, file, probed?.subtitles ?? []);
+    await replaceSubtitles(fileId, file, probed?.subtitles ?? []);
     const movie = db.select().from(movies).where(eq(movies.id, movieId)).get();
     if (movie && !movie.matched && getSetting("tmdbReadToken")) {
       const hits = await searchMovies(parsed.title, parsed.year);
@@ -286,7 +314,7 @@ async function ingestFile(libraryId: string, type: LibraryType, file: string, ro
       : stableId("episode", `${seriesId}|${pathKey(file)}`);
   ensureEpisode(seriesId, episodeId, parsed);
   writeFile({ ...base, movieId: null, episodeId, trackId: null });
-  replaceSubtitles(fileId, file, probed?.subtitles ?? []);
+  await replaceSubtitles(fileId, file, probed?.subtitles ?? []);
   let show = db.select().from(series).where(eq(series.id, seriesId)).get();
   if (show && !show.matched && getSetting("tmdbReadToken")) {
     const hits = await searchSeries(parsed.showTitle, parsed.year);
@@ -555,9 +583,10 @@ function writeFile(row: typeof mediaFiles.$inferInsert) {
     .run();
 }
 
-function replaceSubtitles(fileId: string, videoPath: string, embedded: EmbeddedSubtitle[]) {
+async function replaceSubtitles(fileId: string, videoPath: string, embedded: EmbeddedSubtitle[]) {
+  const external = await discoverExternalSubtitles(videoPath);
   db.delete(subtitleAssets).where(eq(subtitleAssets.fileId, fileId)).run();
-  for (const subtitle of discoverExternalSubtitles(videoPath)) insertExternal(fileId, subtitle);
+  for (const subtitle of external) insertExternal(fileId, subtitle);
   for (const subtitle of embedded) {
     db.insert(subtitleAssets)
       .values({
@@ -576,11 +605,12 @@ function replaceSubtitles(fileId: string, videoPath: string, embedded: EmbeddedS
   }
 }
 
-function refreshExternalSubtitles(fileId: string, videoPath: string) {
+async function refreshExternalSubtitles(fileId: string, videoPath: string) {
+  const external = await discoverExternalSubtitles(videoPath);
   db.delete(subtitleAssets)
     .where(and(eq(subtitleAssets.fileId, fileId), eq(subtitleAssets.origin, "external")))
     .run();
-  for (const subtitle of discoverExternalSubtitles(videoPath)) insertExternal(fileId, subtitle);
+  for (const subtitle of external) insertExternal(fileId, subtitle);
 }
 
 function insertExternal(fileId: string, subtitle: ExternalSubtitle) {

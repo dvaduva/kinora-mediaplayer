@@ -282,31 +282,40 @@ export interface ExternalSubtitle {
   textBased: boolean;
 }
 
-function readDir(folder: string) {
+async function readDir(folder: string) {
   try {
-    return fs.readdirSync(folder, { withFileTypes: true });
+    return await fs.promises.readdir(folder, { withFileTypes: true });
   } catch {
     return [];
   }
 }
 
-export function discoverExternalSubtitles(videoPath: string): ExternalSubtitle[] {
+const SUBTITLE_DIRS = new Set(["subs", "subtitles"]);
+
+/** Async on purpose: on network shares every listing is a round trip, and a sync call would stall the whole server. */
+export async function discoverExternalSubtitles(videoPath: string): Promise<ExternalSubtitle[]> {
   const dir = path.dirname(videoPath);
   const videoStem = stripKnownExt(path.basename(videoPath));
   const files: string[] = [];
-  const collect = (folder: string) => {
-    for (const entry of readDir(folder)) {
+  const collect = (folder: string, entries: fs.Dirent[]) => {
+    for (const entry of entries) {
       if (!entry.isFile()) continue;
       const ext = extensionOf(entry.name);
       if (!SUBTITLE_EXTENSIONS.has(ext) || ext === "sub") continue;
       files.push(path.join(folder, entry.name));
     }
   };
-  collect(dir);
-  for (const name of ["Subs", "Subtitles", "subs", "subtitles"]) collect(path.join(dir, name));
+  // The folder is listed once; subtitle subfolders are only opened when that listing shows them.
+  const entries = await readDir(dir);
+  collect(dir, entries);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !SUBTITLE_DIRS.has(entry.name.toLowerCase())) continue;
+    const folder = path.join(dir, entry.name);
+    collect(folder, await readDir(folder));
+  }
 
   let videoCount = 0;
-  for (const entry of readDir(dir)) {
+  for (const entry of entries) {
     if (entry.isFile() && VIDEO_EXTENSIONS.has(extensionOf(entry.name)) && !isSampleName(entry.name)) videoCount += 1;
   }
 

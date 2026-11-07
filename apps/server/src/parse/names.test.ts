@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { parseMovieName, parseSeriesFile, titlesEqual } from "./names.js";
+import { isNetworkPath } from "../paths.js";
+import { discoverExternalSubtitles, parseMovieName, parseSeriesFile, titlesEqual } from "./names.js";
 
 test("parses a parenthetical movie title", () => {
   assert.deepEqual(parseMovieName("Dune (2021).mkv"), { title: "Dune", year: 2021 });
@@ -44,4 +47,29 @@ test("compares titles without diacritics or a leading article", () => {
   assert.equal(titlesEqual("Amélie", "Amelie"), true);
   assert.equal(titlesEqual("The Matrix", "Matrix"), true);
   assert.equal(titlesEqual("Dune", "Dune: Part Two"), false);
+});
+
+test("finds subtitles next to the video and in a Subs folder", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kinora-subs-"));
+  try {
+    fs.writeFileSync(path.join(dir, "Movie.2020.mkv"), "");
+    fs.writeFileSync(path.join(dir, "Movie.2020.ro.srt"), "");
+    fs.writeFileSync(path.join(dir, "poster.jpg"), "");
+    fs.mkdirSync(path.join(dir, "Subs"));
+    fs.writeFileSync(path.join(dir, "Subs", "English.srt"), "");
+    const found = await discoverExternalSubtitles(path.join(dir, "Movie.2020.mkv"));
+    assert.deepEqual(found.map((sub) => [path.basename(sub.path), sub.language]).sort(), [
+      ["English.srt", "en"],
+      ["Movie.2020.ro.srt", "ro"],
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("treats UNC paths as network shares", () => {
+  assert.equal(isNetworkPath("\\\\dv1\\Download\\completed"), true);
+  assert.equal(isNetworkPath("//nas/media"), true);
+  assert.equal(isNetworkPath("D:\\Video\\Movies"), false);
+  assert.equal(isNetworkPath("/home/me/Movies"), false);
 });
