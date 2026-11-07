@@ -16,7 +16,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const currentRef = useRef<NowPlaying | null>(null);
   const [current, setCurrent] = useState<NowPlaying | null>(null);
+  const [active, setActive] = useState(false);
   const { t } = useLocale();
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const finish = () => setActive(false);
+    audio.addEventListener("ended", finish);
+    audio.addEventListener("error", finish);
+    return () => {
+      audio.removeEventListener("ended", finish);
+      audio.removeEventListener("error", finish);
+    };
+  }, []);
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -45,6 +57,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   function play(track: NowPlaying) {
     currentRef.current = track;
     setCurrent(track);
+    setActive(true);
     const audio = audioRef.current;
     if (!audio) return;
     audio.src = `/api/stream/${track.fileId}`;
@@ -53,7 +66,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   return (
     <AudioContext.Provider value={{ play }}>
       {children}
-      <div className="now">
+      <div className="now" hidden={!active}>
         {current?.cover ? <img src={imageUrl(current.cover) ?? ""} alt="" /> : <div className="face" />}
         <div>
           <small className="muted">{t.nowPlaying}</small>

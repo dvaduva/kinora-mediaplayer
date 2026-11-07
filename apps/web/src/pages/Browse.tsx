@@ -2,15 +2,21 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { AlbumSummary, ArtistSummary, HomeView, MovieSummary, SearchHit, SeriesSummary } from "@kinora/shared";
 import { api } from "../api";
+import { useCached } from "../cache";
 import { useLocale } from "../i18n";
-import { PosterLink } from "../ui";
+import { PosterLink, ScrollRail, SkeletonGrid } from "../ui";
 
 export function HomePage() {
   const { t } = useLocale();
-  const [home, setHome] = useState<HomeView | null>(null);
-  useEffect(() => {
-    api<HomeView>("/api/home").then(setHome).catch(() => setHome(null));
-  }, []);
+  const [home] = useCached<HomeView | null>("/api/home", null);
+  if (home === undefined) {
+    return (
+      <section className="row">
+        <span className="skeleton skeleton-line title" />
+        <SkeletonGrid count={6} />
+      </section>
+    );
+  }
   if (!home) return <p className="muted">{t.home}</p>;
   const empty = home.movies.length === 0 && home.series.length === 0 && home.albums.length === 0;
   return (
@@ -42,11 +48,11 @@ export function HomePage() {
       {home.continueWatching.length > 0 ? (
         <section className="row">
           <div className="row-head"><h2>{t.continue}</h2></div>
-          <div className="rail">
+          <ScrollRail className="rail">
             {home.continueWatching.map((item) => (
               <PosterLink key={item.fileId} to={`/play/${item.fileId}`} src={item.posterPath} title={item.title} meta={item.subtitle} />
             ))}
-          </div>
+          </ScrollRail>
         </section>
       ) : null}
       <PosterRow title={t.recentMovies} items={home.movies.map((movie) => ({ id: movie.id, to: `/movies/${movie.id}`, title: movie.title, meta: movie.year ? String(movie.year) : null, src: movie.posterPath, badge: movie.matched ? null : t.unmatched }))} />
@@ -65,80 +71,86 @@ function PosterRow(props: { title: string; items: { id: string; to: string; titl
   return (
     <section className="row">
       <div className="row-head"><h2>{props.title}</h2></div>
-      <div className="rail">
+      <ScrollRail className="rail">
         {props.items.map((item) => (
           <PosterLink key={item.id} to={item.to} src={item.src} title={item.title} meta={item.meta} badge={item.badge} />
         ))}
-      </div>
+      </ScrollRail>
     </section>
   );
 }
 
 export function MovieListPage() {
   const { t } = useLocale();
-  const [movies, setMovies] = useState<MovieSummary[]>([]);
-  useEffect(() => {
-    api<MovieSummary[]>("/api/movies").then(setMovies).catch(() => setMovies([]));
-  }, []);
+  const [movies] = useCached<MovieSummary[]>("/api/movies", []);
   return (
     <>
       <h1>{t.movies}</h1>
-      <div className="grid">
-        {movies.map((movie) => (
-          <PosterLink key={movie.id} to={`/movies/${movie.id}`} src={movie.posterPath} title={movie.title} meta={movie.year ? String(movie.year) : null} badge={movie.matched ? null : t.unmatched} />
-        ))}
-      </div>
+      {movies ? (
+        <div className="grid">
+          {movies.map((movie) => (
+            <PosterLink key={movie.id} to={`/movies/${movie.id}`} src={movie.posterPath} title={movie.title} meta={movie.year ? String(movie.year) : null} badge={movie.matched ? null : t.unmatched} />
+          ))}
+        </div>
+      ) : (
+        <SkeletonGrid />
+      )}
     </>
   );
 }
 
 export function SeriesListPage() {
   const { t } = useLocale();
-  const [items, setItems] = useState<SeriesSummary[]>([]);
-  useEffect(() => {
-    api<SeriesSummary[]>("/api/series").then(setItems).catch(() => setItems([]));
-  }, []);
+  const [items] = useCached<SeriesSummary[]>("/api/series", []);
   return (
     <>
       <h1>{t.series}</h1>
-      <div className="grid">
-        {items.map((show) => (
-          <PosterLink key={show.id} to={`/series/${show.id}`} src={show.posterPath} title={show.title} meta={show.year ? String(show.year) : null} badge={show.matched ? null : t.unmatched} />
-        ))}
-      </div>
+      {items ? (
+        <div className="grid">
+          {items.map((show) => (
+            <PosterLink key={show.id} to={`/series/${show.id}`} src={show.posterPath} title={show.title} meta={show.year ? String(show.year) : null} badge={show.matched ? null : t.unmatched} />
+          ))}
+        </div>
+      ) : (
+        <SkeletonGrid />
+      )}
     </>
   );
 }
 
 export function MusicPage() {
   const { t } = useLocale();
-  const [artists, setArtists] = useState<ArtistSummary[]>([]);
-  const [albums, setAlbums] = useState<AlbumSummary[]>([]);
-  useEffect(() => {
-    api<ArtistSummary[]>("/api/artists").then(setArtists).catch(() => setArtists([]));
-    api<AlbumSummary[]>("/api/albums").then(setAlbums).catch(() => setAlbums([]));
-  }, []);
+  const [artists] = useCached<ArtistSummary[]>("/api/artists", []);
+  const [albums] = useCached<AlbumSummary[]>("/api/albums", []);
   return (
     <>
       <h1>{t.music}</h1>
       <section className="row">
         <h2>{t.albums}</h2>
-        <div className="grid">
-          {albums.map((album) => (
-            <PosterLink key={album.id} to={`/music/albums/${album.id}`} src={album.coverPath} title={album.title} meta={album.artistName} badge={album.matched ? null : t.unmatched} />
-          ))}
-        </div>
+        {albums ? (
+          <div className="grid">
+            {albums.map((album) => (
+              <PosterLink key={album.id} to={`/music/albums/${album.id}`} src={album.coverPath} title={album.title} meta={album.artistName} badge={album.matched ? null : t.unmatched} />
+            ))}
+          </div>
+        ) : (
+          <SkeletonGrid count={6} />
+        )}
       </section>
       <section className="row">
         <h2>{t.artists}</h2>
-        <div className="grid">
-          {artists.map((artist) => (
-            <Link key={artist.id} className="poster-card" to={`/music/artists/${artist.id}`}>
-              <div className="cover poster empty" />
-              <span>{artist.name}</span>
-            </Link>
-          ))}
-        </div>
+        {artists ? (
+          <div className="grid">
+            {artists.map((artist) => (
+              <Link key={artist.id} className="poster-card" to={`/music/artists/${artist.id}`}>
+                <div className="cover poster empty" />
+                <span>{artist.name}</span>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <SkeletonGrid count={6} square />
+        )}
       </section>
     </>
   );

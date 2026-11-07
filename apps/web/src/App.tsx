@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import type { AppSetup } from "@kinora/shared";
 import { api, setUnauthorized } from "./api";
+import { prefetch } from "./cache";
 import { AudioProvider } from "./audio";
 import { LocaleProvider, useLocale } from "./i18n";
 import { HomePage, MovieListPage, MusicPage, SearchPage, SeriesListPage } from "./pages/Browse";
@@ -87,10 +88,29 @@ function Gate(props: { onSuccess: () => void }) {
   );
 }
 
+/** API data behind each menu entry, fetched ahead of the click. */
+const MENU_DATA = {
+  "/": ["/api/home"],
+  "/movies": ["/api/movies"],
+  "/series": ["/api/series"],
+  "/music": ["/api/albums", "/api/artists"],
+  "/identify": ["/api/identify"],
+} as const;
+
+function warm(to: keyof typeof MENU_DATA) {
+  const go = () => prefetch(...MENU_DATA[to]);
+  return { onPointerEnter: go, onFocus: go };
+}
+
 function Shell(props: { ffprobe: boolean }) {
   const { t, toggle } = useLocale();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  useEffect(() => {
+    // Once the shell has painted, load every menu page so the first click renders from memory.
+    const timer = window.setTimeout(() => prefetch(...Object.values(MENU_DATA).flat()), 400);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -99,11 +119,11 @@ function Shell(props: { ffprobe: boolean }) {
           <strong>Kinora</strong>
         </Link>
         <nav className="nav">
-          <NavLink to="/" end>{t.home}</NavLink>
-          <NavLink to="/movies">{t.movies}</NavLink>
-          <NavLink to="/series">{t.series}</NavLink>
-          <NavLink to="/music">{t.music}</NavLink>
-          <NavLink to="/identify">{t.identify}</NavLink>
+          <NavLink to="/" end {...warm("/")}>{t.home}</NavLink>
+          <NavLink to="/movies" {...warm("/movies")}>{t.movies}</NavLink>
+          <NavLink to="/series" {...warm("/series")}>{t.series}</NavLink>
+          <NavLink to="/music" {...warm("/music")}>{t.music}</NavLink>
+          <NavLink to="/identify" {...warm("/identify")}>{t.identify}</NavLink>
           <NavLink to="/settings">{t.settings}</NavLink>
         </nav>
         <form

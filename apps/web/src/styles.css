@@ -279,6 +279,7 @@ h2 + .scroll-rail { margin-top: 18px; }
   background: #100e15;
   border-top: 1px solid var(--line);
 }
+.now[hidden] { display: none; }
 .now img { width: 46px; height: 46px; object-fit: cover; }
 .now audio { margin-left: auto; width: min(420px, 46vw); }
 .gate {
@@ -319,6 +320,25 @@ h2 + .scroll-rail { margin-top: 18px; }
   .billboard, .dossier-hero { margin-left: -18px; margin-right: -18px; }
 }
 
+/* Loading placeholders */
+.skeleton {
+  display: block;
+  border-radius: 2px;
+  background: linear-gradient(100deg, var(--seat) 30%, #383042 50%, var(--seat) 70%) 0 0 / 300% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-line { height: 12px; width: 80%; }
+.skeleton-line.short { width: 40%; }
+.skeleton-line.title { height: 22px; width: 36%; margin-bottom: 10px; }
+.skeleton-field { height: 38px; width: min(420px, 100%); margin-top: 12px; }
+@keyframes shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+.poster-card img.poster { animation: fade-in 0.25s ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
+  .skeleton, .poster-card img.poster { animation: none; }
 }

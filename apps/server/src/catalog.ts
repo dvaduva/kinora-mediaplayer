@@ -81,16 +81,53 @@ export function libraryViews(): LibraryView[] {
     }));
 }
 
+type MediaFileRow = typeof mediaFiles.$inferSelect;
+
+/**
+ * One pass over the present (non-missing) files, episodes and tracks, so list endpoints
+ * answer "which titles have files" with map lookups instead of re-reading tables per row.
+ */
+type Presence = {
+  movieFiles: Map<string, MediaFileRow[]>;
+  episodeFiles: Map<string, MediaFileRow[]>;
+  seriesWithFiles: Set<string>;
+  albumsWithFiles: Set<string>;
+  artistNames: Map<string, string>;
+};
+
+function presence(): Presence {
+  const movieFiles = new Map<string, MediaFileRow[]>();
+  const episodeFiles = new Map<string, MediaFileRow[]>();
+  const trackIds = new Set<string>();
+  for (const file of db.select().from(mediaFiles).where(eq(mediaFiles.missing, false)).all()) {
+    if (file.movieId) push(movieFiles, file.movieId, file);
+    if (file.episodeId) push(episodeFiles, file.episodeId, file);
+    if (file.trackId) trackIds.add(file.trackId);
+  }
+  const seriesWithFiles = new Set<string>();
+  for (const episode of db.select({ id: episodes.id, seriesId: episodes.seriesId }).from(episodes).all()) {
+    if (episodeFiles.has(episode.id)) seriesWithFiles.add(episode.seriesId);
+  }
+  const albumsWithFiles = new Set<string>();
+  for (const track of db.select({ id: tracks.id, albumId: tracks.albumId }).from(tracks).all()) {
+    if (trackIds.has(track.id)) albumsWithFiles.add(track.albumId);
+  }
+  const artistNames = new Map(db.select({ id: artists.id, name: artists.name }).from(artists).all().map((row) => [row.id, row.name]));
+  return { movieFiles, episodeFiles, seriesWithFiles, albumsWithFiles, artistNames };
+}
+
+function push<T>(map: Map<string, T[]>, key: string, value: T) {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}
+
 function filesForMovie(movieId: string) {
   return db
     .select()
     .from(mediaFiles)
-    .all()
-    .filter((file) => file.movieId === movieId && !file.missing);
-}
-
-function visibleMovie(movieId: string) {
-  return filesForMovie(movieId).length > 0;
+    .where(and(eq(mediaFiles.movieId, movieId), eq(mediaFiles.missing, false)))
+    .all();
 }
 
 function versionOf(file: typeof mediaFiles.$inferSelect): MediaVersion {
@@ -168,20 +205,21 @@ function movieSummary(movie: typeof movies.$inferSelect): MovieSummary {
   };
 }
 
-export function listMovies() {
+export function listMovies(p = presence()) {
   return db
     .select()
     .from(movies)
     .all()
-    .filter((movie) => visibleMovie(movie.id))
+    .filter((movie) => p.movieFiles.has(movie.id))
     .sort((a, b) => a.title.localeCompare(b.title))
     .map(movieSummary);
 }
 
 export function movieDetail(id: string): MovieDetail | null {
   const movie = db.select().from(movies).where(eq(movies.id, id)).get();
-  if (!movie || !visibleMovie(id)) return null;
-  const versions = filesForMovie(id).map(versionOf).sort((a, b) => rank(b) - rank(a));
+  const files = movie ? filesForMovie(id) : [];
+  if (!movie || files.length === 0) return null;
+  const versions = files.map(versionOf).sort((a, b) => rank(b) - rank(a));
   return {
     ...movieSummary(movie),
     originalTitle: movie.originalTitle,
@@ -213,34 +251,27 @@ export function personCredits(tmdbPersonId: number): { credits: PersonCredit[]; 
     return member;
   };
   const credits: PersonCredit[] = [];
+  const p = presence();
   for (const movie of db.select().from(movies).all()) {
     const member = roleIn(movie.castJson);
-    if (!member || !visibleMovie(movie.id)) continue;
+    if (!member || !p.movieFiles.has(movie.id)) continue;
     credits.push({ kind: "movie", id: movie.id, title: movie.title, year: movie.year, posterPath: movie.posterPath, character: member.character });
   }
-  const visibleSeries = new Set(
-    db
-      .select()
-      .from(episodes)
-      .all()
-      .filter((episode) => episodeHasFile(episode.id))
-      .map((episode) => episode.seriesId),
-  );
   for (const show of db.select().from(series).all()) {
     const member = roleIn(show.castJson);
-    if (!member || !visibleSeries.has(show.id)) continue;
+    if (!member || !p.seriesWithFiles.has(show.id)) continue;
     credits.push({ kind: "series", id: show.id, title: show.title, year: show.year, posterPath: show.posterPath, character: member.character });
   }
   credits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0) || a.title.localeCompare(b.title));
   return { credits, fallback };
 }
 
-export function listSeries(): SeriesSummary[] {
+export function listSeries(p = presence()): SeriesSummary[] {
   return db
     .select()
     .from(series)
     .all()
-    .filter((show) => db.select().from(episodes).all().some((episode) => episode.seriesId === show.id && episodeHasFile(episode.id)))
+    .filter((show) => p.seriesWithFiles.has(show.id))
     .sort((a, b) => a.title.localeCompare(b.title))
     .map((show) => ({
       id: show.id,
@@ -252,25 +283,31 @@ export function listSeries(): SeriesSummary[] {
     }));
 }
 
-function episodeHasFile(episodeId: string) {
+function presentFile(column: typeof mediaFiles.episodeId | typeof mediaFiles.trackId, id: string) {
   return db
     .select()
     .from(mediaFiles)
-    .all()
-    .some((file) => file.episodeId === episodeId && !file.missing);
+    .where(and(eq(column, id), eq(mediaFiles.missing, false)))
+    .get();
 }
 
 export function seriesDetail(id: string): SeriesDetail | null {
   const show = db.select().from(series).where(eq(series.id, id)).get();
   if (!show) return null;
+  const fileByEpisode = new Map<string, MediaFileRow>();
   const episodeRows = db
     .select()
     .from(episodes)
+    .where(eq(episodes.seriesId, id))
     .all()
-    .filter((episode) => episode.seriesId === id && episodeHasFile(episode.id))
+    .filter((episode) => {
+      const file = presentFile(mediaFiles.episodeId, episode.id);
+      if (file) fileByEpisode.set(episode.id, file);
+      return file != null;
+    })
     .sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
   if (episodeRows.length === 0) return null;
-  const seasonRows = db.select().from(seasons).all().filter((season) => season.seriesId === id);
+  const seasonRows = db.select().from(seasons).where(eq(seasons.seriesId, id)).all();
   const seasonNumbers = [...new Set(episodeRows.map((episode) => episode.seasonNumber))];
   return {
     id: show.id,
@@ -295,11 +332,7 @@ export function seriesDetail(id: string): SeriesDetail | null {
       episodes: episodeRows
         .filter((episode) => episode.seasonNumber === seasonNumber)
         .map((episode) => {
-          const file = db
-            .select()
-            .from(mediaFiles)
-            .all()
-            .find((item) => item.episodeId === episode.id && !item.missing);
+          const file = fileByEpisode.get(episode.id);
           const version = file ? versionOf(file) : null;
           return {
             id: episode.id,
@@ -318,45 +351,32 @@ export function seriesDetail(id: string): SeriesDetail | null {
   };
 }
 
-function albumSummary(album: typeof albums.$inferSelect): AlbumSummary | null {
-  const artist = db.select().from(artists).where(eq(artists.id, album.artistId)).get();
-  const hasTrack = db
-    .select()
-    .from(tracks)
-    .all()
-    .some((track) => track.albumId === album.id && trackHasFile(track.id));
-  if (!artist || !hasTrack) return null;
+function albumSummary(album: typeof albums.$inferSelect, p: Presence): AlbumSummary | null {
+  const artistName = p.artistNames.get(album.artistId);
+  if (artistName == null || !p.albumsWithFiles.has(album.id)) return null;
   return {
     id: album.id,
     title: album.title,
     year: album.year,
     coverPath: album.coverPath,
-    artistName: artist.name,
-    artistId: artist.id,
+    artistName,
+    artistId: album.artistId,
     matched: album.matched,
   };
 }
 
-function trackHasFile(trackId: string) {
-  return db
-    .select()
-    .from(mediaFiles)
-    .all()
-    .some((file) => file.trackId === trackId && !file.missing);
-}
-
-export function listAlbums() {
+export function listAlbums(p = presence()) {
   return db
     .select()
     .from(albums)
     .all()
-    .map(albumSummary)
+    .map((album) => albumSummary(album, p))
     .filter((album): album is AlbumSummary => album != null)
     .sort((a, b) => a.title.localeCompare(b.title));
 }
 
-export function listArtists() {
-  const albumsInLibrary = listAlbums();
+export function listArtists(p = presence()) {
+  const albumsInLibrary = listAlbums(p);
   const ids = new Set(albumsInLibrary.map((album) => album.artistId));
   return db
     .select()
@@ -378,22 +398,31 @@ export function artistDetail(id: string): ArtistDetail | null {
 export function albumDetail(id: string): AlbumDetail | null {
   const album = db.select().from(albums).where(eq(albums.id, id)).get();
   if (!album) return null;
-  const summary = albumSummary(album);
-  if (!summary) return null;
+  const artist = db.select().from(artists).where(eq(artists.id, album.artistId)).get();
+  if (!artist) return null;
+  const fileByTrack = new Map<string, MediaFileRow>();
   const albumTracks = db
     .select()
     .from(tracks)
+    .where(eq(tracks.albumId, id))
     .all()
-    .filter((track) => track.albumId === id && trackHasFile(track.id))
+    .filter((track) => {
+      const file = presentFile(mediaFiles.trackId, track.id);
+      if (file) fileByTrack.set(track.id, file);
+      return file != null;
+    })
     .sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || (a.trackNumber ?? 0) - (b.trackNumber ?? 0));
+  if (albumTracks.length === 0) return null;
   return {
-    ...summary,
+    id: album.id,
+    title: album.title,
+    year: album.year,
+    coverPath: album.coverPath,
+    artistName: artist.name,
+    artistId: artist.id,
+    matched: album.matched,
     tracks: albumTracks.map((track) => {
-      const file = db
-        .select()
-        .from(mediaFiles)
-        .all()
-        .find((item) => item.trackId === track.id && !item.missing);
+      const file = fileByTrack.get(track.id);
       return {
         id: track.id,
         fileId: file?.id ?? "",
@@ -408,19 +437,20 @@ export function albumDetail(id: string): AlbumDetail | null {
 }
 
 export function homeView(): HomeView {
+  const p = presence();
   const moviesInLibrary = db
     .select()
     .from(movies)
     .all()
-    .filter((movie) => visibleMovie(movie.id))
+    .filter((movie) => p.movieFiles.has(movie.id))
     .sort((a, b) => b.addedAt - a.addedAt);
   const featured = moviesInLibrary.find((movie) => movie.backdropPath) ?? moviesInLibrary[0] ?? null;
   return {
     continueWatching: continueWatching(),
     featured: featured ? movieDetail(featured.id) : null,
     movies: moviesInLibrary.slice(0, 18).map(movieSummary),
-    series: listSeries().slice(0, 18),
-    albums: listAlbums().slice(0, 18),
+    series: listSeries(p).slice(0, 18),
+    albums: listAlbums(p).slice(0, 18),
   };
 }
 
@@ -459,22 +489,23 @@ export function searchLibrary(query: string): SearchHit[] {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return [];
   const hits: SearchHit[] = [];
-  for (const movie of listMovies()) {
+  const p = presence();
+  for (const movie of listMovies(p)) {
     if (movie.title.toLocaleLowerCase().includes(needle)) {
       hits.push({ kind: "movie", id: movie.id, title: movie.title, subtitle: movie.year ? String(movie.year) : null, posterPath: movie.posterPath });
     }
   }
-  for (const show of listSeries()) {
+  for (const show of listSeries(p)) {
     if (show.title.toLocaleLowerCase().includes(needle)) {
       hits.push({ kind: "series", id: show.id, title: show.title, subtitle: show.year ? String(show.year) : null, posterPath: show.posterPath });
     }
   }
-  for (const album of listAlbums()) {
+  for (const album of listAlbums(p)) {
     if (album.title.toLocaleLowerCase().includes(needle) || album.artistName.toLocaleLowerCase().includes(needle)) {
       hits.push({ kind: "album", id: album.id, title: album.title, subtitle: album.artistName, posterPath: album.coverPath });
     }
   }
-  for (const artist of listArtists()) {
+  for (const artist of listArtists(p)) {
     if (artist.name.toLocaleLowerCase().includes(needle)) {
       hits.push({ kind: "artist", id: artist.id, title: artist.name, subtitle: null, posterPath: null });
     }
@@ -483,27 +514,25 @@ export function searchLibrary(query: string): SearchHit[] {
 }
 
 export function identifyQueue(): IdentifyItem[] {
+  const p = presence();
   const items: IdentifyItem[] = [];
-  for (const movie of db.select().from(movies).all()) {
-    if (movie.matched || !visibleMovie(movie.id)) continue;
-    const names = filesForMovie(movie.id).map((file) => path.basename(file.path));
-    items.push({ kind: "movie", id: movie.id, title: movie.title, year: movie.year, hint: names.join(", ") });
+  for (const movie of db.select().from(movies).where(eq(movies.matched, false)).all()) {
+    const files = p.movieFiles.get(movie.id);
+    if (!files) continue;
+    items.push({ kind: "movie", id: movie.id, title: movie.title, year: movie.year, hint: files.map((file) => path.basename(file.path)).join(", ") });
   }
-  for (const show of db.select().from(series).all()) {
-    const owned = db.select().from(episodes).all().filter((episode) => episode.seriesId === show.id && episodeHasFile(episode.id));
-    if (show.matched || owned.length === 0) continue;
-    const episodeIds = new Set(owned.map((episode) => episode.id));
-    const names = db
-      .select()
-      .from(mediaFiles)
-      .all()
-      .filter((file) => file.episodeId != null && episodeIds.has(file.episodeId) && !file.missing)
-      .map((file) => path.basename(file.path));
+  const episodesBySeries = new Map<string, string[]>();
+  for (const episode of db.select({ id: episodes.id, seriesId: episodes.seriesId }).from(episodes).all()) {
+    push(episodesBySeries, episode.seriesId, episode.id);
+  }
+  for (const show of db.select().from(series).where(eq(series.matched, false)).all()) {
+    const names = (episodesBySeries.get(show.id) ?? []).flatMap((episodeId) => (p.episodeFiles.get(episodeId) ?? []).map((file) => path.basename(file.path)));
+    if (names.length === 0) continue;
     items.push({ kind: "series", id: show.id, title: show.title, year: show.year, hint: names.join(", ") });
   }
-  for (const album of db.select().from(albums).all()) {
-    const summary = albumSummary(album);
-    if (!summary || album.matched) continue;
+  for (const album of db.select().from(albums).where(eq(albums.matched, false)).all()) {
+    const summary = albumSummary(album, p);
+    if (!summary) continue;
     items.push({ kind: "album", id: album.id, title: album.title, year: album.year, hint: summary.artistName });
   }
   return items;

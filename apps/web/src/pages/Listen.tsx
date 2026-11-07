@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { AlbumDetail, ArtistDetail, IdentifyItem, MusicCandidate, TmdbCandidate } from "@kinora/shared";
 import { api } from "../api";
+import { useCached } from "../cache";
 import { useLocale } from "../i18n";
 import { formatClock, imageUrl } from "../media";
-import { PosterLink } from "../ui";
+import { PosterLink, SkeletonBlocks } from "../ui";
 import { useAudio } from "../audio";
 
 export function AlbumPage() {
@@ -65,16 +66,14 @@ export function ArtistPage() {
 
 export function IdentifyPage() {
   const { t } = useLocale();
-  const [items, setItems] = useState<IdentifyItem[]>([]);
-  useEffect(() => {
-    api<IdentifyItem[]>("/api/identify").then(setItems).catch(() => setItems([]));
-  }, []);
+  const [items, setItems] = useCached<IdentifyItem[]>("/api/identify", []);
   return (
     <>
       <h1>{t.identify}</h1>
       <p className="lede">{t.identifyHint}</p>
-      {items.length === 0 ? <p className="muted">{t.nothingToIdentify}</p> : null}
-      {items.map((item) => (
+      {items === undefined ? <SkeletonBlocks /> : null}
+      {items?.length === 0 ? <p className="muted">{t.nothingToIdentify}</p> : null}
+      {items?.map((item) => (
         <IdentifyRow key={`${item.kind}-${item.id}`} item={item} onDone={(id) => setItems((current) => current.filter((entry) => entry.id !== id))} />
       ))}
     </>
