@@ -259,6 +259,7 @@ function movieSummary(movie: typeof movies.$inferSelect, context = watchContext(
     runtime: movie.runtime,
     releaseDate: movie.releaseDate,
     addedAt: movie.addedAt,
+    genres: parseJson<string[]>(movie.genresJson, []),
     watchStatus: watch.status,
     watchStatusManual: watch.manual,
   };
@@ -316,7 +317,6 @@ export function movieDetail(id: string): MovieDetail | null {
     overview: movie.overview,
     tagline: movie.tagline,
     backdropPath: movie.backdropPath,
-    genres: parseJson<string[]>(movie.genresJson, []),
     directors: latinNames(parseJson<string[]>(movie.directorsJson, [])),
     writers: latinNames(parseJson<string[]>(movie.writersJson, [])),
     cast: latinCast(parseJson<CastMember[]>(movie.castJson, [])),

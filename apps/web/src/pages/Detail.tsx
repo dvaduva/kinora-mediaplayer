@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { CastMember, MediaVersion, MovieDetail, SeriesDetail, SimilarTitle } from "@kinora/shared";
+import { WATCH_STATUSES, type CastMember, type MediaVersion, type MovieDetail, type SeriesDetail, type SimilarTitle, type WatchStatus } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
 import { codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel } from "../media";
-import { Poster, ScrollRail } from "../ui";
+import { Poster, ScrollRail, statusLabel } from "../ui";
 
 export function MoviePage() {
   const { id } = useParams();
@@ -62,6 +62,7 @@ export function MoviePage() {
         locale={locale}
         unmatched={movie.matched ? null : t.unmatched}
         ratingLabel={t.rating}
+        status={<WatchStatusControl movie={movie} onChange={(next) => setMovie((current) => (current ? { ...current, ...next } : current))} />}
       />
       <Stills stills={movie.stills} load={stage >= STAGE.stills} />
       <Cast cast={movie.cast} title={t.cast} load={stage >= STAGE.cast} />
@@ -209,6 +210,7 @@ function DossierHero(props: {
   locale: "ro" | "en";
   unmatched: string | null;
   ratingLabel: string;
+  status?: ReactNode;
 }) {
   const tech = props.version
     ? [resolutionLabel(props.version.width, props.version.height), codecLabel(props.version.videoCodec), codecLabel(props.version.audio[0]?.codec ?? null), formatBytes(props.version.size, props.locale)].filter(Boolean).join(" · ")
@@ -230,6 +232,7 @@ function DossierHero(props: {
             {props.playTo ? <Link className="play" to={props.playTo}>{props.playLabel}</Link> : null}
             {props.trailer ? <button className="text-button" type="button" onClick={props.onTrailer}>{props.trailerLabel}</button> : null}
           </div>
+          {props.status}
           {tech ? <p className="tech">{tech}</p> : null}
           {props.versions.length > 1 ? (
             <div className="version-list" aria-label={props.versionsLabel}>
@@ -262,6 +265,59 @@ function DossierHero(props: {
         </aside>
       </div>
     </>
+  );
+}
+
+/**
+ * New / Unwatched / Watched toggle. Without a manual mark the derived status is shown as "automatic";
+ * picking the current manual status again, or "Back to automatic", clears the mark.
+ */
+function WatchStatusControl(props: { movie: MovieDetail; onChange: (next: Pick<MovieDetail, "watchStatus" | "watchStatusManual">) => void }) {
+  const { t } = useLocale();
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const save = async (status: WatchStatus | null) => {
+    const previous = { watchStatus: props.movie.watchStatus, watchStatusManual: props.movie.watchStatusManual };
+    setSaving(true);
+    setFailed(false);
+    if (status) props.onChange({ watchStatus: status, watchStatusManual: true });
+    try {
+      await api(`/api/movies/${props.movie.id}/status`, { method: "PUT", body: JSON.stringify({ status }) });
+      if (!status) {
+        // The automatic status depends on playback history the client does not have.
+        const fresh = await api<MovieDetail>(`/api/movies/${props.movie.id}`);
+        props.onChange({ watchStatus: fresh.watchStatus, watchStatusManual: fresh.watchStatusManual });
+      }
+    } catch {
+      props.onChange(previous);
+      setFailed(true);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="watch-status">
+      <span className="muted">{t.statusLabel}</span>
+      <div className="filter-tabs" role="group" aria-label={t.statusLabel} aria-busy={saving}>
+        {WATCH_STATUSES.map((status) => (
+          <button
+            key={status}
+            type="button"
+            aria-pressed={props.movie.watchStatus === status}
+            disabled={saving}
+            onClick={() => void save(props.movie.watchStatusManual && props.movie.watchStatus === status ? null : status)}
+          >
+            {statusLabel(status, t)}
+          </button>
+        ))}
+      </div>
+      {props.movie.watchStatusManual ? (
+        <button className="text-button small" type="button" disabled={saving} onClick={() => void save(null)}>{t.statusReset}</button>
+      ) : (
+        <small className="muted">{t.statusAuto}</small>
+      )}
+      {failed ? <small className="danger">{t.statusFailed}</small> : null}
+    </div>
   );
 }
 

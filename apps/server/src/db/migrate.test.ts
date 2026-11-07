@@ -4,7 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { runMigrations } from "./migrate.js";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { migrationsFolder, runMigrations } from "./migrate.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const legacySchema = fs.readFileSync(path.join(here, "fixtures", "legacy-schema.sql"), "utf8");
@@ -34,8 +35,9 @@ test("creates the full schema with foreign keys on a new database", () => {
   assert.equal(sqlite.pragma("foreign_keys", { simple: true }), 1);
   assert.ok(foreignKeys(sqlite, "media_files").includes("movie_id->movies:SET NULL"));
   seed(sqlite);
+  sqlite.prepare("INSERT INTO movie_status VALUES ('home', 'm1', 'watched', 0)").run();
   sqlite.prepare("DELETE FROM libraries WHERE id = 'lib'").run();
-  for (const table of ["movies", "media_files", "subtitle_assets", "progress"]) {
+  for (const table of ["movies", "media_files", "subtitle_assets", "progress", "movie_status"]) {
     assert.equal((sqlite.prepare(`SELECT count(*) AS c FROM ${table}`).get() as { c: number }).c, 0, table);
   }
 });
@@ -61,5 +63,5 @@ test("upgrades a database from before migrations without losing rows", () => {
 
   // Running again is a no-op.
   assert.equal(runMigrations(sqlite).adopted, false);
-  assert.equal((sqlite.prepare("SELECT count(*) AS c FROM __drizzle_migrations").get() as { c: number }).c, 2);
+  assert.equal((sqlite.prepare("SELECT count(*) AS c FROM __drizzle_migrations").get() as { c: number }).c, readMigrationFiles({ migrationsFolder }).length);
 });

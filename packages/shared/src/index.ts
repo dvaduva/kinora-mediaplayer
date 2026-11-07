@@ -122,6 +122,7 @@ export interface MovieSummary {
   releaseDate: string | null;
   /** Epoch milliseconds when the scan first saw the movie. */
   addedAt: number;
+  genres: string[];
   watchStatus: WatchStatus;
   /** True when the status was set by hand rather than derived from playback. */
   watchStatusManual: boolean;
@@ -132,7 +133,6 @@ export interface MovieDetail extends MovieSummary {
   overview: string | null;
   tagline: string | null;
   backdropPath: string | null;
-  genres: string[];
   directors: string[];
   writers: string[];
   cast: CastMember[];
