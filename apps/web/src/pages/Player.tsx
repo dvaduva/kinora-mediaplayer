@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
 import Hls from "hls.js";
-import type { PlaybackView, SubtitleStatus, TranscodeStatus } from "@kinora/shared";
+import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
+import { embeddedTextTrack, useEmbeddedSubtitles } from "../embeddedSubtitles";
 import { useLocale } from "../i18n";
-import { codecLabel, subtitleLabel } from "../media";
+import { codecLabel, formatClock, subtitleLabel } from "../media";
 
 export function PlayerPage() {
   const { fileId } = useParams();
@@ -13,19 +14,25 @@ export function PlayerPage() {
   const [view, setView] = useState<PlaybackView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [play, setPlay] = useState<{ id: string | undefined; started: boolean; status: TranscodeStatus | null }>({
+  // `from` is where the conversion stood at the first status, so the bar starts empty and fills toward the start point.
+  const [play, setPlay] = useState<{ id: string | undefined; started: boolean; status: TranscodeStatus | null; from: number | null }>({
     id: undefined,
     started: false,
     status: null,
+    from: null,
   });
   const [captions, setCaptions] = useState(false);
-  const [subStatus, setSubStatus] = useState<{ id: string; status: SubtitleStatus } | null>(null);
-  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const videoRef = useCallback((element: HTMLVideoElement | null) => {
+    mediaRef.current = element;
+    setVideo(element);
+  }, []);
   const resumed = useRef(false);
   const subtitleDirty = useRef(false);
   const copyRef = useRef(t);
   copyRef.current = t;
-  if (play.id !== fileId) setPlay({ id: fileId, started: false, status: null });
+  if (play.id !== fileId) setPlay({ id: fileId, started: false, status: null, from: null });
 
   useEffect(() => {
     if (!fileId) return;
@@ -41,30 +48,8 @@ export function PlayerPage() {
       .catch((reason: Error) => setError(reason.message));
   }, [fileId]);
 
-  const selectedTrack = view?.subtitles.find((track) => track.id === selected && track.textBased) ?? null;
-  const embeddedId = selectedTrack?.origin === "embedded" ? selectedTrack.id : null;
-
-  useEffect(() => {
-    if (!fileId || !embeddedId) return;
-    let cancel = false;
-    let timer = 0;
-    const tick = () => {
-      api<SubtitleStatus>(`/api/subtitles/${fileId}/${embeddedId}/status`)
-        .then((status) => {
-          if (cancel) return;
-          setSubStatus({ id: embeddedId, status });
-          if (status.state === "extracting") timer = window.setTimeout(tick, 2000);
-        })
-        .catch(() => {
-          if (!cancel) timer = window.setTimeout(tick, 5000);
-        });
-    };
-    tick();
-    return () => {
-      cancel = true;
-      window.clearTimeout(timer);
-    };
-  }, [fileId, embeddedId]);
+  const selectedTrack = view && view.fileId === fileId ? (view.subtitles.find((track) => track.id === selected && track.textBased) ?? null) : null;
+  const embeddedState = useEmbeddedSubtitles(video, fileId, selectedTrack, selectedTrack ? subtitleLabel(selectedTrack, locale) : "");
 
   const preparing = Boolean(view && view.plan.available && view.plan.mode !== "direct");
 
@@ -81,6 +66,7 @@ export function PlayerPage() {
               : {
                   id: fileId,
                   status: data,
+                  from: current.from ?? data.seconds,
                   started: current.started || transcodePlaybackReady(data, view.resumeSeconds),
                 },
           );
@@ -101,9 +87,12 @@ export function PlayerPage() {
     const media = mediaRef.current;
     if (!media || !view || view.fileId !== fileId) return;
     const apply = () => {
-      const tracks = media instanceof HTMLVideoElement ? media.textTracks : null;
-      const track = tracks?.[0];
-      if (track) track.mode = selected ? "showing" : "disabled";
+      if (!(media instanceof HTMLVideoElement)) return;
+      // External subtitles are <track> elements with the subtitle id; embedded ones are added by script.
+      const embedded = selected ? embeddedTextTrack(media, selected) : undefined;
+      for (const track of Array.from(media.textTracks)) {
+        track.mode = selected && (track === embedded || track.id === selected) ? "showing" : "disabled";
+      }
     };
     const resume = () => {
       if (resumed.current || view.plan.mode !== "direct") return;
@@ -136,7 +125,7 @@ export function PlayerPage() {
       media.removeEventListener("pause", send);
       window.clearInterval(timer);
     };
-  }, [view, selected, fileId, play.started, captions, subStatus]);
+  }, [view, selected, fileId, play.started, captions, embeddedState]);
 
   useEffect(() => {
     if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
@@ -201,15 +190,23 @@ export function PlayerPage() {
   }, [play.started, fileId, view]);
 
   if (error) return <p className="danger">{error}</p>;
-  if (!view) return <p className="muted">{t.play}</p>;
+  if (!view) {
+    return (
+      <div className="prepare">
+        <p className="muted">{t.play}</p>
+        <progress />
+      </div>
+    );
+  }
   const reason = reasonText(view, t.remux, t.transcode, t.missing);
   const textTracks = view.subtitles.filter((track) => track.textBased);
   const caption = textTracks.find((track) => track.id === selected);
-  const embeddedStatus = caption?.origin === "embedded" ? (subStatus?.id === caption.id ? subStatus.status : { state: "extracting" as const, progress: null }) : null;
-  const captionReady = !embeddedStatus || embeddedStatus.state === "ready";
-  const showCaption = Boolean(caption && captionReady && (!preparing || captions));
+  const showCaption = Boolean(caption && caption.origin !== "embedded" && (!preparing || captions));
   const showMedia = !preparing || play.started;
-  const percent = play.status?.progress == null ? "" : `${Math.round(play.status.progress * 100)}%`;
+  const startAt = startTarget(view.resumeSeconds);
+  const waited = startProgress(play.status, play.from, startAt);
+  const percent = waited == null ? "" : `${Math.round(waited * 100)}%`;
+  const convertedClock = play.status && play.status.seconds > 0 ? formatClock(play.status.seconds) : null;
   return (
     <article className="player-stage">
       <p className="crumb"><Link to="/">{t.home}</Link></p>
@@ -223,13 +220,19 @@ export function PlayerPage() {
             {preparing && !play.started && play.status?.state !== "error" ? (
               <div className="prepare">
                 <p>{t.preparing.replace("{progress}", percent).trim()}</p>
-                {play.status?.progress != null ? <progress value={play.status.progress} max={1} /> : null}
+                {/* Without a value the bar is indeterminate and still shows that work is going on. */}
+                {waited == null ? <progress /> : <progress value={waited} max={1} />}
+                {convertedClock ? (
+                  <p className="muted">
+                    {t.preparingDetail.replace("{at}", convertedClock).replace("{target}", formatClock(startAt) ?? "0:04")}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {play.status?.state === "error" ? <p className="danger">{play.status.error || t.transcodeFailed}</p> : null}
             {showMedia ? (
               <video
-                ref={mediaRef as RefObject<HTMLVideoElement>}
+                ref={videoRef}
                 src={preparing ? undefined : `/api/stream/${view.fileId}`}
                 controls
                 autoPlay={!preparing}
@@ -237,7 +240,7 @@ export function PlayerPage() {
                 crossOrigin="anonymous"
               >
                 {showCaption && caption ? (
-                  <track key={caption.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${caption.id}`} srcLang={caption.language ?? undefined} label={subtitleLabel(caption, locale)} default />
+                  <track key={caption.id} id={caption.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${caption.id}`} srcLang={caption.language ?? undefined} label={subtitleLabel(caption, locale)} default />
                 ) : null}
               </video>
             ) : null}
@@ -265,16 +268,26 @@ export function PlayerPage() {
               </option>
             ))}
           </select>
-          {embeddedStatus?.state === "extracting" ? (
-            <span className="muted">
-              {t.extractingSubtitles.replace("{progress}", embeddedStatus.progress == null ? "" : `${Math.round(embeddedStatus.progress * 100)}%`).trim()}
-            </span>
-          ) : null}
-          {embeddedStatus?.state === "error" ? <span className="danger">{t.subtitlesFailed}</span> : null}
+          {embeddedState === "loading" ? <span className="muted">{t.loadingSubtitles}</span> : null}
+          {embeddedState === "error" ? <span className="danger">{t.subtitlesFailed}</span> : null}
         </label>
       ) : null}
     </article>
   );
+}
+
+// Mirrors transcodePlaybackReady: playback starts once the conversion is 4 s past the resume point,
+// or with the first segment when starting from the beginning.
+function startTarget(resumeSeconds: number) {
+  return resumeSeconds > 5 ? resumeSeconds + 4 : 4;
+}
+
+function startProgress(status: TranscodeStatus | null, from: number | null, target: number) {
+  if (!status || status.state === "error") return null;
+  if (status.state === "ready") return 1;
+  const base = from ?? 0;
+  if (target <= base) return status.playlist ? 1 : null;
+  return Math.max(0, Math.min(1, (status.seconds - base) / (target - base)));
 }
 
 function reasonText(view: PlaybackView, remux: string, transcode: string, missing: string) {

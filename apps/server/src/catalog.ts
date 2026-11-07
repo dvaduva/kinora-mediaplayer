@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type {
   AlbumDetail,
   AlbumSummary,
@@ -15,6 +15,7 @@ import type {
   MediaVersion,
   MovieDetail,
   MovieSummary,
+  WatchStatus,
   PersonCredit,
   PlaybackView,
   SearchHit,
@@ -24,6 +25,7 @@ import type {
   SubtitleTrack,
   Trailer,
 } from "@kinora/shared";
+import { WATCH_STATUSES } from "@kinora/shared";
 import { db, parseJson } from "./db/index.js";
 import { isNonLatinName, transliterateName } from "./metadata/tmdb.js";
 import {
@@ -32,6 +34,7 @@ import {
   episodes,
   libraries,
   mediaFiles,
+  movieStatus,
   movies,
   progress,
   seasons,
@@ -194,7 +197,58 @@ function decorateSimilar(items: StoredSimilar[]): SimilarTitle[] {
   });
 }
 
-function movieSummary(movie: typeof movies.$inferSelect): MovieSummary {
+/** A movie counts as "new" for this long after it appears, unless it was part of the library's first scan. */
+const NEW_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+/** Movies found within this long after a library was created belong to its initial import, not to later additions. */
+const INITIAL_IMPORT_MS = 24 * 60 * 60 * 1000;
+
+/** Per-movie inputs for the watch status, gathered once per request. */
+type WatchContext = {
+  manual: Map<string, WatchStatus>;
+  /** Movie id → whether any of its files was watched to the end. Present only for movies with progress. */
+  played: Map<string, boolean>;
+  libraryCreated: Map<string, number>;
+  now: number;
+};
+
+function watchContext(): WatchContext {
+  const manual = new Map<string, WatchStatus>();
+  for (const row of db.select().from(movieStatus).where(eq(movieStatus.profileId, PROFILE_ID)).all()) {
+    if (isWatchStatus(row.status)) manual.set(row.movieId, row.status);
+  }
+  const played = new Map<string, boolean>();
+  const rows = db
+    .select({ movieId: mediaFiles.movieId, watched: progress.watched })
+    .from(progress)
+    .innerJoin(mediaFiles, eq(progress.fileId, mediaFiles.id))
+    .where(eq(progress.profileId, PROFILE_ID))
+    .all();
+  for (const row of rows) {
+    if (row.movieId) played.set(row.movieId, (played.get(row.movieId) ?? false) || row.watched);
+  }
+  const libraryCreated = new Map(db.select({ id: libraries.id, createdAt: libraries.createdAt }).from(libraries).all().map((row) => [row.id, row.createdAt]));
+  return { manual, played, libraryCreated, now: Date.now() };
+}
+
+export function isWatchStatus(value: unknown): value is WatchStatus {
+  return typeof value === "string" && (WATCH_STATUSES as readonly string[]).includes(value);
+}
+
+function watchStatusOf(movie: typeof movies.$inferSelect, context: WatchContext): { status: WatchStatus; manual: boolean } {
+  const manual = context.manual.get(movie.id);
+  if (manual) return { status: manual, manual: true };
+  const played = context.played.get(movie.id);
+  if (played) return { status: "watched", manual: false };
+  if (played === undefined) {
+    const created = context.libraryCreated.get(movie.libraryId) ?? 0;
+    const recent = context.now - movie.addedAt < NEW_WINDOW_MS;
+    if (recent && movie.addedAt - created > INITIAL_IMPORT_MS) return { status: "new", manual: false };
+  }
+  return { status: "unwatched", manual: false };
+}
+
+function movieSummary(movie: typeof movies.$inferSelect, context = watchContext()): MovieSummary {
+  const watch = watchStatusOf(movie, context);
   return {
     id: movie.id,
     title: movie.title,
@@ -202,17 +256,53 @@ function movieSummary(movie: typeof movies.$inferSelect): MovieSummary {
     posterPath: movie.posterPath,
     rating: movie.rating,
     matched: movie.matched,
+    runtime: movie.runtime,
+    releaseDate: movie.releaseDate,
+    addedAt: movie.addedAt,
+    watchStatus: watch.status,
+    watchStatusManual: watch.manual,
   };
 }
 
 export function listMovies(p = presence()) {
+  const context = watchContext();
   return db
     .select()
     .from(movies)
     .all()
     .filter((movie) => p.movieFiles.has(movie.id))
     .sort((a, b) => a.title.localeCompare(b.title))
-    .map(movieSummary);
+    .map((movie) => movieSummary(movie, context));
+}
+
+/**
+ * Sets the watch status by hand. "watched" and "unwatched" also update the playback progress,
+ * so Continue Watching and resume points agree with what the user chose.
+ */
+export function setMovieWatchStatus(movieId: string, status: WatchStatus | null) {
+  const movie = db.select().from(movies).where(eq(movies.id, movieId)).get();
+  if (!movie) return false;
+  const now = Date.now();
+  const fileIds = db.select({ id: mediaFiles.id }).from(mediaFiles).where(eq(mediaFiles.movieId, movieId)).all().map((row) => row.id);
+  db.transaction((tx) => {
+    if (status === null) {
+      tx.delete(movieStatus).where(and(eq(movieStatus.profileId, PROFILE_ID), eq(movieStatus.movieId, movieId))).run();
+      return;
+    }
+    tx.insert(movieStatus)
+      .values({ profileId: PROFILE_ID, movieId, status, updatedAt: now })
+      .onConflictDoUpdate({ target: [movieStatus.profileId, movieStatus.movieId], set: { status, updatedAt: now } })
+      .run();
+    if (fileIds.length === 0) return;
+    const ofMovie = and(eq(progress.profileId, PROFILE_ID), inArray(progress.fileId, fileIds));
+    if (status === "watched") {
+      tx.update(progress).set({ watched: true, updatedAt: now }).where(ofMovie).run();
+    } else {
+      // Starting over: drop resume points so the next play begins at 0 and leaves Continue Watching.
+      tx.update(progress).set({ watched: false, position: 0, updatedAt: now }).where(ofMovie).run();
+    }
+  });
+  return true;
 }
 
 export function movieDetail(id: string): MovieDetail | null {
@@ -225,8 +315,6 @@ export function movieDetail(id: string): MovieDetail | null {
     originalTitle: movie.originalTitle,
     overview: movie.overview,
     tagline: movie.tagline,
-    runtime: movie.runtime,
-    releaseDate: movie.releaseDate,
     backdropPath: movie.backdropPath,
     genres: parseJson<string[]>(movie.genresJson, []),
     directors: latinNames(parseJson<string[]>(movie.directorsJson, [])),
@@ -444,11 +532,12 @@ export function homeView(): HomeView {
     .all()
     .filter((movie) => p.movieFiles.has(movie.id))
     .sort((a, b) => b.addedAt - a.addedAt);
+  const context = watchContext();
   const featured = moviesInLibrary.find((movie) => movie.backdropPath) ?? moviesInLibrary[0] ?? null;
   return {
     continueWatching: continueWatching(),
     featured: featured ? movieDetail(featured.id) : null,
-    movies: moviesInLibrary.slice(0, 18).map(movieSummary),
+    movies: moviesInLibrary.slice(0, 18).map((movie) => movieSummary(movie, context)),
     series: listSeries(p).slice(0, 18),
     albums: listAlbums(p).slice(0, 18),
   };
@@ -622,7 +711,23 @@ export function saveProgress(input: { fileId: string; position: number; duration
       },
     })
     .run();
+  if (file.movieId) clearStaleWatchStatus(file.movieId, watched, input.position);
   return true;
+}
+
+/**
+ * Playback outranks an older manual mark: finishing the movie makes it watched,
+ * and starting a movie marked "new" makes it simply unwatched.
+ */
+function clearStaleWatchStatus(movieId: string, watched: boolean, position: number) {
+  const mark = db
+    .select()
+    .from(movieStatus)
+    .where(and(eq(movieStatus.profileId, PROFILE_ID), eq(movieStatus.movieId, movieId)))
+    .get();
+  if (!mark) return;
+  const stale = (watched && mark.status !== "watched") || (mark.status === "new" && position > 5);
+  if (stale) db.delete(movieStatus).where(and(eq(movieStatus.profileId, PROFILE_ID), eq(movieStatus.movieId, movieId))).run();
 }
 
 export function resolveMediaPath(file: typeof mediaFiles.$inferSelect) {

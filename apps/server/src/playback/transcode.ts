@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TranscodeStatus } from "@kinora/shared";
 import { dataDir } from "../paths.js";
-import { bins } from "../process.js";
+import { bins, run, tools } from "../process.js";
 import { DEFAULT_CACHE_GB, gigabytes, listCache, markUsed, MAX_CACHE_AGE_MS, pruneCache } from "./cache.js";
 
 export interface TranscodeRequest {
@@ -14,6 +14,8 @@ export interface TranscodeRequest {
   duration: number | null;
   copyVideo: boolean;
   copyAudio: boolean;
+  /** Embedded text subtitle streams written as WebVTT while the same pass reads the file. */
+  subtitleStreams?: number[];
 }
 
 export interface HlsCodecs {
@@ -51,6 +53,8 @@ export function videoEncodeArgs(encoder: string) {
 
 interface Job {
   state: "running" | "error";
+  /** Media time where this ffmpeg run started; its subtitle files count from here. */
+  runStart: number;
   seconds: number;
   error: string | null;
   child: ChildProcess | null;
@@ -93,7 +97,44 @@ export interface HlsResume {
   startNumber: number;
 }
 
-export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, resume?: HlsResume) {
+export function subtitleRunFile(directory: string, streamIndex: number, runStart: number) {
+  return path.join(directory, `sub${streamIndex}_${Math.round(runStart * 1000)}.vtt`);
+}
+
+function subtitleShiftFile(directory: string, runStart: number) {
+  return path.join(directory, `subshift_${Math.round(runStart * 1000)}.txt`);
+}
+
+/** Latest video keyframe at or before `seconds`, read from the packets just before it. */
+export function keyframeBefore(packetsCsv: string, seconds: number) {
+  let best: number | null = null;
+  for (const line of packetsCsv.split(/\r?\n/)) {
+    const [pts, flags] = line.trim().split(",");
+    const time = Number(pts);
+    if (!flags?.includes("K") || !Number.isFinite(time) || time > seconds + 0.001) continue;
+    if (best == null || time > best) best = time;
+  }
+  return best;
+}
+
+/**
+ * A resumed pass that copies the video starts at the keyframe before the seek point, while the
+ * playlist places it at the seek point; the video then runs (seek - keyframe) seconds late, and
+ * the subtitles of that pass must be shifted by the same amount.
+ */
+async function copiedVideoLag(source: string, seek: number) {
+  if (!tools.ffprobe) return 0;
+  const from = Math.max(0, seek - 20);
+  const result = await run(
+    bins.ffprobe,
+    ["-v", "error", "-select_streams", "v:0", "-read_intervals", `${from.toFixed(3)}%${(seek + 0.5).toFixed(3)}`, "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", source],
+    30_000,
+  ).catch(() => null);
+  const keyframe = result?.code === 0 ? keyframeBefore(result.stdout, seek) : null;
+  return keyframe == null ? 0 : Math.max(0, Math.min(20, seek - keyframe));
+}
+
+export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, resume?: HlsResume, subtitleStreams: number[] = []) {
   const { copyVideo, copyAudio } = codecs;
   return [
     "-hide_banner",
@@ -133,6 +174,19 @@ export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, re
     "-hls_segment_filename",
     path.join(directory, "seg%05d.ts"),
     path.join(directory, "index.m3u8"),
+    // Extra outputs of the same pass: subtitles come out as the file is read, without a second read.
+    // Their timestamps count from the seek point; the file name records it.
+    ...subtitleStreams.flatMap((streamIndex) => [
+      "-map",
+      `0:${streamIndex}`,
+      "-c:s",
+      "webvtt",
+      "-flush_packets",
+      "1",
+      "-f",
+      "webvtt",
+      subtitleRunFile(directory, streamIndex, resume?.seek ?? 0),
+    ]),
   ];
 }
 
@@ -312,7 +366,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   }
 
   stopOtherJobs(input.fileId);
-  const job: Job = { state: "running", seconds: cursor.count > 0 ? cursor.seconds : 0, error: null, child: null };
+  const job: Job = { state: "running", runStart: cursor.count > 0 ? cursor.seconds : 0, seconds: cursor.count > 0 ? cursor.seconds : 0, error: null, child: null };
   jobs.set(key, job);
   const resume = cursor.count > 0 ? { seek: cursor.seconds, startNumber: cursor.nextNumber } : undefined;
   try {
@@ -336,12 +390,18 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     return { status: statusFor("error", 0, input.duration, false, job.error), dir };
   }
   if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
+  if (resume && input.copyVideo && input.subtitleStreams?.length) {
+    const lag = await copiedVideoLag(input.sourcePath, resume.seek);
+    if (lag > 0) fs.writeFileSync(subtitleShiftFile(dir, resume.seek), String(lag));
+    if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, true, null), dir };
+  }
 
   const child = spawn(bins.ffmpeg, hlsArgs(
       input.sourcePath,
       dir,
       { copyVideo: input.copyVideo, copyAudio: input.copyAudio, videoEncoder: videoEncoder() },
       resume,
+      input.subtitleStreams,
     ), {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -386,6 +446,57 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   });
 
   return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
+}
+
+export interface SubtitleRun {
+  file: string;
+  /** Media time where the run starts covering. */
+  start: number;
+  /** Add to the run's subtitle timestamps to place them on the playlist timeline. */
+  offset: number;
+  /** Media time up to which the run has read the file. */
+  end: number;
+  /** The run is still reading, so `end` keeps growing. */
+  live: boolean;
+}
+
+/**
+ * Subtitle files written by the conversion passes of a file, oldest first. Each resumed pass starts
+ * where the playlist ended, so a run covers the time up to the next run's start.
+ */
+export function transcodeSubtitleRuns(fileId: string, streamIndex: number): SubtitleRun[] {
+  const input = sessions.get(fileId);
+  if (!input) return [];
+  const { key, dir } = transcodeLocation(input);
+  const prefix = `sub${streamIndex}_`;
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const starts = names
+    .filter((name) => name.startsWith(prefix) && /^\d+\.vtt$/.test(name.slice(prefix.length)))
+    .map((name) => Number(name.slice(prefix.length, -".vtt".length)) / 1000)
+    .sort((a, b) => a - b);
+  if (starts.length === 0) return [];
+  const done = fs.existsSync(path.join(dir, "done"));
+  const job = jobs.get(key);
+  return starts.map((start, index) => {
+    const file = subtitleRunFile(dir, streamIndex, start);
+    let shift = 0;
+    try {
+      shift = Number(fs.readFileSync(subtitleShiftFile(dir, start), "utf8")) || 0;
+    } catch {
+      // Not resumed, or the video was encoded and starts exactly at the seek point.
+    }
+    const base = { file, start, offset: start + shift };
+    const next = starts[index + 1];
+    if (next != null) return { ...base, end: next, live: false };
+    if (done) return { ...base, end: Number.POSITIVE_INFINITY, live: false };
+    if (job?.state === "running" && Math.abs(job.runStart - start) < 0.01) return { ...base, end: job.seconds, live: true };
+    return { ...base, end: playlistCursor(readPlaylist(dir)).seconds, live: false };
+  });
 }
 
 export function discardTranscode(input: Pick<TranscodeRequest, "fileId" | "size" | "mtime">) {

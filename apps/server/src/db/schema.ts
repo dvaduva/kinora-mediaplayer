@@ -187,3 +187,15 @@ export const progress = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.profileId, table.fileId] }), index("progress_file").on(table.fileId)],
 );
+
+/** Watch state the user set by hand; without a row the state is derived from progress and the date added. */
+export const movieStatus = sqliteTable(
+  "movie_status",
+  {
+    profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    movieId: text("movie_id").notNull().references(() => movies.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.profileId, table.movieId] })],
+);

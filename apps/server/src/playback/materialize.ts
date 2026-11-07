@@ -1,180 +1,76 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { SubtitleStatus } from "@kinora/shared";
+import type { SubtitleChunk, SubtitleCue } from "@kinora/shared";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { mediaFiles, subtitleAssets } from "../db/schema.js";
 import { dataDir } from "../paths.js";
 import { bins, run, tools } from "../process.js";
+import { CHUNK_SECONDS, cuesInChunk, parseVtt } from "./cues.js";
 import { decodeSubtitle, ensureVtt, romanianOrthography, srtToVtt } from "./srt.js";
+import { transcodeSubtitleRuns } from "./transcode.js";
 
 type SubtitleAsset = typeof subtitleAssets.$inferSelect;
+type MediaFile = typeof mediaFiles.$inferSelect;
 
 const TEXT_CODECS = new Set(["srt", "vtt", "subrip", "ass", "ssa", "mov_text", "webvtt", "text"]);
-// ffmpeg prints progress about twice a second; this long without output means it is stuck.
-const STALL_MS = 3 * 60_000;
-const RETRY_AFTER_ERROR_MS = 60_000;
+// Cues that begin a little before a window can still be on screen when it starts.
+const WINDOW_LEAD_SECONDS = 10;
+// Only one window reads at a time, so a slow network share gets the whole link for it.
+const WINDOW_TIMEOUT_MS = 5 * 60_000;
 
-interface ExtractionJob {
-  state: "extracting" | "error";
-  progress: number | null;
-  error: string | null;
-  finishedAt: number;
-  promise: Promise<void>;
-}
-
-// One job per video file: a single pass over the file extracts every embedded text track.
-const jobs = new Map<string, ExtractionJob>();
+const subtitleCache = path.join(dataDir, "cache", "subtitles");
 
 function isTextBased(asset: SubtitleAsset) {
   return TEXT_CODECS.has((asset.codec ?? "").toLowerCase());
 }
 
-function cacheFile(asset: SubtitleAsset, sourcePath: string) {
-  const stat = fs.statSync(sourcePath);
-  return path.join(dataDir, "cache", "subtitles", `${asset.id}-${stat.size}-${Math.round(stat.mtimeMs)}.vtt`);
-}
-
-// Earlier versions left empty files behind when ffmpeg was killed. A real WebVTT file is never empty.
-function isCached(destination: string) {
-  try {
-    if (fs.statSync(destination).size > 0) return true;
-    fs.rmSync(destination, { force: true });
-  } catch {
-    // Missing file.
-  }
-  return false;
-}
-
-function finalizeVtt(asset: SubtitleAsset, text: string) {
+function localize(asset: SubtitleAsset, text: string) {
   return asset.language === "ro" ? romanianOrthography(text) : text;
 }
 
-export function subtitleStatus(asset: SubtitleAsset, videoPath: string): SubtitleStatus {
-  if (!isTextBased(asset)) return { state: "error", error: "bitmap" };
-  if (asset.origin !== "embedded") return { state: "ready" };
-  if (!tools.ffmpeg) return { state: "error", error: "needs_ffmpeg" };
-  if (isCached(cacheFile(asset, videoPath))) return { state: "ready" };
-  const job = startExtraction(asset.fileId, videoPath);
-  if (job.state === "error") return { state: "error", error: job.error ?? "extract_failed" };
-  return { state: "extracting", progress: job.progress };
+function nonEmpty(file: string) {
+  try {
+    return fs.statSync(file).size > 0;
+  } catch {
+    return false;
+  }
 }
 
-/** Starts extracting the embedded text subtitles of a file in the background, if not done already. */
-export function prepareEmbeddedSubtitles(fileId: string, videoPath: string) {
-  if (!tools.ffmpeg) return;
-  startExtraction(fileId, videoPath);
-}
-
-function startExtraction(fileId: string, videoPath: string) {
-  const existing = jobs.get(fileId);
-  if (existing && (existing.state === "extracting" || Date.now() - existing.finishedAt < RETRY_AFTER_ERROR_MS)) return existing;
-  const job: ExtractionJob = { state: "extracting", progress: null, error: null, finishedAt: 0, promise: Promise.resolve() };
-  job.promise = extractEmbedded(fileId, videoPath, job).then(
-    () => {
-      jobs.delete(fileId);
-    },
-    (error: unknown) => {
-      job.state = "error";
-      job.error = error instanceof Error ? error.message : "extract_failed";
-      job.finishedAt = Date.now();
-    },
-  );
-  jobs.set(fileId, job);
-  return job;
-}
-
-async function extractEmbedded(fileId: string, videoPath: string, job: ExtractionJob) {
-  const pending = db
+/** Stream indexes of the embedded text subtitles, for the conversion pass to write alongside the video. */
+export function embeddedTextStreams(fileId: string) {
+  return db
     .select()
     .from(subtitleAssets)
     .where(and(eq(subtitleAssets.fileId, fileId), eq(subtitleAssets.origin, "embedded")))
     .all()
     .filter((asset) => isTextBased(asset) && asset.streamIndex != null)
-    .map((asset) => {
-      const destination = cacheFile(asset, videoPath);
-      return { asset, destination, temp: `${destination}.${process.pid}.part` };
-    })
-    .filter((entry) => !isCached(entry.destination));
-  if (pending.length === 0) return;
-  fs.mkdirSync(path.dirname(pending[0].destination), { recursive: true });
-  const duration = db.select({ duration: mediaFiles.duration }).from(mediaFiles).where(eq(mediaFiles.id, fileId)).get()?.duration ?? null;
-
-  const args = ["-nostdin", "-v", "error", "-y", "-progress", "pipe:1", "-nostats", "-i", videoPath];
-  for (const entry of pending) args.push("-map", `0:${entry.asset.streamIndex}`, "-c:s", "webvtt", "-f", "webvtt", entry.temp);
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(bins.ffmpeg, args, { windowsHide: true });
-      let stderr = "";
-      let buffered = "";
-      let stall = setTimeout(() => child.kill(), STALL_MS);
-      child.stdout.on("data", (chunk: Buffer) => {
-        clearTimeout(stall);
-        stall = setTimeout(() => child.kill(), STALL_MS);
-        buffered += chunk.toString();
-        const lines = buffered.split(/\r?\n/);
-        buffered = lines.pop() ?? "";
-        for (const line of lines) {
-          const match = /^out_time_(?:us|ms)=(\d+)/.exec(line);
-          if (match && duration && duration > 0) job.progress = Math.min(1, Number(match[1]) / 1_000_000 / duration);
-        }
-      });
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr = (stderr + chunk.toString()).slice(-4000);
-      });
-      child.on("error", (error) => {
-        clearTimeout(stall);
-        reject(error);
-      });
-      child.on("close", (code) => {
-        clearTimeout(stall);
-        if (code === 0) resolve();
-        else reject(new Error(stderr.trim() ? "extract_failed" : "extract_timeout"));
-      });
-    });
-    for (const entry of pending) {
-      if (!fs.existsSync(entry.temp)) continue;
-      const text = fs.readFileSync(entry.temp, "utf8");
-      fs.writeFileSync(entry.temp, finalizeVtt(entry.asset, text), "utf8");
-      fs.renameSync(entry.temp, entry.destination);
-    }
-  } finally {
-    for (const entry of pending) fs.rmSync(entry.temp, { force: true });
-  }
+    .map((asset) => asset.streamIndex as number);
 }
 
+/** Whole-file conversion of an external subtitle file; embedded tracks go through `subtitleChunk`. */
 export async function materializeSubtitle(asset: SubtitleAsset, videoPath: string) {
   const codec = (asset.codec ?? "").toLowerCase();
   if (!isTextBased(asset)) throw new Error("bitmap");
-
-  if (asset.origin === "embedded") {
-    if (!tools.ffmpeg) throw new Error("needs_ffmpeg");
-    const destination = cacheFile(asset, videoPath);
-    if (isCached(destination)) return destination;
-    await startExtraction(asset.fileId, videoPath).promise;
-    if (isCached(destination)) return destination;
-    throw new Error(jobs.get(asset.fileId)?.error ?? "extract_failed");
-  }
-
-  const sourcePath = asset.path ?? videoPath;
-  const destination = cacheFile(asset, sourcePath);
-  if (isCached(destination)) return destination;
+  if (asset.origin === "embedded" || !asset.path) throw new Error("chunked");
+  const stat = fs.statSync(asset.path);
+  const destination = path.join(subtitleCache, `${asset.id}-${stat.size}-${Math.round(stat.mtimeMs)}.vtt`);
+  if (nonEmpty(destination)) return destination;
   fs.mkdirSync(path.dirname(destination), { recursive: true });
 
   if (codec === "srt" || codec === "subrip" || codec === "vtt" || codec === "webvtt") {
-    const decoded = decodeSubtitle(fs.readFileSync(sourcePath));
+    const decoded = decodeSubtitle(fs.readFileSync(asset.path));
     const vtt = codec === "vtt" || codec === "webvtt" ? ensureVtt(decoded) : srtToVtt(decoded);
-    fs.writeFileSync(destination, finalizeVtt(asset, vtt), "utf8");
+    fs.writeFileSync(destination, localize(asset, vtt), "utf8");
     return destination;
   }
 
   if (!tools.ffmpeg) throw new Error("needs_ffmpeg");
   const temp = `${destination}.${process.pid}.part`;
   try {
-    const result = await run(bins.ffmpeg, ["-nostdin", "-y", "-i", sourcePath, "-f", "webvtt", temp], 60_000);
-    if (result.code !== 0 || !fs.existsSync(temp)) throw new Error("extract_failed");
+    const result = await run(bins.ffmpeg, ["-nostdin", "-y", "-i", asset.path, "-f", "webvtt", temp], 60_000);
+    if (result.code !== 0 || !nonEmpty(temp)) throw new Error("extract_failed");
     fs.renameSync(temp, destination);
   } finally {
     fs.rmSync(temp, { force: true });
@@ -182,8 +78,144 @@ export async function materializeSubtitle(asset: SubtitleAsset, videoPath: strin
   return destination;
 }
 
-export function findSubtitle(fileId: string, subtitleId: string) {
-  const asset = db.select().from(subtitleAssets).where(eq(subtitleAssets.id, subtitleId)).get();
-  if (!asset || asset.fileId !== fileId) return null;
-  return asset;
+function chunkCacheFile(asset: SubtitleAsset, file: MediaFile, index: number) {
+  return path.join(subtitleCache, "chunks", `${asset.id}-${file.size}-${file.mtime}`, `${index}.json`);
+}
+
+/**
+ * The cues of an embedded track that start inside one window of media time. A conversion pass that
+ * already reads the file supplies them for free; otherwise ffmpeg seeks to the window and reads only it.
+ * `signal` aborts when the player no longer needs the window.
+ */
+export async function subtitleChunk(asset: SubtitleAsset, file: MediaFile, index: number, signal?: AbortSignal): Promise<SubtitleChunk> {
+  if (!isTextBased(asset)) throw new Error("bitmap");
+  if (asset.origin !== "embedded" || asset.streamIndex == null) throw new Error("not_embedded");
+  if (!tools.ffmpeg) throw new Error("needs_ffmpeg");
+  const from = index * CHUNK_SECONDS;
+  const to = from + CHUNK_SECONDS;
+  if (file.duration != null && from > file.duration + 1) return { cues: [], complete: true };
+
+  // 1. The conversion pass writes every embedded text track while it reads the file.
+  const covering = transcodeSubtitleRuns(file.id, asset.streamIndex).find((entry) => entry.start <= from + 0.5 && (entry.live || entry.end >= to));
+  if (covering) {
+    const text = fs.existsSync(covering.file) ? fs.readFileSync(covering.file, "utf8") : "";
+    const complete = covering.end >= to || (file.duration != null && covering.end >= file.duration);
+    const cues = cuesInChunk(parseVtt(text, covering.live), index, covering.offset);
+    return { cues: cues.map((cue) => ({ ...cue, text: localize(asset, cue.text) })), complete };
+  }
+
+  // 2. A window read earlier.
+  const cacheFile = chunkCacheFile(asset, file, index);
+  try {
+    return { cues: JSON.parse(fs.readFileSync(cacheFile, "utf8")) as SubtitleCue[], complete: true };
+  } catch {
+    // Not read yet.
+  }
+
+  // 3. Seek and read only this window.
+  const cues = await queueWindow(cacheFile, () => windowArgs(asset, file.path, index), signal);
+  const placed = cuesInChunk(parseVtt(cues), index).map((cue) => ({ ...cue, text: localize(asset, cue.text) }));
+  fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+  fs.writeFileSync(cacheFile, JSON.stringify(placed), "utf8");
+  return { cues: placed, complete: true };
+}
+
+function windowArgs(asset: SubtitleAsset, videoPath: string, index: number) {
+  const from = index * CHUNK_SECONDS;
+  const seek = Math.max(0, from - WINDOW_LEAD_SECONDS);
+  // -copyts keeps the file's own timestamps; the output-side -to stops reading after the window.
+  return [
+    "-nostdin",
+    "-v",
+    "error",
+    ...(seek > 0 ? ["-ss", seek.toFixed(3)] : []),
+    "-copyts",
+    "-i",
+    videoPath,
+    "-map",
+    `0:${asset.streamIndex}`,
+    "-to",
+    (from + CHUNK_SECONDS).toFixed(3),
+    "-c:s",
+    "webvtt",
+    "-f",
+    "webvtt",
+    "pipe:1",
+  ];
+}
+
+interface WindowRead {
+  key: string;
+  args: () => string[];
+  waiters: number;
+  child: ChildProcess | null;
+  promise: Promise<string>;
+  resolve: (text: string) => void;
+  reject: (error: Error) => void;
+}
+
+// Window reads share the link to the file with the video stream itself, so only one runs at a time.
+// The newest request goes first: it is where the viewer is now; older ones are usually seeked past.
+const windowReads = new Map<string, WindowRead>();
+const waiting: WindowRead[] = [];
+let running: WindowRead | null = null;
+
+function queueWindow(key: string, args: () => string[], signal?: AbortSignal) {
+  let read = windowReads.get(key);
+  if (!read) {
+    let resolve!: (text: string) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<string>((ok, fail) => {
+      resolve = ok;
+      reject = fail;
+    });
+    read = { key, args, waiters: 0, child: null, promise, resolve, reject };
+    promise.catch(() => undefined);
+    windowReads.set(key, read);
+    waiting.push(read);
+  } else if (read !== running) {
+    // Asked again: move it to the front.
+    waiting.splice(waiting.indexOf(read), 1);
+    waiting.push(read);
+  }
+  const entry = read;
+  entry.waiters += 1;
+  signal?.addEventListener("abort", () => leave(entry), { once: true });
+  pump();
+  return entry.promise;
+}
+
+function leave(read: WindowRead) {
+  read.waiters -= 1;
+  if (read.waiters > 0) return;
+  windowReads.delete(read.key);
+  const queued = waiting.indexOf(read);
+  if (queued >= 0) waiting.splice(queued, 1);
+  read.child?.kill();
+  read.reject(new Error("aborted"));
+}
+
+function pump() {
+  if (running || waiting.length === 0) return;
+  const read = waiting.pop() as WindowRead;
+  running = read;
+  const child = spawn(bins.ffmpeg, read.args(), { windowsHide: true });
+  read.child = child;
+  let stdout = "";
+  const timer = setTimeout(() => child.kill(), WINDOW_TIMEOUT_MS);
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.resume();
+  const finish = (error: Error | null) => {
+    clearTimeout(timer);
+    if (running === read) running = null;
+    if (windowReads.get(read.key) === read) windowReads.delete(read.key);
+    // A killed read is partial; it must not be cached as the whole window.
+    if (error) read.reject(error);
+    else read.resolve(stdout);
+    pump();
+  };
+  child.on("error", (error) => finish(error));
+  child.on("close", (code) => finish(code === 0 ? null : new Error("extract_failed")));
 }

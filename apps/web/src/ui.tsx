@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useLocale } from "./i18n";
+import type { WatchStatus } from "@kinora/shared";
+import { useLocale, type Copy } from "./i18n";
 import { imageUrl } from "./media";
 
 /** Horizontal rail without a scrollbar, paged with [ ‹ ] … [ › ] buttons. */
@@ -57,15 +58,38 @@ export function Poster(props: { src: string | null; alt: string; size?: string }
   return <img className="poster" src={url} alt={props.alt} loading="lazy" decoding="async" />;
 }
 
-export function PosterLink(props: { to: string; src: string | null; title: string; meta?: string | null; badge?: string | null }) {
+export function PosterLink(props: { to: string; src: string | null; title: string; meta?: string | null; badge?: string | null; status?: WatchStatus }) {
   return (
-    <Link className="poster-card" to={props.to}>
-      <Poster src={props.src} alt="" />
+    <Link className={`poster-card${props.status === "watched" ? " is-watched" : ""}`} to={props.to}>
+      <div className="poster-frame">
+        <Poster src={props.src} alt="" />
+        {props.status ? <StatusFlag status={props.status} /> : null}
+      </div>
       <span>{props.title}</span>
       {props.meta ? <small>{props.meta}</small> : null}
       {props.badge ? <small>{props.badge}</small> : null}
     </Link>
   );
+}
+
+export function statusLabel(status: WatchStatus, t: Copy) {
+  if (status === "new") return t.statusNew;
+  if (status === "watched") return t.statusWatched;
+  return t.statusUnwatched;
+}
+
+/** Corner mark on a poster: a "New" tab, or a check for watched. Unwatched posters stay plain. */
+function StatusFlag(props: { status: WatchStatus }) {
+  const { t } = useLocale();
+  if (props.status === "new") return <span className="status-flag new">{t.statusNew}</span>;
+  if (props.status === "watched") {
+    return (
+      <span className="status-flag watched" title={t.statusWatched} aria-label={t.statusWatched}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </span>
+    );
+  }
+  return null;
 }
 
 /** Placeholder cards shown while a grid's first response is on its way. */

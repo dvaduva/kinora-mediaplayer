@@ -30,10 +30,17 @@ export interface SubtitleTrack {
   unavailableReason: "bitmap" | "needs_ffmpeg" | null;
 }
 
-export type SubtitleStatus =
-  | { state: "ready" }
-  | { state: "extracting"; progress: number | null }
-  | { state: "error"; error: string };
+export interface SubtitleCue {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** Embedded subtitles reach the player in windows of media time; `complete: false` means ask again later. */
+export interface SubtitleChunk {
+  cues: SubtitleCue[];
+  complete: boolean;
+}
 
 export interface MediaVersion {
   fileId: string;
@@ -100,6 +107,10 @@ export interface Trailer {
   official: boolean;
 }
 
+export type WatchStatus = "new" | "unwatched" | "watched";
+
+export const WATCH_STATUSES: readonly WatchStatus[] = ["new", "unwatched", "watched"];
+
 export interface MovieSummary {
   id: string;
   title: string;
@@ -107,14 +118,19 @@ export interface MovieSummary {
   posterPath: string | null;
   rating: number | null;
   matched: boolean;
+  runtime: number | null;
+  releaseDate: string | null;
+  /** Epoch milliseconds when the scan first saw the movie. */
+  addedAt: number;
+  watchStatus: WatchStatus;
+  /** True when the status was set by hand rather than derived from playback. */
+  watchStatusManual: boolean;
 }
 
 export interface MovieDetail extends MovieSummary {
   originalTitle: string | null;
   overview: string | null;
   tagline: string | null;
-  runtime: number | null;
-  releaseDate: string | null;
   backdropPath: string | null;
   genres: string[];
   directors: string[];

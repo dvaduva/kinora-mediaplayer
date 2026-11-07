@@ -11,6 +11,8 @@ import {
   discardTranscode,
   ensureTranscode,
   hlsArgs,
+  keyframeBefore,
+  subtitleRunFile,
   parseClock,
   playlistCursor,
   playlistForClient,
@@ -159,3 +161,20 @@ function encoderExists(name: string) {
   const result = spawnSync("ffmpeg", ["-hide_banner", "-encoders"], { encoding: "utf8", windowsHide: true });
   return new RegExp(`\\b${name}\\b`).test(result.stdout);
 }
+
+test("hlsArgs writes embedded subtitles from the same pass, named by the run start", () => {
+  const args = hlsArgs("movie.mkv", "C:\\cache", { copyVideo: true, copyAudio: true }, { seek: 100, startNumber: 25 }, [2, 5]);
+  assert.equal(args.filter((arg) => arg === "-i").length, 1);
+  const hlsOutput = args.indexOf(path.join("C:\\cache", "index.m3u8"));
+  const subtitleMap = args.indexOf("0:2");
+  assert.ok(hlsOutput > 0 && subtitleMap > hlsOutput);
+  assert.equal(args[args.length - 1], subtitleRunFile("C:\\cache", 5, 100));
+  assert.ok(subtitleRunFile("C:\\cache", 5, 100).endsWith("sub5_100000.vtt"));
+  assert.equal(hlsArgs("movie.mkv", "C:\\cache", { copyVideo: true, copyAudio: true }).includes("webvtt"), false);
+});
+
+test("keyframeBefore picks the last keyframe at or before the seek point", () => {
+  const csv = ["95.000000,K__", "96.000000,___", "99.960000,K__", "100.200000,___", "101.000000,K__"].join("\n");
+  assert.equal(keyframeBefore(csv, 100), 99.96);
+  assert.equal(keyframeBefore("1.0,___", 100), null);
+});

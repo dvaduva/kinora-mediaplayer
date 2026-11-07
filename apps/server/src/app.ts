@@ -11,6 +11,7 @@ import {
   artistDetail,
   homeView,
   identifyQueue,
+  isWatchStatus,
   libraryViews,
   listAlbums,
   listArtists,
@@ -24,6 +25,7 @@ import {
   saveProgress,
   searchLibrary,
   seriesDetail,
+  setMovieWatchStatus,
 } from "./catalog.js";
 import { db } from "./db/index.js";
 import { mediaFiles } from "./db/schema.js";
@@ -33,7 +35,7 @@ import { searchReleases } from "./metadata/musicbrainz.js";
 import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
-import { materializeSubtitle, subtitleStatus } from "./playback/materialize.js";
+import { embeddedTextStreams, materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
 import { gigabytes } from "./playback/cache.js";
 import {
   ensureTranscode,
@@ -102,6 +104,7 @@ async function beginTranscode(fileId: string, restartError: boolean) {
       duration: described.row.duration,
       copyVideo: canCopyVideo(described.view.plan.videoCodec),
       copyAudio: canCopyAudio(described.view.plan.audioCodec),
+      subtitleStreams: embeddedTextStreams(fileId),
     },
     restartError,
   );
@@ -241,6 +244,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   app.get("/api/home", async () => homeView());
   app.get("/api/movies", async () => listMovies());
   app.get("/api/movies/:id", async (request, reply) => movieDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.put("/api/movies/:id/status", async (request, reply) => {
+    const status = asRecord(request.body).status;
+    // null clears the manual mark and returns to the status derived from playback.
+    if (status !== null && !isWatchStatus(status)) return reply.code(400).send({ error: "bad_status" });
+    if (!setMovieWatchStatus((request.params as { id: string }).id, status)) return reply.code(404).send({ error: "not_found" });
+    return { ok: true };
+  });
   app.get("/api/series", async () => listSeries());
   app.get("/api/series/:id", async (request, reply) => seriesDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/people/:id", async (request, reply) => {
@@ -359,12 +369,6 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     if (!described) return reply.code(404).send({ error: "not_found" });
     if (described.view.plan.available && described.view.plan.mode !== "direct") {
       void beginTranscode(fileId, true).catch(() => undefined);
-    }
-    const selectedSubtitle = described.view.selectedSubtitleId;
-    if (selectedSubtitle) {
-      // Embedded subtitles need a full read of the file, so start as soon as the player opens.
-      const resolved = resolveSubtitlePath(fileId, selectedSubtitle);
-      if (resolved?.asset.origin === "embedded") subtitleStatus(resolved.asset, resolved.file.path);
     }
     return described.view;
   });
@@ -497,11 +501,23 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     return reply.send(fs.createReadStream(filePath));
   });
 
-  app.get("/api/subtitles/:fileId/:subtitleId/status", async (request, reply) => {
-    const params = request.params as { fileId: string; subtitleId: string };
+  app.get("/api/subtitles/:fileId/:subtitleId/chunk/:index", async (request, reply) => {
+    const params = request.params as { fileId: string; subtitleId: string; index: string };
+    const index = Number(params.index);
+    if (!Number.isInteger(index) || index < 0) return reply.code(400).send({ error: "bad_index" });
     const resolved = resolveSubtitlePath(params.fileId, params.subtitleId);
     if (!resolved) return reply.code(404).send({ error: "not_found" });
-    return subtitleStatus(resolved.asset, resolved.file.path);
+    try {
+      // The player drops requests for windows it has seeked away from; stop reading those.
+      const aborted = new AbortController();
+      reply.raw.on("close", () => {
+        if (!reply.raw.writableFinished) aborted.abort();
+      });
+      return await subtitleChunk(resolved.asset, resolved.file, index, aborted.signal);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "extract_failed";
+      return reply.code(code === "bitmap" || code === "needs_ffmpeg" || code === "not_embedded" ? 415 : code === "aborted" ? 499 : 500).send({ error: code });
+    }
   });
 
   app.get("/api/subtitles/:fileId/:subtitleId", async (request, reply) => {
@@ -514,7 +530,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       return reply.send(fs.createReadStream(vtt));
     } catch (error) {
       const code = error instanceof Error ? error.message : "extract_failed";
-      return reply.code(code === "bitmap" || code === "needs_ffmpeg" ? 415 : 500).send({ error: code });
+      return reply.code(code === "bitmap" || code === "needs_ffmpeg" || code === "chunked" ? 415 : 500).send({ error: code });
     }
   });
 

@@ -94,6 +94,10 @@ Fiecare conversie se păstrează în `data/cache/transcode`, ca a doua vizionare
 
 - Subtitrările externe (`.srt`, `.vtt`, `.ass`, `.ssa`) de lângă fișierul video sunt găsite automat, la fel și cele încorporate în fișier.
 - Toate sunt convertite în WebVTT. Fișierele în Windows-1250 sunt decodate, iar diacriticele românești sunt corectate (ş→ș, ţ→ț).
+- Subtitrările încorporate ajung la player pe bucăți de 60 de secunde, în jurul poziției din film:
+  - la remux sau transcodare, aceeași comandă ffmpeg care face streamul le scrie și pe ele, fără o citire în plus a fișierului;
+  - la redare directă (sau pentru porțiuni convertite înainte), serverul sare la poziția respectivă și citește doar acea fereastră, una singură odată; ferestrele pe lângă care s-a trecut cu seek sunt anulate.
+  - Bucățile citite rămân în `data/cache/subtitles/chunks`.
 - Subtitrările de tip imagine (PGS, VobSub) nu pot fi afișate.
 
 ## Structura proiectului

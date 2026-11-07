@@ -15,6 +15,13 @@
       "when": 1794069174376,
       "tag": "0001_foreign_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794082863040,
+      "tag": "0002_movie_status",
+      "breakpoints": true
     }
   ]
 }
