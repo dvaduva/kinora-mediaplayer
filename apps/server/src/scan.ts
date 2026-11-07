@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import type { LibraryType, ScanState } from "@kinora/shared";
 import { watch, type FSWatcher } from "chokidar";
 import { parseFile } from "music-metadata";
-import { db, sqlite } from "./db/index.js";
+import { db } from "./db/index.js";
 import {
   albums,
   artists,
@@ -13,7 +13,6 @@ import {
   libraries,
   mediaFiles,
   movies,
-  progress,
   seasons,
   series,
   subtitleAssets,
@@ -96,27 +95,8 @@ export function createLibrary(input: { name: string; type: LibraryType; roots: s
 }
 
 export function deleteLibrary(id: string) {
-  const files = db.select().from(mediaFiles).where(eq(mediaFiles.libraryId, id)).all();
-  const remove = sqlite.transaction(() => {
-    for (const file of files) {
-      db.delete(subtitleAssets).where(eq(subtitleAssets.fileId, file.id)).run();
-      db.delete(progress).where(eq(progress.fileId, file.id)).run();
-    }
-    db.delete(mediaFiles).where(eq(mediaFiles.libraryId, id)).run();
-    for (const show of db.select().from(series).where(eq(series.libraryId, id)).all()) {
-      db.delete(episodes).where(eq(episodes.seriesId, show.id)).run();
-      db.delete(seasons).where(eq(seasons.seriesId, show.id)).run();
-    }
-    db.delete(series).where(eq(series.libraryId, id)).run();
-    db.delete(movies).where(eq(movies.libraryId, id)).run();
-    for (const album of db.select().from(albums).where(eq(albums.libraryId, id)).all()) {
-      db.delete(tracks).where(eq(tracks.albumId, album.id)).run();
-    }
-    db.delete(albums).where(eq(albums.libraryId, id)).run();
-    db.delete(artists).where(eq(artists.libraryId, id)).run();
-    db.delete(libraries).where(eq(libraries.id, id)).run();
-  });
-  remove();
+  // Foreign keys cascade to titles, files, subtitles and watch progress.
+  db.delete(libraries).where(eq(libraries.id, id)).run();
   states.delete(id);
   void restartWatches();
 }
