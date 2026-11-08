@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CATEGORY_MOVIES, CATEGORY_MUSIC, CATEGORY_SERIES, channelColor, channelInitials, type LiveChannel } from "@kinora/shared";
+import { CATEGORY_MOVIES, CATEGORY_MUSIC, CATEGORY_SERIES, channelColor, channelInitials, type ChannelProgram, type LiveChannel } from "@kinora/shared";
 import { api } from "./api";
 import type { Copy, Locale } from "./i18n";
 import { Icon } from "./ui";
@@ -71,6 +71,22 @@ export function useNow(everyMs = 15_000) {
     return () => window.clearInterval(timer);
   }, [everyMs]);
   return now;
+}
+
+/** The gap before an aligned start: no title of its own, it leads into the next program. */
+export function isFiller(program: Pick<ChannelProgram, "itemType"> | null | undefined) {
+  return program?.itemType === "filler";
+}
+
+export function programTitle(program: Pick<ChannelProgram, "itemType" | "title">, t: Copy) {
+  return isFiller(program) ? t.liveFillerTitle : program.title;
+}
+
+/** What airs at `now` in a channel's sorted programs, and the next real program after it. */
+export function currentAndNext<T extends Pick<ChannelProgram, "start" | "end" | "itemType">>(list: T[], now: number) {
+  const current = list.find((program) => program.start <= now && now < program.end) ?? null;
+  const next = list.find((program) => program.start >= (current?.end ?? now) && !isFiller(program)) ?? null;
+  return { current, next };
 }
 
 export function programProgress(program: { start: number; end: number }, now: number) {

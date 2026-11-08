@@ -7,7 +7,7 @@ import { detectTools } from "./process.js";
 import { gigabytes } from "./playback/cache.js";
 import { pruneTranscodes, setTranscodeCacheLimit, stopOrphanEncoders } from "./playback/transcode.js";
 import { onScanFinished, restartWatches, startScan } from "./scan.js";
-import { repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
+import { prepareUpcoming, repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
 import { refreshDueSources } from "./livetv/iptv.js";
 import { clearRelayCache, stopAllRelays, sweepRelays } from "./livetv/relay.js";
 import { getSetting, isLocalHost, seedProfile, transcodeCacheGb } from "./settings.js";
@@ -55,6 +55,14 @@ const runIptvJob = () => void refreshDueSources().catch((error: unknown) => app.
 runIptvJob();
 setInterval(runIptvJob, 60 * 60 * 1000).unref();
 setInterval(() => sweepRelays(), 15_000).unref();
+// The next program of a watched channel is converted a few minutes before it starts.
+setInterval(() => {
+  try {
+    prepareUpcoming();
+  } catch (error) {
+    app.log.error(error);
+  }
+}, 15_000).unref();
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     stopAllRelays();

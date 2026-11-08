@@ -1,17 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
-import type { ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, EpgMatchKind, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
-import { isChannelSourceType } from "@kinora/shared";
-import { and, asc, desc, eq, gt, gte, inArray, lt, lte, ne } from "drizzle-orm";
+import type { ChannelAlign, ChannelFiller, ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, EpgMatchKind, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
+import { isChannelAlign, isChannelSourceType } from "@kinora/shared";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, lte, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { channelPrograms, channels, channelSources, episodes, mediaFiles, movies, profileChannels, tracks } from "../db/schema.js";
 import { dataDir } from "../paths.js";
 import { beginTranscode, describePlayback, wholeTranscodeReach } from "../playback/session.js";
-import { sessionStarts } from "../playback/transcode.js";
+import { backgroundTranscodes, hasForegroundTranscode, sessionStarts, stopBackgroundTranscode } from "../playback/transcode.js";
 import { getSetting, PROFILE_ID, setSetting } from "../settings.js";
 import { DEFAULT_SERIES_MIN_EPISODES, newAutoChannels, planAutoChannels } from "./auto.js";
 import { deriveCategory, isMusicChannel } from "./categories.js";
+import { fillerFor } from "./filler.js";
+import { decidePrepare, markWatching, watchedChannels, type UpcomingProgram } from "./prepare.js";
 import { remoteLogoFile, sourceNames } from "./iptv.js";
 import { startRelay, stopRelay } from "./relay.js";
 import { libraryInventory, libraryTypes, resolveSources } from "./sources.js";
@@ -106,7 +108,17 @@ function iptvDto(row: ChannelRow, context: DtoContext): LiveChannel {
       epgMatch: (["manual", "tvg-id", "name"].includes(row.epgMatch ?? "") ? row.epgMatch : null) as EpgMatchKind | null,
       missing: row.iptvMissing,
     },
+    alignMinutes: 0,
+    filler: "upnext",
   };
+}
+
+function alignOf(row: Pick<ChannelRow, "alignMinutes">): ChannelAlign {
+  return isChannelAlign(row.alignMinutes) ? row.alignMinutes : 0;
+}
+
+function fillerOf(row: Pick<ChannelRow, "filler">): ChannelFiller {
+  return row.filler === "upnext" ? "upnext" : "media";
 }
 
 function channelDto(row: ChannelRow, context: DtoContext): LiveChannel {
@@ -128,6 +140,8 @@ function channelDto(row: ChannelRow, context: DtoContext): LiveChannel {
     music: isMusicChannel(sources, context.libraryType),
     favorite: context.profile.get(row.id)?.favorite ?? false,
     iptv: null,
+    alignMinutes: alignOf(row),
+    filler: fillerOf(row),
   };
 }
 
@@ -236,6 +250,7 @@ export function scheduleChannel(channelId: string, options: { cutAt?: number | n
     seed: channel.seed,
     now,
     cutAt: options.cutAt ?? null,
+    alignMinutes: alignOf(channel),
   });
   db.transaction((tx) => {
     if (plan.removeFrom != null) {
@@ -308,7 +323,11 @@ export function validateChannelInput(body: Record<string, unknown>): ChannelInpu
   if (rawCategory != null && typeof rawCategory !== "string") throw new ChannelError("bad_category");
   const categoryOverride = typeof rawCategory === "string" && rawCategory.trim() ? rawCategory.trim() : null;
   if (categoryOverride && (categoryOverride.length > 40 || categoryOverride.startsWith("@"))) throw new ChannelError("bad_category");
-  return { name, number, orderMode, enabled, sources, categoryOverride };
+  const alignMinutes = body.alignMinutes === undefined ? 0 : body.alignMinutes;
+  if (!isChannelAlign(alignMinutes)) throw new ChannelError("bad_align");
+  const filler = body.filler === undefined ? "media" : body.filler;
+  if (filler !== "media" && filler !== "upnext") throw new ChannelError("bad_filler");
+  return { name, number, orderMode, enabled, sources, categoryOverride, alignMinutes, filler };
 }
 
 function writeSources(channelId: string, sources: ChannelSource[]) {
@@ -340,6 +359,8 @@ export function createChannel(input: ChannelInput, autoKey: string | null = null
       seed: randomInt(0, 2 ** 31 - 1),
       enabled: input.enabled,
       categoryOverride: input.categoryOverride ?? null,
+      alignMinutes: input.alignMinutes ?? 0,
+      filler: input.filler ?? "media",
       autoKey,
       createdAt: now,
       updatedAt: now,
@@ -365,7 +386,16 @@ export function updateChannel(id: string, input: ChannelInput) {
     return getChannel(id);
   }
   db.update(channels)
-    .set({ name: input.name, number: input.number, orderMode: input.orderMode, enabled: input.enabled, categoryOverride: input.categoryOverride ?? null, updatedAt: now })
+    .set({
+      name: input.name,
+      number: input.number,
+      orderMode: input.orderMode,
+      enabled: input.enabled,
+      categoryOverride: input.categoryOverride ?? null,
+      alignMinutes: input.alignMinutes ?? 0,
+      filler: input.filler ?? "media",
+      updatedAt: now,
+    })
     .where(eq(channels.id, id))
     .run();
   writeSources(id, input.sources);
@@ -448,6 +478,7 @@ export function liveTvSettings(): LiveTvSettings {
   return {
     autoChannels: getSetting("liveAutoChannels") === "1",
     autoSeriesMinEpisodes: Number.isInteger(min) && min > 0 ? min : DEFAULT_SERIES_MIN_EPISODES,
+    prepareNext: getSetting("livePrepareNext") !== "0",
   };
 }
 
@@ -457,7 +488,11 @@ export function saveLiveTvSettings(body: Record<string, unknown>): LiveTvSetting
   if (typeof autoChannels !== "boolean") throw new ChannelError("bad_settings");
   const min = body.autoSeriesMinEpisodes === undefined ? current.autoSeriesMinEpisodes : body.autoSeriesMinEpisodes;
   if (typeof min !== "number" || !Number.isInteger(min) || min < 1 || min > 10_000) throw new ChannelError("bad_settings");
+  const prepareNext = body.prepareNext === undefined ? current.prepareNext : body.prepareNext;
+  if (typeof prepareNext !== "boolean") throw new ChannelError("bad_settings");
   setSetting("liveAutoChannels", autoChannels ? "1" : null);
+  setSetting("livePrepareNext", prepareNext ? null : "0");
+  if (!prepareNext) for (const fileId of backgroundTranscodes()) stopBackgroundTranscode(fileId);
   setSetting("liveAutoSeriesMinEpisodes", String(min));
   return liveTvSettings();
 }
@@ -553,12 +588,13 @@ function programAt(channelId: string, at: number) {
   );
 }
 
+/** The first program starting at `at` or later; fillers are skipped, as "next" names what airs after them. */
 function programAfter(channelId: string, at: number) {
   return (
     db
       .select()
       .from(channelPrograms)
-      .where(and(eq(channelPrograms.channelId, channelId), gte(channelPrograms.start, at)))
+      .where(and(eq(channelPrograms.channelId, channelId), gte(channelPrograms.start, at), ne(channelPrograms.itemType, "filler")))
       .orderBy(asc(channelPrograms.start))
       .get() ?? null
   );
@@ -589,12 +625,14 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
   const row = db.select().from(channels).where(eq(channels.id, id)).get();
   if (!row || !row.enabled) return "not_found";
   if (isIptv(row)) return playIptv(row);
+  markWatching(id);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const now = Date.now();
     const at = Math.max(now, after ?? 0);
     if (lastEnd(id) < at + TOP_UP_MARGIN_MS) scheduleChannel(id, { now });
     const program = programAt(id, at);
     if (!program) return "empty";
+    if (program.itemType === "filler") return playFiller(row, program, now);
     const described = program.fileId ? describePlayback(program.fileId) : null;
     if (!described || !described.view.plan.available) {
       scheduleChannel(id, { cutAt: program.start, now });
@@ -606,7 +644,7 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
     const [programDto, nextDto] = programDtos(next ? [program, next] : [program]);
     const base = { now, channel: getChannel(id)!, program: programDto!, next: nextDto ?? null, offset };
     if (described.view.plan.mode === "direct") {
-      return { ...base, mode: "direct", src: `/api/stream/${fileId}`, statusUrl: null, mediaStart: 0 };
+      return { ...base, mode: "direct", src: `/api/stream/${fileId}`, statusUrl: null, mediaStart: 0, filler: null };
     }
     const duration = described.row.duration ?? Number.POSITIVE_INFINITY;
     let mediaStart = Math.floor(offset / LIVE_SEGMENT) * LIVE_SEGMENT;
@@ -620,7 +658,7 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
     }
     const stream = mediaStart > 0 ? `/api/stream/${fileId}/at/${mediaStart}` : `/api/stream/${fileId}`;
     void beginTranscode(fileId, true, mediaStart, described).catch(() => undefined);
-    return { ...base, mode: "hls", src: `${stream}/index.m3u8`, statusUrl: `${stream}/status`, mediaStart };
+    return { ...base, mode: "hls", src: `${stream}/index.m3u8`, statusUrl: `${stream}/status`, mediaStart, filler: null };
   }
   return "empty";
 }
@@ -644,5 +682,102 @@ function playIptv(row: ChannelRow): LivePlayback | "empty" {
     src: `${base}/index.m3u8`,
     statusUrl: `${base}/status`,
     mediaStart: 0,
+    filler: null,
   };
+}
+
+/** Movie and series ids a channel airs, so its filler shows its own trailers first. */
+function ownTitles(channelId: string) {
+  const ids = new Set<string>();
+  for (const item of resolveSources(sourcesOf(channelId))) {
+    if (item.itemType === "movie") ids.add(item.itemId);
+    else if (item.group.startsWith("series:")) ids.add(item.group.slice("series:".length));
+  }
+  return ids;
+}
+
+/** The gap before an aligned start: the client shows clips or the "Up next" card until it ends. */
+function playFiller(row: ChannelRow, program: ProgramRow, now: number): LivePlayback {
+  const next = programAfter(row.id, program.end);
+  const [programDto, nextDto] = programDtos(next ? [program, next] : [program]);
+  const kind = fillerOf(row);
+  const types = libraryTypes();
+  const filler = fillerFor({
+    kind,
+    ownTitles: kind === "media" ? ownTitles(row.id) : new Set(),
+    music: isMusicChannel(sourcesOf(row.id), (libraryId) => types.get(libraryId)),
+    seed: (row.seed ^ Math.floor(program.start / 1000)) >>> 0,
+    seconds: (program.end - now) / 1000,
+    now,
+  });
+  return {
+    now,
+    channel: getChannel(row.id)!,
+    program: programDto!,
+    next: nextDto ?? null,
+    offset: Math.max(0, (now - program.start) / 1000),
+    mode: "filler",
+    src: "",
+    statusUrl: null,
+    mediaStart: 0,
+    filler,
+  };
+}
+
+/** A player keeps its channel marked as watched, which is what pre-transcoding looks at. */
+export function watchChannel(id: string) {
+  const row = db.select({ kind: channels.kind, enabled: channels.enabled }).from(channels).where(eq(channels.id, id)).get();
+  if (!row || !row.enabled) return false;
+  if (!isIptv(row)) markWatching(id);
+  return true;
+}
+
+/** Files found not worth preparing (direct play, already converted, failing); looked at again later. */
+const notPreparable = new Map<string, number>();
+const RECHECK_MS = 10 * 60_000;
+
+/**
+ * Runs every few seconds: converts the next program of a watched channel ahead of its start, stops
+ * conversions nobody is going to watch, and replaces upcoming programs whose files went missing.
+ */
+export function prepareUpcoming(now = Date.now()) {
+  if (!liveTvSettings().prepareNext) return;
+  const upcoming: UpcomingProgram[] = [];
+  const recent: UpcomingProgram[] = [];
+  for (const channelId of watchedChannels(now)) {
+    const next = db
+      .select({ start: channelPrograms.start, fileId: channelPrograms.fileId })
+      .from(channelPrograms)
+      .where(and(eq(channelPrograms.channelId, channelId), gt(channelPrograms.start, now), ne(channelPrograms.itemType, "filler"), isNotNull(channelPrograms.fileId)))
+      .orderBy(asc(channelPrograms.start))
+      .get();
+    if (next?.fileId) upcoming.push({ channelId, start: next.start, fileId: next.fileId });
+    const current = programAt(channelId, now);
+    if (current?.fileId) recent.push({ channelId, start: current.start, fileId: current.fileId });
+  }
+  for (const [fileId, until] of notPreparable) if (until <= now) notPreparable.delete(fileId);
+  const decision = decidePrepare({
+    now,
+    upcoming: upcoming.filter((program) => !notPreparable.has(program.fileId)),
+    recent,
+    foregroundBusy: hasForegroundTranscode(),
+  });
+  for (const fileId of backgroundTranscodes()) if (!decision.keep.has(fileId)) stopBackgroundTranscode(fileId);
+  const target = decision.start;
+  if (!target || backgroundTranscodes().includes(target.fileId)) return;
+  const described = describePlayback(target.fileId);
+  if (!described || !described.view.plan.available) {
+    // Found ahead of time: the channel moves on to its next item before anyone tunes in to this one.
+    scheduleChannel(target.channelId, { cutAt: target.start, now });
+    return;
+  }
+  if (described.view.plan.mode === "direct" || wholeTranscodeReach(target.fileId, described.filePath) === Number.POSITIVE_INFINITY) {
+    notPreparable.set(target.fileId, now + RECHECK_MS);
+    return;
+  }
+  void beginTranscode(target.fileId, false, 0, described, true)
+    .then((opened) => {
+      if (!opened || opened.status.state !== "running") notPreparable.set(target.fileId, Date.now() + RECHECK_MS);
+    })
+    .catch(() => notPreparable.set(target.fileId, Date.now() + RECHECK_MS));
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
 import { api } from "../api";
 import type { Copy, Locale } from "../i18n";
-import { CategoryBar, ChannelLogo, clockTime, effectiveFilter, filterChannels, programProgress, serverNow, syncClock, useChannelFilter, useNow } from "../liveTv";
+import { CategoryBar, ChannelLogo, clockTime, currentAndNext, effectiveFilter, filterChannels, programProgress, programTitle, serverNow, syncClock, useChannelFilter, useNow } from "../liveTv";
 import { Icon } from "../ui";
 import { bands, bass, fitCanvas, useFrames } from "../visualizer";
 
@@ -204,8 +204,7 @@ export function MiniGuide(props: { currentId: string | undefined; t: Copy; local
       <ul ref={list} onKeyDown={onListKey}>
         {shown.map((channel) => {
           const entries = programs.get(channel.id) ?? [];
-          const current = entries.find((program) => program.start <= now && now < program.end) ?? null;
-          const next = entries.find((program) => program.start >= (current?.end ?? now)) ?? null;
+          const { current, next } = currentAndNext(entries, now);
           return (
             <li key={channel.id}>
               <button type="button" className={`mini-guide-item${channel.id === props.currentId ? " current" : ""}`} onClick={() => props.onPick(channel)}>
@@ -216,7 +215,7 @@ export function MiniGuide(props: { currentId: string | undefined; t: Copy; local
                   </span>
                   {current ? (
                     <>
-                      <small>{current.title}</small>
+                      <small>{programTitle(current, t)}</small>
                       <span className="meter small"><span style={{ width: `${programProgress(current, now) * 100}%` }} /></span>
                     </>
                   ) : null}

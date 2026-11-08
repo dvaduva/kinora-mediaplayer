@@ -7,11 +7,14 @@ import {
   CategoryBar,
   ChannelLogo,
   clockTime,
+  currentAndNext,
   dayLabel,
   effectiveFilter,
   FavoriteButton,
   filterChannels,
+  isFiller,
   programProgress,
+  programTitle,
   serverNow,
   startOfDay,
   syncClock,
@@ -260,16 +263,20 @@ function GuideGrid(props: {
                 const right = ((Math.min(program.end, to) - from) / MINUTE) * PPM;
                 const live = program.start <= now && now < program.end;
                 const past = program.end <= now;
+                const filler = isFiller(program);
+                const title = programTitle(program, t);
                 return (
                   <button
                     key={program.id}
                     type="button"
-                    className={`guide-program${live ? " live" : ""}${past ? " past" : ""}`}
+                    className={`guide-program${live ? " live" : ""}${past ? " past" : ""}${filler ? " filler" : ""}`}
                     style={{ left, width: Math.max(2, right - left) }}
-                    onClick={() => (live ? navigate(`/live/${channel.id}`) : props.onSelect(program))}
-                    title={`${program.title}${program.subtitle ? ` · ${program.subtitle}` : ""}`}
+                    // A filler has nothing to show ahead of time; on air it tunes in like any program.
+                    onClick={() => (live ? navigate(`/live/${channel.id}`) : filler ? undefined : props.onSelect(program))}
+                    tabIndex={filler && !live ? -1 : undefined}
+                    title={`${title}${program.subtitle ? ` · ${program.subtitle}` : ""}`}
                   >
-                    <strong>{program.title}</strong>
+                    <strong>{title}</strong>
                     <small>
                       {clockTime(program.start, locale)}–{clockTime(program.end, locale)}
                       {program.subtitle ? ` · ${program.subtitle}` : ""}
@@ -288,12 +295,6 @@ function GuideGrid(props: {
   );
 }
 
-function currentAndNext(list: ChannelProgram[], now: number) {
-  const current = list.find((program) => program.start <= now && now < program.end) ?? null;
-  const next = list.find((program) => program.start >= (current?.end ?? now)) ?? null;
-  return { current, next };
-}
-
 /** Cards of what airs right now, one per channel. */
 function WhatsOn(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale }) {
   const { guide, now, t, locale } = props;
@@ -303,7 +304,8 @@ function WhatsOn(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale
       {guide.channels.map((channel) => {
         const { current, next } = currentAndNext(programs.get(channel.id) ?? [], now);
         if (!current) return null;
-        const image = imageUrl(current.image, "w780");
+        // During a filler the card already shows what comes next.
+        const image = imageUrl(isFiller(current) ? (next?.image ?? null) : current.image, "w780");
         const left = Math.max(0, Math.round((current.end - now) / MINUTE));
         return (
           <li key={channel.id}>
@@ -317,7 +319,7 @@ function WhatsOn(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale
                 <small className="muted">
                   <span className="guide-channel-number">{channel.number}</span> {channel.name}
                 </small>
-                <strong>{current.title}</strong>
+                <strong>{programTitle(current, t)}</strong>
                 {current.subtitle ? <small className="muted">{current.subtitle}</small> : null}
                 <small className="whats-on-time">
                   {clockTime(current.start, locale)}–{clockTime(current.end, locale)} · {t.liveMinutesLeft.replace("{min}", String(left))}
@@ -354,7 +356,7 @@ function NowNextList(props: { guide: LiveGuide; now: number; t: Copy; locale: Lo
                 {current ? (
                   <>
                     <span className="guide-list-now">
-                      <em>{t.liveNow}</em> {current.title}
+                      <em>{t.liveNow}</em> {programTitle(current, t)}
                     </span>
                     <span className="meter small"><span style={{ width: `${programProgress(current, now) * 100}%` }} /></span>
                   </>

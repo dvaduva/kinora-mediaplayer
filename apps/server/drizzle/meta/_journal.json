@@ -57,6 +57,13 @@
       "when": 1794143652347,
       "tag": "0007_live_tv_iptv",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794149383104,
+      "tag": "0008_live_tv_alignment",
+      "breakpoints": true
     }
   ]
 }

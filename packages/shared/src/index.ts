@@ -599,6 +599,19 @@ export interface LiveChannel {
   favorite: boolean;
   /** Set on channels imported from an IPTV playlist. */
   iptv: LiveChannelIptv | null;
+  /** Programs start on this grid in minutes (30: :00 and :30; 60: the hour); 0 plays them back to back. */
+  alignMinutes: ChannelAlign;
+  /** What airs in the gap before an aligned start. */
+  filler: ChannelFiller;
+}
+
+export const CHANNEL_ALIGNS = [0, 30, 60] as const;
+export type ChannelAlign = (typeof CHANNEL_ALIGNS)[number];
+/** media: trailers and music clips (with the "Up next" card over them); upnext: the card alone. */
+export type ChannelFiller = "media" | "upnext";
+
+export function isChannelAlign(value: unknown): value is ChannelAlign {
+  return typeof value === "number" && (CHANNEL_ALIGNS as readonly number[]).includes(value);
 }
 
 /** How an IPTV channel found its guide: chosen by hand, by tvg-id, or by name. */
@@ -679,6 +692,9 @@ export interface ChannelInput {
   sources: ChannelSource[];
   /** Null or empty derives the category from the rules. */
   categoryOverride?: string | null;
+  /** Defaults to 0 (no alignment) and "media". */
+  alignMinutes?: ChannelAlign;
+  filler?: ChannelFiller;
 }
 
 /** Live TV options that apply to the whole server. */
@@ -687,9 +703,12 @@ export interface LiveTvSettings {
   autoChannels: boolean;
   /** A series needs at least this many playable episodes for a channel of its own. */
   autoSeriesMinEpisodes: number;
+  /** Convert the next program of a channel someone watches a few minutes before it starts. */
+  prepareNext: boolean;
 }
 
-export type ProgramItemType = "movie" | "episode" | "track" | "external";
+/** filler: the gap before an aligned start on a virtual channel; it has no file. */
+export type ProgramItemType = "movie" | "episode" | "track" | "external" | "filler";
 
 export interface ChannelProgram {
   id: number;
@@ -741,12 +760,21 @@ export interface LivePlayback {
    * direct: a library file; hls: a conversion of one; live: an IPTV channel relayed by the server,
    * played at its live edge and not tied to the program's timeline.
    */
-  mode: "direct" | "hls" | "live";
+  mode: "direct" | "hls" | "live" | "filler";
+  /** Empty for a filler, which the client draws itself. */
   src: string;
   /** Transcode status to poll before an HLS stream can start; null for direct play. */
   statusUrl: string | null;
   /** Program time (seconds) at which the stream's own timeline starts; 0 for direct play. */
   mediaStart: number;
+  /** Set in filler mode: what to show until the next program starts. */
+  filler: LiveFiller | null;
+}
+
+/** YouTube clips played during a filler, in order; empty shows the "Up next" card alone. */
+export interface LiveFiller {
+  kind: ChannelFiller;
+  videos: { key: string; title: string; kind: "trailer" | "clip" }[];
 }
 
 /** Choices offered by the channel form. */

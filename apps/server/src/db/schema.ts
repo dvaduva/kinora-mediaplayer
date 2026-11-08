@@ -243,6 +243,10 @@ export const channels = sqliteTable("channels", {
   seed: integer("seed").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   categoryOverride: text("category_override"),
+  /** Virtual channels: programs start on this grid (30 = :00 and :30, 60 = the hour); 0 runs them back to back. */
+  alignMinutes: integer("align_minutes").notNull().default(0),
+  /** What fills the gap before an aligned start: "media" (trailers, music clips) or "upnext" (a card). */
+  filler: text("filler").notNull().default("media"),
   /** Set on channels the server generated ("genre:Drama", "series:<id>", "music:Rock"); one per key. */
   autoKey: text("auto_key"),
   /* IPTV channels: imported from a playlist of this source. */

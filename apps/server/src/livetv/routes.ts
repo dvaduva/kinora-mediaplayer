@@ -22,6 +22,7 @@ import {
   syncAutoChannels,
   updateChannel,
   validateChannelInput,
+  watchChannel,
 } from "./channels.js";
 import {
   createPresetSource,
@@ -114,6 +115,12 @@ export function registerLiveTv(app: FastifyInstance) {
     if (result === "empty") return reply.code(409).send({ error: "channel_empty" });
     reply.header("Cache-Control", "no-store");
     return result;
+  });
+
+  /** Sent by the player every half minute; the next program of a watched channel is prepared ahead. */
+  app.post("/api/livetv/channels/:id/watching", async (request, reply) => {
+    if (!watchChannel((request.params as { id: string }).id)) return reply.code(404).send({ error: "not_found" });
+    return reply.code(204).send();
   });
 
   app.post("/api/livetv/channels", async (request, reply) => {

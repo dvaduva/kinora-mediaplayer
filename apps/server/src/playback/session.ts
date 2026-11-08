@@ -28,7 +28,7 @@ export function describePlayback(fileId: string) {
  * Starts or joins the conversion of a file. `start` opens a separate session from that media time
  * (Live TV joining a program midway); such sessions skip embedded subtitles.
  */
-export async function beginTranscode(fileId: string, restartError: boolean, start = 0, known?: ReturnType<typeof describePlayback>) {
+export async function beginTranscode(fileId: string, restartError: boolean, start = 0, known?: ReturnType<typeof describePlayback>, background = false) {
   // Resolving a file on a network share can take seconds; callers that already did it pass the result.
   const described = known ?? describePlayback(fileId);
   if (!described || !described.view.plan.available || described.view.plan.mode === "direct") return null;
@@ -44,6 +44,7 @@ export async function beginTranscode(fileId: string, restartError: boolean, star
       copyAudio: canCopyAudio(described.view.plan.audioCodec),
       subtitleStreams: start > 0 ? [] : embeddedTextStreams(fileId),
       start,
+      background,
     },
     restartError,
   );

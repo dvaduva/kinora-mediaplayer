@@ -6,6 +6,8 @@ export const HORIZON_MS = 72 * 60 * 60 * 1000;
 export const KEEP_PAST_MS = 24 * 60 * 60 * 1000;
 /** Shorter items (samples, extras with a broken duration) are not scheduled. */
 export const MIN_ITEM_MS = 30_000;
+/** Gaps shorter than this before an aligned start are added to the program instead of getting a filler. */
+export const MIN_FILLER_MS = 1000;
 /** Upper bound for one fill, so a channel of very short items cannot write without end. */
 const MAX_FILL = 3000;
 
@@ -28,10 +30,11 @@ export interface ScheduleItem {
 export interface ProgramDraft {
   start: number;
   end: number;
+  /** A filler keeps the position of the item before it, so the play order is not affected. */
   seq: number;
-  itemType: ScheduleItem["itemType"];
-  itemId: string;
-  fileId: string;
+  itemType: ScheduleItem["itemType"] | "filler";
+  itemId: string | null;
+  fileId: string | null;
   title: string;
   subtitle: string | null;
   description: string | null;
@@ -113,14 +116,64 @@ export function createPicker(items: ScheduleItem[], mode: ChannelOrder, seed: nu
   };
 }
 
-/** Programs laid end to end from `from` until `until`, starting at position `firstSeq` of the play order. */
-export function fillSchedule(input: { items: ScheduleItem[]; mode: ChannelOrder; seed: number; from: number; firstSeq: number; until: number }) {
+/** Minutes the server's clock is ahead of UTC at `time`, so a 60-minute grid falls on the local hour. */
+export function localOffsetMinutes(time: number) {
+  return -new Date(time).getTimezoneOffset();
+}
+
+/** The first point of a grid of `minutes` (counted in local time) at or after `time`. */
+export function nextSlot(time: number, minutes: number, offsetMinutes = localOffsetMinutes(time)) {
+  if (minutes <= 0) return time;
+  const step = minutes * 60_000;
+  const shift = offsetMinutes * 60_000;
+  return Math.ceil((time + shift) / step) * step - shift;
+}
+
+function fillerDraft(start: number, end: number, seq: number): ProgramDraft {
+  return { start, end, seq, itemType: "filler", itemId: null, fileId: null, title: "", subtitle: null, description: null, image: null };
+}
+
+export interface FillInput {
+  items: ScheduleItem[];
+  mode: ChannelOrder;
+  seed: number;
+  from: number;
+  firstSeq: number;
+  until: number;
+  /** Start every item on this grid, with a filler before it; 0 lays items end to end. */
+  alignMinutes?: number;
+  /** Align the first item too (the fill continues an existing program); otherwise it starts at `from`. */
+  alignFirst?: boolean;
+  offsetMinutes?: number;
+}
+
+/**
+ * Programs laid end to end from `from` until `until`, starting at position `firstSeq` of the play order.
+ * With `alignMinutes`, each item starts on the grid and a filler program covers the gap before it.
+ */
+export function fillSchedule(input: FillInput) {
   const pick = createPicker(input.items, input.mode, input.seed);
   const programs: ProgramDraft[] = [];
   if (!pick) return programs;
+  const align = input.alignMinutes ?? 0;
+  const slot = (time: number) => nextSlot(time, align, input.offsetMinutes);
   let start = input.from;
   let seq = input.firstSeq;
+  let alignNext = align > 0 && input.alignFirst === true;
   while (start < input.until && programs.length < MAX_FILL) {
+    if (alignNext) {
+      const aligned = slot(start);
+      if (aligned - start >= MIN_FILLER_MS) {
+        programs.push(fillerDraft(start, aligned, seq - 1));
+      } else if (aligned > start) {
+        // A sliver of a gap goes to the program before it.
+        const previous = programs[programs.length - 1];
+        if (previous) previous.end = aligned;
+      }
+      start = aligned;
+      if (start >= input.until) break;
+    }
+    alignNext = align > 0;
     const item = pick(seq);
     const end = start + item.durationMs;
     programs.push({
@@ -166,6 +219,8 @@ export function continueSchedule(input: {
   now: number;
   horizonMs?: number;
   cutAt?: number | null;
+  alignMinutes?: number;
+  offsetMinutes?: number;
 }) {
   const cutAt = input.cutAt ?? null;
   const now = Math.floor(input.now / 1000) * 1000;
@@ -180,6 +235,10 @@ export function continueSchedule(input: {
     from,
     firstSeq: last ? last.seq + 1 : 0,
     until: now + (input.horizonMs ?? HORIZON_MS),
+    alignMinutes: input.alignMinutes,
+    // A new channel starts at once; a program that carries on waits for the next slot.
+    alignFirst: from === base,
+    offsetMinutes: input.offsetMinutes,
   });
   return { removeFrom: cutAt, add };
 }

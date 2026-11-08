@@ -21,6 +21,11 @@ export interface TranscodeRequest {
    * Its playlist counts from this point; 0 or absent is the regular whole-file conversion.
    */
   start?: number;
+  /**
+   * Prepared ahead for Live TV (the next program of a watched channel). It runs beside the open
+   * session instead of stopping it, and becomes a regular session once a player asks for it.
+   */
+  background?: boolean;
 }
 
 export interface HlsCodecs {
@@ -67,6 +72,8 @@ interface Job {
 
 const jobs = new Map<string, Job>();
 const sessions = new Map<string, TranscodeRequest>();
+/** Session keys opened in the background and not asked for by a player yet. */
+const background = new Set<string>();
 
 export const transcodeRoot = path.join(dataDir, "cache", "transcode");
 let cacheLimitBytes = gigabytes(DEFAULT_CACHE_GB);
@@ -312,12 +319,45 @@ function readyStatus(duration: number | null): TranscodeStatus {
   return statusFor("ready", duration ?? 0, duration, true, null);
 }
 
+/** Another session a player opened; conversions prepared in the background do not count. */
 export function hasOtherTranscode(fileId: string, start = 0) {
   const own = sessionKey(fileId, start);
   for (const other of sessions.keys()) {
-    if (other !== own) return true;
+    if (other !== own && !background.has(other)) return true;
   }
   return false;
+}
+
+/** A conversion a player opened is running (not one prepared in the background). */
+export function hasForegroundTranscode() {
+  for (const [key, input] of sessions) {
+    if (background.has(key)) continue;
+    if (jobs.get(transcodeLocation(input).key)?.state === "running") return true;
+  }
+  return false;
+}
+
+/** File ids of the conversions prepared in the background that are still open. */
+export function backgroundTranscodes() {
+  return [...background].flatMap((key) => {
+    const input = sessions.get(key);
+    return input ? [input.fileId] : [];
+  });
+}
+
+/** Stops a conversion prepared in the background; what it wrote stays and a later pass continues it. */
+export function stopBackgroundTranscode(fileId: string, start = 0) {
+  const own = sessionKey(fileId, start);
+  if (!background.has(own)) return false;
+  background.delete(own);
+  const input = sessions.get(own);
+  sessions.delete(own);
+  if (!input) return false;
+  const { key } = transcodeLocation(input);
+  const job = jobs.get(key);
+  jobs.delete(key);
+  job?.child?.kill();
+  return true;
 }
 
 /** Start points of the open sessions of a file (0 is the whole-file session). */
@@ -341,13 +381,15 @@ export function lookupTranscode(fileId: string, probePlaylist = true, start = 0)
   return null;
 }
 
-function stopOtherJobs(own: string) {
+/** A player's conversion stops every other one; a background one stops only other background ones. */
+function stopOtherJobs(own: string, onlyBackground = false) {
   for (const [other, input] of sessions) {
-    if (other === own) continue;
+    if (other === own || (onlyBackground && !background.has(other))) continue;
     const located = transcodeLocation(input);
     const job = jobs.get(located.key);
     jobs.delete(located.key);
     sessions.delete(other);
+    background.delete(other);
     job?.child?.kill();
   }
 }
@@ -373,11 +415,20 @@ function tail(text: string) {
 export async function ensureTranscode(input: TranscodeRequest, restartError = false): Promise<{ status: TranscodeStatus; dir: string }> {
   const base = startOf(input);
   const own = sessionKey(input.fileId, base);
+  const opened = sessions.has(own);
+  if (!input.background) background.delete(own);
+  // Preparing a session a player already has open leaves it as it is.
+  else if (!opened) background.add(own);
+  const inBackground = background.has(own);
   sessions.set(own, input);
   const { key, dir } = transcodeLocation(input);
   const done = path.join(dir, "done");
+  const closeIfBackground = () => {
+    if (background.delete(own)) sessions.delete(own);
+  };
   if (fs.existsSync(done)) {
     markUsed(dir);
+    closeIfBackground();
     return { status: readyStatus(input.duration), dir };
   }
   const existing = jobs.get(key);
@@ -385,6 +436,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     return { status: statusFor("running", existing.seconds, input.duration, playlistHasSegment(readPlaylist(dir)), null), dir };
   }
   if (existing?.state === "error" && !restartError) {
+    closeIfBackground();
     return { status: statusFor("error", existing.seconds, input.duration, false, existing.error), dir };
   }
 
@@ -394,10 +446,11 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   const reached = base + cursor.seconds;
   if (cursor.count > 0 && coversDuration(reached, input.duration)) {
     fs.writeFileSync(done, "");
+    closeIfBackground();
     return { status: readyStatus(input.duration), dir };
   }
 
-  stopOtherJobs(own);
+  stopOtherJobs(own, inBackground);
   const appending = cursor.count > 0;
   const job: Job = { state: "running", runStart: appending ? reached : base, seconds: appending ? reached : base, error: null, child: null };
   jobs.set(key, job);
@@ -454,6 +507,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     job.state = "error";
     job.error = message.slice(0, 300) || "ffmpeg failed";
     job.child = null;
+    if (background.delete(own)) sessions.delete(own);
     if (!appending) void fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   };
 
@@ -476,6 +530,8 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
       fs.writeFileSync(done, "");
       markUsed(dir);
       jobs.delete(key);
+      // A finished background conversion is on disk; whoever needs it opens it from there.
+      if (background.delete(own)) sessions.delete(own);
       pruneTranscodes();
       return;
     }
@@ -541,6 +597,7 @@ export function discardTranscode(input: SessionInput) {
   const job = jobs.get(key);
   jobs.delete(key);
   sessions.delete(sessionKey(input.fileId, startOf(input)));
+  background.delete(sessionKey(input.fileId, startOf(input)));
   job?.child?.kill();
   try {
     fs.rmSync(dir, { recursive: true, force: true });

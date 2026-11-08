@@ -5,10 +5,12 @@ const LOOP_SECONDS = 12;
 /** Where the excerpt starts, as a share of the clip: past intros and label cards. */
 const LOOP_AT = 0.35;
 
-interface YTPlayer {
+export interface YTPlayer {
   playVideo(): void;
   pauseVideo(): void;
   mute(): void;
+  unMute(): void;
+  loadVideoById(videoId: string): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   getDuration(): number;
@@ -16,7 +18,7 @@ interface YTPlayer {
   destroy(): void;
 }
 
-interface YTNamespace {
+export interface YTNamespace {
   Player: new (
     element: HTMLElement,
     options: {
@@ -44,7 +46,7 @@ declare global {
  * and lyrics captions on top of the picture would clash with the music.
  * unloadModule is undocumented, so it is optional.
  */
-function hideCaptions(player: YTPlayer) {
+export function hideCaptions(player: YTPlayer) {
   const withModules = player as YTPlayer & { unloadModule?: (name: string) => void };
   try {
     withModules.unloadModule?.("captions");
@@ -59,7 +61,7 @@ const ENDED = 0;
 
 let apiPromise: Promise<YTNamespace> | null = null;
 
-function loadYoutubeApi(): Promise<YTNamespace> {
+export function loadYoutubeApi(): Promise<YTNamespace> {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   apiPromise ??= new Promise<YTNamespace>((resolve, reject) => {
     const previous = window.onYouTubeIframeAPIReady;

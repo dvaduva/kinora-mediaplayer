@@ -1516,6 +1516,27 @@ a.rating-chip:hover strong { color: var(--brass); }
 
 .live-banner .favorite-button { align-self: center; }
 .live-music { position: absolute; inset: 0; overflow: hidden; background: #0c0b10; pointer-events: none; }
+
+/* Filler before an aligned start: trailers or the next program's picture, with the "Up next" card. */
+.live-filler { position: absolute; inset: 0; overflow: hidden; background: #0c0b10; pointer-events: none; display: grid; place-items: center; }
+.live-filler-backdrop { position: absolute; inset: -40px; width: calc(100% + 80px); height: calc(100% + 80px); object-fit: cover; filter: blur(28px) brightness(0.4); }
+.live-filler-video { position: absolute; inset: 0; opacity: 0; transition: opacity 0.6s ease; }
+.live-filler-video.shown { opacity: 1; }
+.live-filler-video iframe { width: 100%; height: 100%; border: 0; }
+.live-filler-card { position: relative; max-width: min(560px, calc(100% - 32px)); padding: 20px 24px; border-radius: 14px; background: rgba(12, 10, 16, 0.72); box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45); text-align: center; color: #f3eee6; }
+.live-filler.with-videos { place-items: end start; }
+.live-filler.with-videos .live-filler-card { margin: 0 0 96px 24px; padding: 14px 18px; text-align: left; }
+.live-filler-card h2 { margin: 4px 0; font-size: clamp(20px, 3vw, 30px); }
+.live-filler-card p { margin: 4px 0; }
+.live-filler-label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 12.5px; color: var(--brass); }
+.live-filler-when { font-variant-numeric: tabular-nums; }
+.live-filler-clip { font-size: 12.5px; }
+@media (max-width: 640px) {
+  .live-filler.with-videos .live-filler-card { margin: 0 0 72px 12px; max-width: calc(100% - 24px); }
+}
+.guide-program.filler { background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 6px, transparent 6px 12px); cursor: default; }
+.guide-program.filler strong { font-weight: 500; color: var(--faint); }
+.guide-program.filler.live { cursor: pointer; }
 .live-music-backdrop { position: absolute; inset: -40px; background-size: cover; background-position: center; filter: blur(40px) brightness(0.35); }
 .live-music canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .live-music-cover { position: absolute; left: 50%; top: 50%; width: 30%; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }

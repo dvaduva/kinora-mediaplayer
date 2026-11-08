@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import type { ChannelInput, ChannelOptions, ChannelOrder, ChannelSource, ChannelSourceType, LiveChannel, LiveTvSettings } from "@kinora/shared";
+import type { ChannelAlign, ChannelFiller, ChannelInput, ChannelOptions, ChannelOrder, ChannelSource, ChannelSourceType, LiveChannel, LiveTvSettings } from "@kinora/shared";
 import { CHANNEL_SOURCE_TYPES, deriveCategory } from "@kinora/shared";
 import { api } from "../../api";
 import { useLocale, type Copy } from "../../i18n";
@@ -246,6 +246,12 @@ function AutoChannels(props: { t: Copy; onChange: () => void }) {
         <button className="text-button" type="button" disabled={busy} onClick={() => void generate(true)}>{t.liveAutoRestore}</button>
         {note ? <span className={note.tone === "ok" ? "settings-saved" : "danger"} role="status">{note.text}</span> : null}
       </div>
+      <h3>{t.livePrepareTitle}</h3>
+      <label className="radio">
+        <input type="checkbox" checked={settings.prepareNext} disabled={busy} onChange={(event) => void save({ prepareNext: event.target.checked })} />
+        {t.livePrepareNext}
+      </label>
+      <p className="field-help">{t.livePrepareHelp}</p>
     </div>
   );
 }
@@ -307,6 +313,7 @@ function ChannelCard(props: {
           ) : (
             <span className="library-type">
               {t.liveOrder}: {channel.orderMode === "shuffle" ? t.liveOrderShuffle : t.liveOrderSequentialShort}
+              {channel.alignMinutes > 0 ? ` · ${channel.alignMinutes === 30 ? t.liveAlignHalfHour : t.liveAlignHour}` : ""}
               {channel.category ? ` · ${t.liveCategory}: ${categoryLabel(channel.category, t)}` : ""}
             </span>
           )}
@@ -380,6 +387,8 @@ function ChannelForm(props: {
   const [sources, setSources] = useState<ChannelSource[]>(channel?.sources.length || iptv ? (channel?.sources ?? []) : [emptyRule("genre")]);
   const [order, setOrder] = useState<ChannelOrder | null>(channel?.orderMode ?? null);
   const [category, setCategory] = useState(channel?.categoryOverride ?? "");
+  const [align, setAlign] = useState<ChannelAlign>(channel?.alignMinutes ?? 0);
+  const [filler, setFiller] = useState<ChannelFiller>(channel?.filler ?? "media");
   const [logo, setLogo] = useState<LogoChange>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -398,6 +407,8 @@ function ChannelForm(props: {
       number !== String(channel.number) ||
       enabled !== channel.enabled ||
       orderMode !== channel.orderMode ||
+      align !== channel.alignMinutes ||
+      filler !== channel.filler ||
       !sameSources(filled, channel.sources) ||
       logo !== null ||
       category.trim() !== (channel.categoryOverride ?? "")
@@ -435,7 +446,16 @@ function ChannelForm(props: {
       setError(t.errNoRules);
       return;
     }
-    const body: ChannelInput = { name: name.trim(), number: Number(number), orderMode, enabled, sources: filled, categoryOverride: category.trim() || null };
+    const body: ChannelInput = {
+      name: name.trim(),
+      number: Number(number),
+      orderMode,
+      enabled,
+      sources: filled,
+      categoryOverride: category.trim() || null,
+      alignMinutes: align,
+      filler,
+    };
     setBusy(true);
     setError(null);
     try {
@@ -521,6 +541,30 @@ function ChannelForm(props: {
           <input type="radio" name="order" checked={orderMode === "sequential"} onChange={() => setOrder("sequential")} />
           {t.liveOrderSequential}
         </label>
+      </fieldset>
+      )}
+
+      {iptv ? null : (
+      <fieldset className="field order-field">
+        <legend>{t.liveAlign}</legend>
+        <p className="field-help">{t.liveAlignHelp}</p>
+        <select value={align} onChange={(event) => setAlign(Number(event.target.value) as ChannelAlign)} aria-label={t.liveAlign}>
+          <option value={0}>{t.liveAlignOff}</option>
+          <option value={30}>{t.liveAlignHalfHour}</option>
+          <option value={60}>{t.liveAlignHour}</option>
+        </select>
+        {align > 0 ? (
+          <>
+            <label className="radio">
+              <input type="radio" name="filler" checked={filler === "media"} onChange={() => setFiller("media")} />
+              {t.liveFillerMedia}
+            </label>
+            <label className="radio">
+              <input type="radio" name="filler" checked={filler === "upnext"} onChange={() => setFiller("upnext")} />
+              {t.liveFillerUpNext}
+            </label>
+          </>
+        ) : null}
       </fieldset>
       )}
 

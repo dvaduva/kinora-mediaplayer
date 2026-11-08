@@ -132,6 +132,15 @@ Implementată (migrarea `0007_live_tv_iptv`). Detalii și abateri de la plan:
 - Pre-transcodarea emisiunii următoare, cu câteva minute înainte, pe canalele urmărite activ.
 - Opțiune per canal: aliniere la :00/:30, cu umplutură din trailere și clipuri muzicale sau un ecran „Urmează…”.
 
+### Stare (8 nov. 2026)
+
+Implementată (migrarea `0008_live_tv_alignment`). Detalii și abateri de la plan:
+
+- **Pre-transcodare** (`livetv/prepare.ts`, `prepareUpcoming` în `channels.ts`, la fiecare 15s): un canal virtual e „urmărit” cât timp playerul trimite `POST /api/livetv/channels/:id/watching` (la 30s; și `/play` contează), cu expirare la 90s. Cu 5 minute înainte de următoarea emisiune a unui canal urmărit, fișierul ei e transcodat întreg, în fundal. Conversia de fundal nu o oprește pe cea a spectatorului, iar cât timp aceea încă rulează, pregătirea așteaptă până la 90s înainte de start, ca două encodere să nu împartă procesorul mult timp. Rulează cel mult o conversie de fundal. La începutul emisiunii, playerul preia conversia deja pornită. Dacă nimeni nu mai urmărește canalul, conversia se oprește, iar ce s-a scris rămâne în cache și se continuă la nevoie. Fișierele redate direct sau deja convertite sunt sărite. Un fișier lipsă e găsit la pregătire, iar programul se reface înainte ca cineva să ajungă la el. Se poate opri din Setări → Live TV („Pregătire”, pornită implicit).
+- **Aliniere:** per canal virtual, „fără” / „la :00 și :30” / „la ora fixă” (`align_minutes` 0/30/60, după ora locală a serverului). Golul dinaintea fiecărei emisiuni devine un program `item_type = filler`, fără fișier, care nu consumă poziții din ordinea de redare. Un canal nou pornește imediat, aliniat de la a doua emisiune. La editare, emisiunea în curs rămâne, iar următoarele se aliniază. Golurile sub o secundă se lipesc de emisiunea anterioară. „Urmează” (banner, ghid, What's On, mini-ghid) sare peste umpluturi.
+- **Umplutură** (`filler`: `media` sau `upnext`): `media` redă, prin playerul YouTube, întâi trailerele titlurilor canalului, apoi pe ale restului bibliotecii, apoi clipurile muzicale deja găsite pentru albume (cache-ul din `data/cache/clips`). La canalele de muzică, clipurile vin primele. Lista e stabilă pentru aceeași umplutură. Peste ele apare cardul „Urmează…”, cu titlul, ora și numărătoarea inversă. Dacă niciun clip nu pornește (offline, încorporare blocată), sau la `upnext`, rămâne doar cardul, peste imaginea emisiunii următoare. Fără un click recent, browserul poate porni clipurile fără sunet.
+- În ghid, umpluturile apar ca blocuri hașurate. Click pe una în curs pornește canalul. Una viitoare nu deschide panoul.
+
 ## Note
 
 - Biblioteca nu salvează colecțiile TMDB (`belongs_to_collection`). O regulă „colecție” are nevoie ca acestea să fie aduse la potrivirea cu TMDB; până atunci, „listă manuală de titluri” acoperă cazul.

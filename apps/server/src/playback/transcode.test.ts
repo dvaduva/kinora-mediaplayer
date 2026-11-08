@@ -7,9 +7,12 @@ import test from "node:test";
 import { transcodePlaybackReady } from "@kinora/shared";
 import { commandWorks } from "../process.js";
 import {
+  backgroundTranscodes,
   consumeProgress,
   discardTranscode,
   ensureTranscode,
+  hasForegroundTranscode,
+  hasOtherTranscode,
   hlsArgs,
   keyframeBefore,
   subtitleRunFile,
@@ -105,6 +108,41 @@ test("builds a browser playlist from H.264 and E-AC-3", { timeout: 60_000 }, asy
 test("encodes non-H.264 video into a browser playlist", { timeout: 60_000 }, async () => {
   if (!commandWorks("ffmpeg") || !encoderExists("libx264")) return;
   await transcodeSample({ name: "file_video_encode_test", videoCodec: "mpeg4", audioCodec: "aac", copyVideo: false, copyAudio: true });
+});
+
+test("a background conversion runs beside the open one and joins it when a player asks", { timeout: 60_000 }, async () => {
+  if (!commandWorks("ffmpeg") || !encoderExists("libx264")) return;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "kinora-"));
+  const make = (name: string) => {
+    const source = path.join(directory, `${name}.mkv`);
+    const created = spawnSync(
+      "ffmpeg",
+      ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=24:duration=40", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=40", "-map", "0:v", "-map", "1:a", "-c:v", "mpeg4", "-c:a", "aac", "-shortest", source],
+      { encoding: "utf8", windowsHide: true },
+    );
+    if (created.status !== 0) assert.fail(created.stderr || "could not create a sample");
+    const stat = fs.statSync(source);
+    return { fileId: `file_${name}_bg_test`, sourcePath: source, size: stat.size, mtime: Math.round(stat.mtimeMs), duration: 40, copyVideo: false, copyAudio: true };
+  };
+  const watching = make("watching");
+  const next = make("next");
+  try {
+    discardTranscode(watching);
+    discardTranscode(next);
+    assert.equal((await ensureTranscode(watching, true)).status.state, "running");
+    assert.equal((await ensureTranscode({ ...next, background: true })).status.state, "running");
+    // The player's conversion keeps running, and does not count the prepared one as a rival.
+    assert.equal(hasForegroundTranscode(), true);
+    assert.equal(hasOtherTranscode(watching.fileId), false);
+    assert.deepEqual(backgroundTranscodes(), [next.fileId]);
+    // The next program starts: its player joins the running conversion instead of starting over.
+    assert.equal((await ensureTranscode(next)).status.state, "running");
+    assert.deepEqual(backgroundTranscodes(), []);
+  } finally {
+    discardTranscode(watching);
+    discardTranscode(next);
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 async function transcodeSample(sample: { name: string; videoCodec: string; audioCodec: string; copyVideo: boolean; copyAudio: boolean }) {

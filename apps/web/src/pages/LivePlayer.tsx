@@ -6,16 +6,19 @@ import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
 import { useAudio } from "../audio";
 import { useLocale } from "../i18n";
-import { ChannelLogo, clockTime, FavoriteButton, programProgress, serverNow, syncClock, useNow } from "../liveTv";
+import { ChannelLogo, clockTime, FavoriteButton, programProgress, programTitle, serverNow, syncClock, useNow } from "../liveTv";
 import { formatClock, imageUrl } from "../media";
 import { Icon } from "../ui";
 import { LiveMusicVisual, MiniGuide, useMediaAnalyser } from "./LiveExtras";
+import { FillerScreen } from "./LiveFiller";
 
 /** Within this many seconds of the live point, playback counts as live. */
 const LIVE_SLACK = 15;
 const SEEK_STEP = 10;
 const BANNER_MS = 5000;
 const CHROME_MS = 3000;
+/** The player tells the server it is still watching, so the next program can be prepared ahead. */
+const WATCHING_MS = 30_000;
 /** An IPTV stream sits this far behind the newest segment, as hls.js keeps three segments of margin. */
 const EDGE_MARGIN = 12;
 
@@ -82,6 +85,16 @@ export function LivePlayerPage() {
       .catch(() => setChannels([]));
   }, []);
 
+  // Library channels only: IPTV relays track their viewers on their own.
+  const watchedId = session && session.mode !== "live" ? session.channel.id : null;
+  useEffect(() => {
+    if (!watchedId) return;
+    const timer = window.setInterval(() => {
+      void api(`/api/livetv/channels/${watchedId}/watching`, { method: "POST", body: "{}" }).catch(() => undefined);
+    }, WATCHING_MS);
+    return () => window.clearInterval(timer);
+  }, [watchedId]);
+
   const flashBanner = useCallback(() => setBanner(true), []);
   useEffect(() => {
     if (!banner) return;
@@ -130,6 +143,12 @@ export function LivePlayerPage() {
   useEffect(() => {
     const media = video.current;
     if (!session || !media) return;
+    // A filler has no stream: the player draws it.
+    if (session.mode === "filler") {
+      setPaused(false);
+      setStarted(true);
+      return;
+    }
     let cancelled = false;
     let hls: Hls | null = null;
     let timer = 0;
@@ -257,6 +276,23 @@ export function LivePlayerPage() {
       media.removeEventListener("volumechange", onVolume);
     };
 
+    if (session.mode === "filler") {
+      const timer = window.setInterval(() => {
+        const program = session.program;
+        if (!program || !channelId) return;
+        setPosition(liveSeconds(program));
+        if (serverNow() >= program.end) {
+          window.clearInterval(timer);
+          tune(channelId, program.end);
+          flashBanner();
+        }
+      }, 500);
+      return () => {
+        common();
+        window.clearInterval(timer);
+      };
+    }
+
     if (session.mode === "live") {
       const onTime = () => {
         if (media.readyState === HTMLMediaElement.HAVE_NOTHING) return;
@@ -338,7 +374,7 @@ export function LivePlayerPage() {
   const seekTo = useCallback(
     (programTime: number) => {
       const media = video.current;
-      if (!session || !media || !started) return;
+      if (!session || !media || !started || session.mode === "filler") return;
       if (session.mode === "live") {
         const shown = liveSeconds(infoRef.current?.program ?? null) - behindEdge;
         seekLive(programTime - shown);
@@ -354,7 +390,7 @@ export function LivePlayerPage() {
   const seekBy = useCallback(
     (step: number) => {
       const media = video.current;
-      if (!session || !media) return;
+      if (!session || !media || session.mode === "filler") return;
       if (session.mode === "live") seekLive(step);
       else seekTo(session.mediaStart + media.currentTime + step);
     },
@@ -364,6 +400,10 @@ export function LivePlayerPage() {
   const goLive = useCallback(() => {
     const media = video.current;
     if (!session || !media) return;
+    if (session.mode === "filler") {
+      setPaused(false);
+      return;
+    }
     if (session.mode === "live") {
       const range = seekableRange(media);
       const edge = hlsRef.current?.liveSyncPosition ?? (range ? range.end - EDGE_MARGIN : null);
@@ -372,12 +412,18 @@ export function LivePlayerPage() {
     void media.play().catch(() => undefined);
   }, [session, seekTo]);
 
+  const sessionMode = session?.mode ?? null;
   const togglePlay = useCallback(() => {
     const media = video.current;
     if (!media) return;
+    // A filler keeps running on the clock; pausing only stops its clips.
+    if (sessionMode === "filler") {
+      setPaused((value) => !value);
+      return;
+    }
     if (media.paused) void media.play().catch(() => undefined);
     else media.pause();
-  }, []);
+  }, [sessionMode]);
 
   const zap = useCallback(
     (step: 1 | -1) => {
@@ -435,7 +481,8 @@ export function LivePlayerPage() {
   const live = liveSeconds(program);
   const behind = isLive ? behindEdge : Math.max(0, live - position);
   const shownPosition = isLive ? Math.max(0, live - behindEdge) : position;
-  const atLive = !started || behind < LIVE_SLACK;
+  const isFillerMode = session?.mode === "filler";
+  const atLive = !started || isFillerMode || behind < LIVE_SLACK;
 
   const onBarPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!duration) return;
@@ -456,6 +503,9 @@ export function LivePlayerPage() {
       >
         <video ref={video} className="live-video" playsInline autoPlay onClick={togglePlay} onDoubleClick={toggleFullscreen} />
         {session && music && started && program ? <LiveMusicVisual analyser={analyser} cover={imageUrl(program.image)} /> : null}
+        {session?.mode === "filler" && session.filler && program ? (
+          <FillerScreen filler={session.filler} program={program} next={next} muted={muted} paused={paused} t={t} locale={locale} />
+        ) : null}
         {!started && !error ? (
           <div className="live-tuning">
             {channel ? <ChannelLogo channel={channel} className="large" /> : null}
@@ -495,7 +545,7 @@ export function LivePlayerPage() {
             className="live-bar"
             role="slider"
             tabIndex={0}
-            aria-label={program?.title ?? channel?.name ?? t.liveTv}
+            aria-label={program ? programTitle(program, t) : (channel?.name ?? t.liveTv)}
             aria-valuemin={0}
             aria-valuemax={Math.round(duration)}
             aria-valuenow={Math.round(shownPosition)}
@@ -510,7 +560,7 @@ export function LivePlayerPage() {
             <button type="button" onClick={togglePlay} aria-label={paused ? t.play : t.livePause} title={paused ? t.play : t.livePause}>
               <Icon name={paused ? "play" : "pause"} />
             </button>
-            <button type="button" onClick={() => seekBy(-SEEK_STEP)} aria-label={t.liveRewind} title={t.liveRewind}>
+            <button type="button" onClick={() => seekBy(-SEEK_STEP)} aria-label={t.liveRewind} title={t.liveRewind} disabled={isFillerMode}>
               <Icon name="rewind" />
             </button>
             <button type="button" onClick={() => seekBy(SEEK_STEP)} aria-label={t.liveForward} title={t.liveForward} disabled={atLive}>
@@ -573,7 +623,7 @@ function LiveBanner(props: {
         {program ? (
           <>
             <p className="live-banner-now">
-              <em>{t.liveNow}</em> <strong>{program.title}</strong>
+              <em>{t.liveNow}</em> <strong>{programTitle(program, t)}</strong>
               {program.subtitle ? <span className="muted"> · {program.subtitle}</span> : null}
             </p>
             <div className="live-banner-progress">
