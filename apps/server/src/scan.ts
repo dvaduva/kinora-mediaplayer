@@ -19,7 +19,7 @@ import {
   tracks,
 } from "./db/schema.js";
 import { stableId } from "./id.js";
-import { downloadReleaseCover, searchReleases } from "./metadata/musicbrainz.js";
+import { downloadReleaseCover, enrichAlbumMeta, searchReleases } from "./metadata/musicbrainz.js";
 import { withoutLocked } from "./movieExtras.js";
 import { chooseMatch, fetchMovie, fetchSeason, fetchSeries, searchMovies, searchSeries } from "./metadata/tmdb.js";
 import {
@@ -145,7 +145,21 @@ export async function matchAlbum(albumId: string, mbid: string) {
   const album = db.select().from(albums).where(eq(albums.id, albumId)).get();
   if (!album) throw new Error("not_found");
   const cover = album.coverPath ?? (await downloadReleaseCover(mbid, albumId));
-  db.update(albums).set({ mbid, coverPath: cover, matched: true }).where(eq(albums.id, albumId)).run();
+  db.update(albums)
+    .set({
+      mbid,
+      coverPath: cover,
+      matched: true,
+      overview: null,
+      genresJson: "[]",
+      stylesJson: "[]",
+      recordLabel: null,
+      rating: null,
+      metaFetchedAt: null,
+    })
+    .where(eq(albums.id, albumId))
+    .run();
+  await enrichAlbumMeta(albumId);
 }
 
 // A network share is rescanned on a timer instead of being watched: polling stats every file on every
@@ -371,6 +385,7 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
   const existingAlbum = db.select().from(albums).where(eq(albums.id, albumId)).get();
   let cover = existingAlbum?.coverPath ?? null;
   let mbid = existingAlbum?.mbid ?? null;
+  let matchedMbid: string | null = null;
   if (tags?.picture) cover = savePicture(albumId, tags.picture);
   else if (!cover && !weak) {
     try {
@@ -379,6 +394,7 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
       if (chosen) {
         cover = (await downloadReleaseCover(chosen.mbid, albumId)) ?? cover;
         mbid = chosen.mbid;
+        if (chosen.mbid !== existingAlbum?.mbid) matchedMbid = chosen.mbid;
       }
     } catch {
       // Tags already identify the album. A cover lookup can fail without hiding the music.
@@ -403,6 +419,19 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
       set: { title: albumTitle, year: tags?.year ?? existingAlbum?.year ?? null, coverPath: cover, mbid, matched: !weak, artistId },
     })
     .run();
+  if (matchedMbid) {
+    db.update(albums)
+      .set({ overview: null, genresJson: "[]", stylesJson: "[]", recordLabel: null, rating: null, metaFetchedAt: null })
+      .where(eq(albums.id, albumId))
+      .run();
+  }
+  if (matchedMbid || (mbid && existingAlbum?.metaFetchedAt == null)) {
+    try {
+      await enrichAlbumMeta(albumId);
+    } catch {
+      // Metadata is optional; the album remains playable without it.
+    }
+  }
   db.insert(tracks)
     .values({
       id: trackId,

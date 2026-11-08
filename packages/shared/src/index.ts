@@ -367,6 +367,11 @@ export interface TrackClip {
 }
 
 export interface AlbumDetail extends AlbumSummary {
+  overview: string | null;
+  genres: string[];
+  styles: string[];
+  recordLabel: string | null;
+  rating: number | null;
   tracks: TrackSummary[];
 }
 
@@ -421,6 +426,8 @@ export interface IdentifyItem {
   title: string;
   year: number | null;
   hint: string | null;
+  /** First track title for albums — improves MusicBrainz search with artist+song. */
+  trackHint?: string | null;
 }
 
 export interface SearchHit {

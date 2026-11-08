@@ -516,9 +516,31 @@ export function artistDetail(id: string): ArtistDetail | null {
   return { id: artist.id, name: artist.name, albums: artistAlbums };
 }
 
-export function albumDetail(id: string): AlbumDetail | null {
+function trackGenreFallback(albumTracks: { genre: string | null }[]) {
+  const counts = new Map<string, number>();
+  for (const track of albumTracks) {
+    const genre = track.genre?.trim();
+    if (!genre) continue;
+    counts.set(genre, (counts.get(genre) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const [genre, count] of counts) {
+    if (count > bestCount) {
+      best = genre;
+      bestCount = count;
+    }
+  }
+  return best ? [best] : [];
+}
+
+export async function albumDetail(id: string): Promise<AlbumDetail | null> {
   const album = db.select().from(albums).where(eq(albums.id, id)).get();
   if (!album) return null;
+  // Enrich in the background so the page and /clips (same MusicBrainz gate) stay responsive.
+  if (album.mbid && album.metaFetchedAt == null) {
+    void import("./metadata/musicbrainz.js").then(({ enrichAlbumMeta }) => enrichAlbumMeta(id)).catch(() => undefined);
+  }
   const artist = db.select().from(artists).where(eq(artists.id, album.artistId)).get();
   if (!artist) return null;
   const fileByTrack = new Map<string, MediaFileRow>();
@@ -534,6 +556,7 @@ export function albumDetail(id: string): AlbumDetail | null {
     })
     .sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || (a.trackNumber ?? 0) - (b.trackNumber ?? 0));
   if (albumTracks.length === 0) return null;
+  const genres = parseJson<string[]>(album.genresJson, []);
   return {
     id: album.id,
     title: album.title,
@@ -542,6 +565,11 @@ export function albumDetail(id: string): AlbumDetail | null {
     artistName: artist.name,
     artistId: artist.id,
     matched: album.matched,
+    overview: album.overview,
+    genres: genres.length > 0 ? genres : trackGenreFallback(albumTracks),
+    styles: parseJson<string[]>(album.stylesJson, []),
+    recordLabel: album.recordLabel,
+    rating: album.rating,
     tracks: albumTracks.map((track) => {
       const file = fileByTrack.get(track.id);
       return {
@@ -655,7 +683,21 @@ export function identifyQueue(): IdentifyItem[] {
   for (const album of db.select().from(albums).where(eq(albums.matched, false)).all()) {
     const summary = albumSummary(album, p);
     if (!summary) continue;
-    items.push({ kind: "album", id: album.id, title: album.title, year: album.year, hint: summary.artistName });
+    const firstTrack = db
+      .select()
+      .from(tracks)
+      .where(eq(tracks.albumId, album.id))
+      .all()
+      .filter((track) => presentFile(mediaFiles.trackId, track.id) != null)
+      .sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || (a.trackNumber ?? 0) - (b.trackNumber ?? 0))[0];
+    items.push({
+      kind: "album",
+      id: album.id,
+      title: album.title,
+      year: album.year,
+      hint: summary.artistName,
+      trackHint: firstTrack?.title ?? null,
+    });
   }
   return items;
 }

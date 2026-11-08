@@ -17,6 +17,8 @@ const AudioContext = createContext<{
   /** Plays `track`; with `queue` (e.g. the whole album), carries on through the tracks after it. */
   play: (track: NowPlaying, queue?: NowPlaying[]) => void;
   pause: () => void;
+  /** Attaches YouTube clips that arrived after playback started (keyed by file id). */
+  attachClips: (byFileId: Record<string, TrackClip | null | undefined>) => void;
 } | null>(null);
 
 export function AudioProvider({ children }: { children: ReactNode }) {
@@ -130,10 +132,32 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   function pause() {
     audioRef.current?.pause();
   }
+  function attachClips(byFileId: Record<string, TrackClip | null | undefined>) {
+    const queue = queueRef.current;
+    let touched = false;
+    queue.tracks = queue.tracks.map((track) => {
+      if (!(track.fileId in byFileId)) return track;
+      const clip = byFileId[track.fileId] ?? null;
+      if (track.clip?.key === clip?.key && track.clip?.kind === clip?.kind) return track;
+      touched = true;
+      return { ...track, clip };
+    });
+    const playing = currentRef.current;
+    if (playing && playing.fileId in byFileId) {
+      const clip = byFileId[playing.fileId] ?? null;
+      if (playing.clip?.key !== clip?.key || playing.clip?.kind !== clip?.kind) {
+        const next = { ...playing, clip };
+        currentRef.current = next;
+        setCurrent(next);
+        touched = true;
+      }
+    }
+    if (touched) setPosition({ index: queue.index, total: queue.tracks.length });
+  }
   // Only real music videos make a good loop; plain uploads are usually a still image.
   const clipKey = current?.clip?.kind === "video" ? current.clip.key : null;
   return (
-    <AudioContext.Provider value={{ play, pause }}>
+    <AudioContext.Provider value={{ play, pause, attachClips }}>
       {children}
       <div className="now" hidden={!active}>
         {current?.cover ? <img src={imageUrl(current.cover) ?? ""} alt="" /> : <div className="face" />}

@@ -120,6 +120,13 @@ export const albums = sqliteTable("albums", {
   year: integer("year"),
   coverPath: text("cover_path"),
   mbid: text("mbid"),
+  overview: text("overview"),
+  genresJson: text("genres_json").notNull().default("[]"),
+  stylesJson: text("styles_json").notNull().default("[]"),
+  recordLabel: text("record_label"),
+  rating: real("rating"),
+  /** Set after a MusicBrainz/Wikipedia enrich attempt so we do not retry on every open. */
+  metaFetchedAt: integer("meta_fetched_at"),
   matched: integer("matched", { mode: "boolean" }).notNull().default(false),
   addedAt: integer("added_at").notNull(),
 }, (table) => [

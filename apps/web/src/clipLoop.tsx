@@ -119,7 +119,8 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
         const mount = document.createElement("div");
         hostRef.current.append(mount);
         const player = new YT.Player(mount, {
-          host: "https://www.youtube-nocookie.com",
+          // Main youtube.com embeds official videos more reliably than youtube-nocookie.
+          host: "https://www.youtube.com",
           videoId: props.videoKey,
           playerVars: {
             autoplay: 1,
@@ -132,24 +133,32 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
             playsinline: 1,
             rel: 0,
             cc_load_policy: 0,
+            origin: window.location.origin,
           },
           events: {
             onReady: (event) => {
               event.target.mute();
               ensureSegment(event.target);
               if (playingRef.current) event.target.playVideo();
+              else event.target.pauseVideo();
             },
             onStateChange: (event) => {
               if (event.data === PLAYING) {
                 ensureSegment(event.target);
                 hideCaptions(event.target);
+                // Reveal as soon as playback starts; waiting for the excerpt window left the
+                // loop stuck at opacity 0 when duration/seek lagged behind PLAYING.
+                if (!disposed) setVisible(true);
               }
-              if (event.data === ENDED && segment) {
-                event.target.seekTo(segment.start, true);
-                event.target.playVideo();
+              if (event.data === ENDED) {
+                const current = ensureSegment(event.target);
+                if (current) {
+                  event.target.seekTo(current.start, true);
+                  event.target.playVideo();
+                }
               }
             },
-            // 101/150: the owner blocks embedding; anything else is just as fatal here.
+            // 101/150/153: embed blocked or missing referer; keep the cover visualizer.
             onError: () => {
               if (!disposed) setVisible(false);
             },
@@ -157,11 +166,12 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
         });
         playerRef.current = player;
         timer = window.setInterval(() => {
-          const current = segment;
-          if (!current || typeof player.getCurrentTime !== "function") return;
-          const time = player.getCurrentTime();          if (time >= current.end || time < current.start - 1) player.seekTo(current.start, true);
-          // Only reveal once we are inside the excerpt, so YouTube's loading frames never show.
-          if (player.getPlayerState() === PLAYING && time >= current.start && time < current.end) setVisible(true);
+          if (typeof player.getCurrentTime !== "function" || typeof player.getPlayerState !== "function") return;
+          const current = ensureSegment(player);
+          if (!current) return;
+          const time = player.getCurrentTime();
+          if (time >= current.end || time < current.start - 1) player.seekTo(current.start, true);
+          if (player.getPlayerState() === PLAYING) setVisible(true);
         }, 200);
       })
       .catch(() => setVisible(false));

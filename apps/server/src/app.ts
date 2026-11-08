@@ -367,7 +367,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     }
   });
   app.get("/api/albums", async () => listAlbums());
-  app.get("/api/albums/:id", async (request, reply) => albumDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.get("/api/albums/:id", async (request, reply) => (await albumDetail((request.params as { id: string }).id)) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/albums/:id/clips", async (request, reply) => {
     const id = (request.params as { id: string }).id;
     const album = db.select().from(albums).where(eq(albums.id, id)).get();
@@ -411,9 +411,10 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const body = asRecord(request.body);
     const artist = typeof body.artist === "string" ? body.artist.trim() : "";
     const album = typeof body.album === "string" ? body.album.trim() : "";
-    if (!artist || !album) return reply.code(400).send({ error: "bad_query" });
+    const track = typeof body.track === "string" ? body.track.trim() : "";
+    if (!artist || (!album && !track)) return reply.code(400).send({ error: "bad_query" });
     try {
-      return { results: await searchReleases(artist, album) };
+      return { results: await searchReleases(artist, album, track || null) };
     } catch {
       return reply.code(502).send({ error: "musicbrainz_failed" });
     }
@@ -458,7 +459,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     } catch {
       return reply.code(502).send({ error: "musicbrainz_failed" });
     }
-    return albumDetail(id) ?? reply.code(404).send({ error: "not_found" });
+    return (await albumDetail(id)) ?? reply.code(404).send({ error: "not_found" });
   });
 
   app.get("/api/playback/:fileId", async (request, reply) => {
