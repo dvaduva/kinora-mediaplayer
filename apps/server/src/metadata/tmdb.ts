@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type { CastMember, TmdbCandidate, Trailer } from "@kinora/shared";
+import type { ArtworkOption, CastMember, MovieArtwork, MovieReview, TmdbCandidate, Trailer } from "@kinora/shared";
 import { dataDir } from "../paths.js";
 import { getSetting } from "../settings.js";
 import { titlesEqual } from "../parse/names.js";
@@ -71,14 +71,27 @@ function shouldCacheBody(urlPath: string, body: unknown) {
   return results.length > 0;
 }
 
-async function tmdbGet(urlPath: string): Promise<unknown> {
+/** Cached body, unless it is older than `maxAgeMs` (responses are otherwise kept forever). */
+function readCache(cacheFile: string, maxAgeMs?: number) {
+  try {
+    const stat = fs.statSync(cacheFile);
+    if (maxAgeMs != null && Date.now() - stat.mtimeMs > maxAgeMs) return undefined;
+    return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+async function tmdbGet(urlPath: string, maxAgeMs?: number): Promise<unknown> {
   const token = getSetting("tmdbReadToken");
   if (!token) throw new TmdbNotConfiguredError();
   const cacheFile = path.join(dataDir, "cache", "tmdb", `${createHash("sha1").update(urlPath).digest("hex")}.json`);
-  if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
+  const cached = readCache(cacheFile, maxAgeMs);
+  if (cached !== undefined) return cached;
 
   return enqueueTmdb(async () => {
-    if (fs.existsSync(cacheFile)) return JSON.parse(fs.readFileSync(cacheFile, "utf8")) as unknown;
+    const fresh = readCache(cacheFile, maxAgeMs);
+    if (fresh !== undefined) return fresh;
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -571,6 +584,60 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
     similar,
     trailer,
   };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Community reviews from TMDB (mostly English), newest first. */
+export async function fetchMovieReviews(tmdbId: number): Promise<MovieReview[]> {
+  const body = record(await tmdbGet(`/movie/${tmdbId}/reviews?language=en-US&page=1`, 3 * DAY_MS));
+  return list(body?.results)
+    .map(record)
+    .map((item): MovieReview | null => {
+      const id = text(item?.id);
+      const content = text(item?.content);
+      if (!item || !id || !content) return null;
+      const details = record(item.author_details);
+      const rawRating = numberValue(details?.rating);
+      const avatar = text(details?.avatar_path);
+      return {
+        id: `tmdb-${id}`,
+        source: "tmdb",
+        author: text(item.author) ?? text(details?.username) ?? "TMDB",
+        // Older accounts store a Gravatar URL here; only TMDB image paths go through the image proxy.
+        avatarUrl: avatar && /^\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(avatar) ? avatar : null,
+        rating: rawRating != null ? Math.round(rawRating) / 2 : null,
+        body: content.replace(/\r\n/g, "\n").replace(/\*\*|__/g, "").trim(),
+        date: text(item.updated_at) ?? text(item.created_at),
+        url: text(item.url),
+      };
+    })
+    .filter((item): item is MovieReview => item != null)
+    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
+}
+
+function artworkOf(images: unknown, field: "posters" | "backdrops"): ArtworkOption[] {
+  return list(record(images)?.[field])
+    .map(record)
+    .map((image) => {
+      const filePath = text(image?.file_path);
+      if (!filePath) return null;
+      return {
+        path: filePath,
+        language: text(image?.iso_639_1),
+        width: numberValue(image?.width) ?? 0,
+        height: numberValue(image?.height) ?? 0,
+        votes: numberValue(image?.vote_count) ?? 0,
+      };
+    })
+    .filter((item): item is ArtworkOption => item != null)
+    .slice(0, 60);
+}
+
+/** Every poster and backdrop TMDB has for a movie, for picking artwork by hand. */
+export async function fetchMovieArtwork(tmdbId: number): Promise<MovieArtwork> {
+  const images = await tmdbGet(`/movie/${tmdbId}/images?include_image_language=ro,en,null`, 7 * DAY_MS);
+  return { posters: artworkOf(images, "posters"), backdrops: artworkOf(images, "backdrops") };
 }
 
 export interface SeriesMetadata {

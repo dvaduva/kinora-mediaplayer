@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useLocale } from "../i18n";
 import { codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel } from "../media";
 import { Poster, ScrollRail, statusLabel } from "../ui";
+import { EditMovieDialog, RatingsBar, ReviewDialog, ReviewsSection, Stars, useExternalRatings, useMovieReviews } from "../movieExtras";
 
 export function MoviePage() {
   const { id } = useParams();
@@ -12,6 +13,11 @@ export function MoviePage() {
   const [movie, setMovie] = useState<MovieDetail | null>(null);
   const [versionId, setVersionId] = useState<string | null>(null);
   const [trailerOpen, setTrailerOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const external = useExternalRatings(movie);
+  // Rotten Tomatoes audience reviews arrive with the ratings lookup, so reload the list when it finishes.
+  const { reviews, setOwn } = useMovieReviews(movie?.id, String(external.ratings?.fetchedAt ?? ""));
   // Image load order: poster → hero → cast → stills → similar titles.
   const imageStages = useMemo(() => {
     if (!movie) return [];
@@ -33,10 +39,13 @@ export function MoviePage() {
   }, [id]);
   if (!movie) return <p className="muted">{t.movies}</p>;
   const version = movie.versions.find((item) => item.fileId === versionId) ?? movie.versions[0];
+  const ownRating = reviews ? reviews.own?.rating ?? null : movie.userRating;
   return (
     <article>
       <DossierHero
         title={movie.title}
+        edition={movie.edition}
+        tagline={movie.tagline}
         year={movie.year}
         backdrop={stage >= STAGE.hero ? movie.backdropPath : null}
         poster={movie.posterPath}
@@ -63,13 +72,46 @@ export function MoviePage() {
         unmatched={movie.matched ? null : t.unmatched}
         ratingLabel={t.rating}
         status={<WatchStatusControl movie={movie} onChange={(next) => setMovie((current) => (current ? { ...current, ...next } : current))} />}
+        ratingsBar={
+          <RatingsBar
+            movie={movie}
+            ratings={external.ratings}
+            loading={external.loading}
+            onRefresh={external.refresh}
+            actions={
+              <>
+                <button className="pill-button" type="button" onClick={() => setReviewOpen(true)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /></svg>
+                  {ownRating != null ? <Stars value={ownRating} label={`${t.yourRating}: ${ownRating}/5`} /> : t.rateReview}
+                </button>
+                <button className="pill-button" type="button" onClick={() => setEditOpen(true)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z M14 6l4 4" /></svg>
+                  {t.edit}
+                </button>
+              </>
+            }
+          />
+        }
       />
       <Stills stills={movie.stills} load={stage >= STAGE.stills} />
       <Cast cast={movie.cast} title={t.cast} load={stage >= STAGE.cast} />
+      <ReviewsSection movie={movie} ratings={external.ratings} reviews={reviews} onWrite={() => setReviewOpen(true)} />
       <Similar items={movie.similar} title={t.similar} absent={t.absent} load={stage >= STAGE.similar} />
       {trailerOpen && movie.trailer ? (
         <TrailerModal youtubeKey={movie.trailer.key} name={movie.trailer.name} closeLabel={t.close} openLabel={t.openYoutube} onClose={() => setTrailerOpen(false)} />
       ) : null}
+      {reviewOpen ? (
+        <ReviewDialog
+          movie={movie}
+          own={reviews?.own ?? null}
+          onClose={() => setReviewOpen(false)}
+          onSaved={(own) => {
+            setOwn(own);
+            setMovie((current) => (current ? { ...current, userRating: own?.rating ?? null } : current));
+          }}
+        />
+      ) : null}
+      {editOpen ? <EditMovieDialog movie={movie} onClose={() => setEditOpen(false)} onSaved={setMovie} /> : null}
     </article>
   );
 }
@@ -185,6 +227,9 @@ function useImageStages(stages: (string | null)[][]) {
 
 function DossierHero(props: {
   title: string;
+  edition?: string | null;
+  tagline?: string | null;
+  ratingsBar?: ReactNode;
   year: number | null;
   backdrop: string | null;
   poster: string | null;
@@ -226,7 +271,10 @@ function DossierHero(props: {
           <h1>
             {props.title} {props.year ? <span className="year">{props.year}</span> : null}
           </h1>
+          {props.edition ? <p className="edition">{props.edition}</p> : null}
           {props.facts ? <p className="facts">{props.facts}</p> : null}
+          {props.ratingsBar}
+          {props.tagline ? <p className="tagline">{props.tagline}</p> : null}
           {props.overview ? <p className="overview">{props.overview}</p> : null}
           <div className="actions">
             {props.playTo ? <Link className="play" to={props.playTo}>{props.playLabel}</Link> : null}
@@ -260,8 +308,6 @@ function DossierHero(props: {
           ) : null}
           <People label={props.directionLabel} names={props.directors} />
           <People label={props.writersLabel} names={props.writers} />
-          {props.imdbId ? <p><a href={`https://www.imdb.com/title/${props.imdbId}`} target="_blank" rel="noreferrer">IMDb</a></p> : null}
-          {props.tmdbId ? <p><a href={`https://www.themoviedb.org/movie/${props.tmdbId}`} target="_blank" rel="noreferrer">TMDB</a></p> : null}
         </aside>
       </div>
     </>

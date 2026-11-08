@@ -36,6 +36,7 @@ import { searchReleases } from "./metadata/musicbrainz.js";
 import { albumClips } from "./metadata/clips.js";
 import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
+import { EditError, movieArtwork, movieRatings, movieReviewList, saveOwnReview, updateMovie } from "./movieExtras.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
 import { embeddedTextStreams, materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
 import { gigabytes } from "./playback/cache.js";
@@ -166,6 +167,8 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     return {
       tmdbConfigured: Boolean(getSetting("tmdbReadToken")),
       tmdbHint: tokenHint(getSetting("tmdbReadToken")),
+      omdbConfigured: Boolean(getSetting("omdbApiKey")),
+      omdbHint: tokenHint(getSetting("omdbApiKey")),
       bindHost: getSetting("bindHost") ?? "127.0.0.1",
       tokenRequired: Boolean(getSetting("accessToken")),
       ffmpeg: tools.ffmpeg,
@@ -185,6 +188,12 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   app.put("/api/settings", async (request, reply) => {
     const body = asRecord(request.body);
     if (typeof body.tmdbReadToken === "string" && body.tmdbReadToken.trim()) setSetting("tmdbReadToken", body.tmdbReadToken.trim());
+    if (typeof body.omdbApiKey === "string" && body.omdbApiKey.trim()) {
+      const key = body.omdbApiKey.trim();
+      if (!/^[A-Za-z0-9]{4,64}$/.test(key)) return reply.code(400).send({ error: "bad_omdb_key" });
+      setSetting("omdbApiKey", key);
+    }
+    if (body.clearOmdbApiKey === true) setSetting("omdbApiKey", null);
     if (typeof body.bindHost === "string" && body.bindHost.trim()) {
       const host = body.bindHost.trim();
       const token = typeof body.accessToken === "string" && body.accessToken.trim() ? body.accessToken.trim() : getSetting("accessToken");
@@ -267,6 +276,39 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     if (status !== null && !isWatchStatus(status)) return reply.code(400).send({ error: "bad_status" });
     if (!setMovieWatchStatus((request.params as { id: string }).id, status)) return reply.code(404).send({ error: "not_found" });
     return { ok: true };
+  });
+  app.put("/api/movies/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    try {
+      if (!updateMovie(id, asRecord(request.body))) return reply.code(404).send({ error: "not_found" });
+    } catch (error) {
+      if (error instanceof EditError) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+    return movieDetail(id) ?? reply.code(404).send({ error: "not_found" });
+  });
+  app.get("/api/movies/:id/ratings", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const refresh = (request.query as { refresh?: string }).refresh === "1";
+    return (await movieRatings(id, refresh)) ?? reply.code(404).send({ error: "not_found" });
+  });
+  app.get("/api/movies/:id/reviews", async (request, reply) => {
+    return (await movieReviewList((request.params as { id: string }).id)) ?? reply.code(404).send({ error: "not_found" });
+  });
+  app.put("/api/movies/:id/review", async (request, reply) => {
+    const saved = saveOwnReview((request.params as { id: string }).id, asRecord(request.body));
+    if (saved === "invalid") return reply.code(400).send({ error: "bad_review" });
+    return saved ?? reply.code(404).send({ error: "not_found" });
+  });
+  app.get("/api/movies/:id/artwork", async (request, reply) => {
+    try {
+      return (await movieArtwork((request.params as { id: string }).id)) ?? reply.code(404).send({ error: "not_found" });
+    } catch (error) {
+      if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      if (error instanceof TmdbUnreachableError) return reply.code(503).send({ error: "tmdb_unreachable" });
+      request.log.warn(error);
+      return reply.code(502).send({ error: "tmdb_failed" });
+    }
   });
   app.get("/api/series", async () => listSeries());
   app.get("/api/series/:id", async (request, reply) => seriesDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));

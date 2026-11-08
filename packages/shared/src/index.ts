@@ -123,12 +123,138 @@ export interface MovieSummary {
   /** Epoch milliseconds when the scan first saw the movie. */
   addedAt: number;
   genres: string[];
+  /** Hand-set sort title; null sorts by the title. */
+  sortTitle: string | null;
+  /** The profile's own star rating (0.5–5), if any. */
+  userRating: number | null;
   watchStatus: WatchStatus;
   /** True when the status was set by hand rather than derived from playback. */
   watchStatusManual: boolean;
 }
 
+/** Movie fields the edit dialog can change; each can be locked against TMDB re-matching. */
+export const MOVIE_EDIT_FIELDS = [
+  "title",
+  "sortTitle",
+  "originalTitle",
+  "edition",
+  "year",
+  "releaseDate",
+  "tagline",
+  "overview",
+  "genres",
+  "directors",
+  "writers",
+  "posterPath",
+  "backdropPath",
+  "imdbId",
+  "rtSlug",
+] as const;
+
+export type MovieEditField = (typeof MOVIE_EDIT_FIELDS)[number];
+
+export interface MovieEdit {
+  title?: string;
+  sortTitle?: string | null;
+  originalTitle?: string | null;
+  edition?: string | null;
+  year?: number | null;
+  releaseDate?: string | null;
+  tagline?: string | null;
+  overview?: string | null;
+  genres?: string[];
+  directors?: string[];
+  writers?: string[];
+  posterPath?: string | null;
+  backdropPath?: string | null;
+  imdbId?: string | null;
+  rtSlug?: string | null;
+  /** Replaces the whole lock list when present. */
+  locked?: MovieEditField[];
+}
+
+export function isMovieEditField(value: unknown): value is MovieEditField {
+  return typeof value === "string" && (MOVIE_EDIT_FIELDS as readonly string[]).includes(value);
+}
+
+/** Lock list stored as JSON; unknown or malformed entries are dropped. */
+export function parseLockedFields(json: string | null | undefined): MovieEditField[] {
+  try {
+    const value: unknown = JSON.parse(json || "[]");
+    return Array.isArray(value) ? value.filter(isMovieEditField) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Posters and backdrops TMDB offers for a movie, for the edit dialog. */
+export interface MovieArtwork {
+  posters: ArtworkOption[];
+  backdrops: ArtworkOption[];
+}
+
+export interface ArtworkOption {
+  path: string;
+  language: string | null;
+  width: number;
+  height: number;
+  votes: number;
+}
+
+export interface ExternalRatings {
+  imdb: { rating: number; votes: number | null; url: string } | null;
+  rottenTomatoes: {
+    url: string;
+    /** Tomatometer, percent of positive critic reviews. */
+    critics: { score: number; certified: boolean; rotten: boolean; count: number | null } | null;
+    /** Popcornmeter, percent of positive audience ratings. */
+    audience: { score: number; rotten: boolean; count: string | null } | null;
+    consensus: string | null;
+  } | null;
+  metacritic: { score: number; url: string | null } | null;
+  tmdb: { rating: number; url: string } | null;
+  /** Epoch milliseconds of the last successful lookup; null when nothing was fetched yet. */
+  fetchedAt: number | null;
+  /** True when no OMDb key is configured, so IMDb and Metacritic scores cannot be looked up. */
+  omdbMissing: boolean;
+}
+
+export type ReviewSource = "own" | "rottentomatoes" | "tmdb";
+
+export interface MovieReview {
+  id: string;
+  source: ReviewSource;
+  author: string;
+  avatarUrl: string | null;
+  /** Stars out of 5, half steps. */
+  rating: number | null;
+  body: string;
+  /** ISO date or a display date from the source. */
+  date: string | null;
+  url: string | null;
+  verified?: boolean;
+}
+
+export interface OwnReview {
+  rating: number | null;
+  body: string | null;
+  updatedAt: number;
+}
+
+export interface MovieReviews {
+  own: OwnReview | null;
+  reviews: MovieReview[];
+}
+
+export function isStarRating(value: unknown): value is number {
+  return typeof value === "number" && value >= 0.5 && value <= 5 && Number.isInteger(value * 2);
+}
+
 export interface MovieDetail extends MovieSummary {
+  sortTitle: string | null;
+  edition: string | null;
+  rtSlug: string | null;
+  locked: MovieEditField[];
   originalTitle: string | null;
   overview: string | null;
   tagline: string | null;
@@ -349,6 +475,8 @@ export interface AppSetup {
 export interface AppSettings {
   tmdbConfigured: boolean;
   tmdbHint: string | null;
+  omdbConfigured: boolean;
+  omdbHint: string | null;
   bindHost: string;
   tokenRequired: boolean;
   ffmpeg: boolean;

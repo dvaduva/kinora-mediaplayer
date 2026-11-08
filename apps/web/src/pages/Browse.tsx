@@ -97,7 +97,7 @@ function sortLabel(sort: MovieSort, t: Copy) {
 /** Sort value for a movie; null sorts last in either direction. */
 function sortValue(movie: MovieSummary, sort: MovieSort): number | string | null {
   if (sort === "added") return movie.addedAt;
-  if (sort === "title") return movie.title;
+  if (sort === "title") return movie.sortTitle ?? movie.title;
   if (sort === "rating") return movie.rating;
   if (sort === "runtime") return movie.runtime;
   if (movie.releaseDate) return movie.releaseDate;
@@ -116,7 +116,7 @@ function sortMovies(movies: MovieSummary[], sort: MovieSort, direction: SortDire
       const order = typeof left === "number" && typeof right === "number" ? left - right : collator.compare(String(left), String(right));
       if (order !== 0) return sign * order;
     }
-    return collator.compare(a.title, b.title);
+    return collator.compare(a.sortTitle ?? a.title, b.sortTitle ?? b.title);
   });
 }
 

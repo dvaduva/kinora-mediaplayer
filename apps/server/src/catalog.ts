@@ -25,7 +25,7 @@ import type {
   SubtitleTrack,
   Trailer,
 } from "@kinora/shared";
-import { WATCH_STATUSES } from "@kinora/shared";
+import { parseLockedFields, WATCH_STATUSES } from "@kinora/shared";
 import { db, parseJson } from "./db/index.js";
 import { isNonLatinName, transliterateName } from "./metadata/tmdb.js";
 import {
@@ -34,6 +34,7 @@ import {
   episodes,
   libraries,
   mediaFiles,
+  movieReviews,
   movieStatus,
   movies,
   progress,
@@ -208,6 +209,8 @@ type WatchContext = {
   /** Movie id → whether any of its files was watched to the end. Present only for movies with progress. */
   played: Map<string, boolean>;
   libraryCreated: Map<string, number>;
+  /** Movie id → the profile's own star rating. */
+  ratings: Map<string, number>;
   now: number;
 };
 
@@ -227,7 +230,11 @@ function watchContext(): WatchContext {
     if (row.movieId) played.set(row.movieId, (played.get(row.movieId) ?? false) || row.watched);
   }
   const libraryCreated = new Map(db.select({ id: libraries.id, createdAt: libraries.createdAt }).from(libraries).all().map((row) => [row.id, row.createdAt]));
-  return { manual, played, libraryCreated, now: Date.now() };
+  const ratings = new Map<string, number>();
+  for (const row of db.select({ movieId: movieReviews.movieId, rating: movieReviews.rating }).from(movieReviews).where(eq(movieReviews.profileId, PROFILE_ID)).all()) {
+    if (row.rating != null) ratings.set(row.movieId, row.rating);
+  }
+  return { manual, played, libraryCreated, ratings, now: Date.now() };
 }
 
 export function isWatchStatus(value: unknown): value is WatchStatus {
@@ -260,6 +267,8 @@ function movieSummary(movie: typeof movies.$inferSelect, context = watchContext(
     releaseDate: movie.releaseDate,
     addedAt: movie.addedAt,
     genres: parseJson<string[]>(movie.genresJson, []),
+    sortTitle: movie.sortTitle,
+    userRating: context.ratings.get(movie.id) ?? null,
     watchStatus: watch.status,
     watchStatusManual: watch.manual,
   };
@@ -272,7 +281,7 @@ export function listMovies(p = presence()) {
     .from(movies)
     .all()
     .filter((movie) => p.movieFiles.has(movie.id))
-    .sort((a, b) => a.title.localeCompare(b.title))
+    .sort((a, b) => (a.sortTitle ?? a.title).localeCompare(b.sortTitle ?? b.title))
     .map((movie) => movieSummary(movie, context));
 }
 
@@ -313,6 +322,9 @@ export function movieDetail(id: string): MovieDetail | null {
   const versions = files.map(versionOf).sort((a, b) => rank(b) - rank(a));
   return {
     ...movieSummary(movie),
+    edition: movie.edition,
+    rtSlug: movie.rtSlug,
+    locked: parseLockedFields(movie.lockedJson),
     originalTitle: movie.originalTitle,
     overview: movie.overview,
     tagline: movie.tagline,

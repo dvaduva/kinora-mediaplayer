@@ -38,6 +38,16 @@ export const movies = sqliteTable("movies", {
   trailerJson: text("trailer_json"),
   matched: integer("matched", { mode: "boolean" }).notNull().default(false),
   addedAt: integer("added_at").notNull(),
+  /** Title used for alphabetical sorting, e.g. "Weight" for "The Weight". */
+  sortTitle: text("sort_title"),
+  edition: text("edition"),
+  /** Field names edited by hand; re-matching with TMDB leaves them alone. */
+  lockedJson: text("locked_json").notNull().default("[]"),
+  /** Rotten Tomatoes path such as "m/the_weight", set by hand when the automatic lookup misses. */
+  rtSlug: text("rt_slug"),
+  /** Last ratings fetched from IMDb (via OMDb), Rotten Tomatoes and Metacritic. */
+  externalRatingsJson: text("external_ratings_json"),
+  externalRatingsAt: integer("external_ratings_at"),
 }, (table) => [
   index("movies_library").on(table.libraryId),
 ]);
@@ -200,6 +210,19 @@ export const movieStatus = sqliteTable(
     profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
     movieId: text("movie_id").notNull().references(() => movies.id, { onDelete: "cascade" }),
     status: text("status").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.profileId, table.movieId] })],
+);
+
+/** The profile's own rating (half stars, 0.5–5) and review text for a movie. */
+export const movieReviews = sqliteTable(
+  "movie_reviews",
+  {
+    profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    movieId: text("movie_id").notNull().references(() => movies.id, { onDelete: "cascade" }),
+    rating: real("rating"),
+    body: text("body"),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.profileId, table.movieId] })],

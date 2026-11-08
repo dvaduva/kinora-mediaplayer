@@ -15,6 +15,7 @@ export function SettingsPage() {
   const [type, setType] = useState<LibraryType>("movie");
   const [roots, setRoots] = useState("");
   const [tmdb, setTmdb] = useState("");
+  const [omdb, setOmdb] = useState("");
   const [access, setAccess] = useState("");
   const [bindHost, setBindHost] = useState("127.0.0.1");
   const [subtitleLanguage, setSubtitleLanguage] = useState("ro");
@@ -78,6 +79,7 @@ export function SettingsPage() {
       method: "PUT",
       body: JSON.stringify({
         tmdbReadToken: tmdb,
+        omdbApiKey: omdb,
         bindHost,
         accessToken: access,
         transcodeCacheGb: Number(cacheGb),
@@ -85,6 +87,7 @@ export function SettingsPage() {
     });
     await api("/api/profile", { method: "PUT", body: JSON.stringify({ subtitleLanguage, subtitleSize, subtitleColor }) });
     setTmdb("");
+    setOmdb("");
     setAccess("");
     setMessage(t.saved);
     reload();
@@ -144,6 +147,11 @@ export function SettingsPage() {
           <input value={tmdb} onChange={(event) => setTmdb(event.target.value)} placeholder={settings?.tmdbHint ?? ""} autoComplete="off" />
         </label>
         <p className="muted">{t.tmdbHelp}</p>
+        <label className="field">
+          {t.omdb}
+          <input value={omdb} onChange={(event) => setOmdb(event.target.value)} placeholder={settings?.omdbHint ?? ""} autoComplete="off" />
+        </label>
+        <p className="muted">{t.omdbHelp}</p>
         <label className="field">
           {t.access}
           <input value={access} onChange={(event) => setAccess(event.target.value)} type="password" autoComplete="off" />

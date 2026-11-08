@@ -20,6 +20,7 @@ import {
 } from "./db/schema.js";
 import { stableId } from "./id.js";
 import { downloadReleaseCover, searchReleases } from "./metadata/musicbrainz.js";
+import { withoutLocked } from "./movieExtras.js";
 import { chooseMatch, fetchMovie, fetchSeason, fetchSeries, searchMovies, searchSeries } from "./metadata/tmdb.js";
 import {
   AUDIO_EXTENSIONS,
@@ -491,7 +492,8 @@ function ensureMovie(libraryId: string, movieId: string, groupKey: string, title
     return;
   }
   if (!existing.matched) {
-    db.update(movies).set({ title, year }).where(eq(movies.id, movieId)).run();
+    const change = withoutLocked({ title, year }, existing.lockedJson);
+    if (Object.keys(change).length > 0) db.update(movies).set(change).where(eq(movies.id, movieId)).run();
   }
 }
 
@@ -632,8 +634,11 @@ function insertExternal(fileId: string, subtitle: ExternalSubtitle) {
 
 async function enrichMovie(movieId: string, tmdbId: number) {
   const metadata = await fetchMovie(tmdbId);
+  const current = db.select({ lockedJson: movies.lockedJson, tmdbId: movies.tmdbId }).from(movies).where(eq(movies.id, movieId)).get();
   db.update(movies)
-    .set({
+    .set(withoutLocked({
+      // A different TMDB title means the cached outside scores belong to another film.
+      ...(current?.tmdbId !== metadata.tmdbId ? { externalRatingsJson: null, externalRatingsAt: null } : {}),
       tmdbId: metadata.tmdbId,
       imdbId: metadata.imdbId,
       title: metadata.title,
@@ -654,7 +659,7 @@ async function enrichMovie(movieId: string, tmdbId: number) {
       similarJson: JSON.stringify(metadata.similar),
       trailerJson: metadata.trailer ? JSON.stringify(metadata.trailer) : null,
       matched: true,
-    })
+    }, current?.lockedJson ?? "[]"))
     .where(eq(movies.id, movieId))
     .run();
 }
