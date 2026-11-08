@@ -1453,3 +1453,122 @@ a.rating-chip:hover strong { color: var(--brass); }
 @media (prefers-reduced-motion: reduce) {
   .live-panel, .live-banner { animation: none; }
 }
+
+/* Live TV — categories, favorites, What's On, quick guide ------------------- */
+.live-categories { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.live-categories button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 13px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.live-categories button .icon { width: 15px; height: 15px; }
+.live-categories button:hover:not(.active) { color: var(--paper); border-color: var(--brass); }
+.live-categories button.active { color: var(--paper); background: var(--raised); border-color: var(--brass); }
+.live-filter-empty { margin: 0; padding: 18px 0; }
+
+.favorite-button {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.favorite-button .icon { width: 18px; height: 18px; }
+.favorite-button:hover, .favorite-button:focus-visible { color: var(--brass); background: rgba(243, 238, 228, 0.06); }
+.favorite-button.on { color: var(--brass); }
+.favorite-button.on .icon { fill: currentColor; }
+
+.guide-channel { padding: 0 6px 0 0; }
+.guide-channel-link { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 10px; padding-left: 12px; }
+.guide-channel .favorite-button { opacity: 0; }
+.guide-channel:hover .favorite-button, .guide-channel .favorite-button.on, .guide-channel .favorite-button:focus-visible { opacity: 1; }
+.guide-list-row { position: relative; }
+.guide-list-row .favorite-button { position: absolute; top: 8px; right: 8px; }
+.guide-list-row .guide-list-item { padding-right: 44px; }
+
+.whats-on { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.whats-on-card { display: grid; gap: 10px; color: inherit; }
+.whats-on-image { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: var(--seat); border: 1px solid var(--line); }
+.whats-on-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s ease; }
+.whats-on-card:hover .whats-on-image img { transform: scale(1.03); }
+.whats-on-blank { position: absolute; inset: 0; background: linear-gradient(160deg, #3a3144, #221c2a); }
+.whats-on-image .channel-logo { position: absolute; left: 10px; top: 10px; }
+.whats-on-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(243, 238, 228, 0.2); }
+.whats-on-progress span { display: block; height: 100%; background: var(--brass); }
+.whats-on-text { display: grid; gap: 2px; min-width: 0; }
+.whats-on-text strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whats-on-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.whats-on-time { color: var(--brass); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .whats-on-image img { transition: none; } }
+
+.live-banner .favorite-button { align-self: center; }
+.live-music { position: absolute; inset: 0; overflow: hidden; background: #0c0b10; pointer-events: none; }
+.live-music-backdrop { position: absolute; inset: -40px; background-size: cover; background-position: center; filter: blur(40px) brightness(0.35); }
+.live-music canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.live-music-cover { position: absolute; left: 50%; top: 50%; width: 30%; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; overflow: hidden; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+.live-music-cover img { width: 100%; height: 100%; object-fit: cover; }
+.live-music-cover .face { width: 100%; height: 100%; background: linear-gradient(160deg, #3a3144, #221c2a); }
+
+.mini-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  width: min(380px, 86%);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 10px;
+  padding: 14px 12px;
+  background: rgba(16, 14, 21, 0.92);
+  backdrop-filter: blur(8px);
+  border-right: 1px solid var(--line);
+  animation: fade-in 0.15s ease-out;
+}
+.mini-guide-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mini-guide-head h2 { margin: 0; font-size: 18px; }
+.mini-guide .live-categories button { font-size: 13px; padding: 4px 10px; }
+.mini-guide ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: grid; gap: 4px; align-content: start; }
+.mini-guide-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.mini-guide-item:hover, .mini-guide-item:focus-visible { background: var(--raised); outline: none; border-color: var(--line); }
+.mini-guide-item.current { border-color: var(--brass); }
+.mini-guide-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.mini-guide-text span, .mini-guide-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-guide-text small { font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .mini-guide { animation: none; } }
+
+.channel-auto { padding: 1px 7px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; vertical-align: middle; }
+.channel-order-buttons { display: flex; gap: 2px; }
+.channel-order-buttons button { width: 30px; height: 30px; display: inline-grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.channel-order-buttons button:hover:not(:disabled) { color: var(--brass); border-color: var(--brass); }
+.channel-order-buttons button:disabled { opacity: 0.3; cursor: default; }
+.channel-order-buttons .icon { width: 16px; height: 16px; }
+.auto-channels { display: grid; gap: 12px; }
+.auto-channels-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.auto-channels-row input[type="number"] { width: 90px; }

@@ -11,7 +11,7 @@ const MAX_FILL = 3000;
 
 /** Something a channel can air: one playable file and what the guide shows for it. */
 export interface ScheduleItem {
-  itemType: "movie" | "episode";
+  itemType: "movie" | "episode" | "track";
   itemId: string;
   fileId: string;
   durationMs: number;

@@ -4,7 +4,7 @@ import { ClipLoop } from "./clipLoop";
 const BRASS = [210, 174, 98] as const;
 
 /** Splits the analyser's linear bins into log-spaced bands, 0..1 each. */
-function bands(data: Uint8Array, count: number, out: Float32Array) {
+export function bands(data: Uint8Array, count: number, out: Float32Array) {
   const first = 2;
   const last = Math.min(data.length - 1, 320);
   for (let band = 0; band < count; band += 1) {
@@ -16,13 +16,13 @@ function bands(data: Uint8Array, count: number, out: Float32Array) {
   }
 }
 
-function bass(data: Uint8Array) {
+export function bass(data: Uint8Array) {
   let sum = 0;
   for (let bin = 1; bin < 8; bin += 1) sum += data[bin] ?? 0;
   return sum / (7 * 255);
 }
 
-function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void) {
+export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void) {
   const drawRef = useRef(draw);
   drawRef.current = draw;
   useEffect(() => {
@@ -39,7 +39,7 @@ function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => vo
   }, [analyser]);
 }
 
-function fitCanvas(canvas: HTMLCanvasElement) {
+export function fitCanvas(canvas: HTMLCanvasElement) {
   const ratio = window.devicePixelRatio || 1;
   const width = Math.round(canvas.clientWidth * ratio);
   const height = Math.round(canvas.clientHeight * ratio);

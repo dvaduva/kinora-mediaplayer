@@ -4,10 +4,12 @@ import Hls from "hls.js";
 import type { LiveChannel, LivePlayback, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
+import { useAudio } from "../audio";
 import { useLocale } from "../i18n";
-import { ChannelLogo, clockTime, programProgress, serverNow, syncClock, useNow } from "../liveTv";
-import { formatClock } from "../media";
+import { ChannelLogo, clockTime, FavoriteButton, programProgress, serverNow, syncClock, useNow } from "../liveTv";
+import { formatClock, imageUrl } from "../media";
 import { Icon } from "../ui";
+import { LiveMusicVisual, MiniGuide, useMediaAnalyser } from "./LiveExtras";
 
 /** Within this many seconds of the live point, playback counts as live. */
 const LIVE_SLACK = 15;
@@ -44,6 +46,18 @@ export function LivePlayerPage() {
   const retries = useRef(0);
   const copy = useRef(t);
   copy.current = t;
+  const [miniGuide, setMiniGuide] = useState(false);
+  const miniGuideOpen = useRef(false);
+  miniGuideOpen.current = miniGuide;
+  /** Stars toggled in this player, per channel, ahead of the next fetch. */
+  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
+  const audio = useAudio();
+
+  // Live TV takes over the sound: music playing elsewhere in the app stops.
+  useEffect(() => {
+    audio.pause();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     api<LiveChannel[]>("/api/livetv/channels")
@@ -284,7 +298,10 @@ export function LivePlayerPage() {
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       const key = event.key;
-      if (key === "ArrowUp" || key === "PageUp") zap(1);
+      // The quick guide handles its own keys (and closes on Escape or g).
+      if (miniGuideOpen.current) return;
+      if (key === "g") setMiniGuide(true);
+      else if (key === "ArrowUp" || key === "PageUp") zap(1);
       else if (key === "ArrowDown" || key === "PageDown") zap(-1);
       else if (key === "ArrowLeft") seekBy(-SEEK_STEP);
       else if (key === "ArrowRight") seekBy(SEEK_STEP);
@@ -303,7 +320,13 @@ export function LivePlayerPage() {
 
   // The live point keeps moving while paused; redraw the bar and the "behind" time every second.
   useNow(1000);
-  const channel = session?.channel ?? channels?.find((entry) => entry.id === channelId) ?? null;
+  const baseChannel = session?.channel ?? channels?.find((entry) => entry.id === channelId) ?? null;
+  const channel = baseChannel && baseChannel.id in favorites ? { ...baseChannel, favorite: favorites[baseChannel.id]! } : baseChannel;
+  const onFavorite = (favorite: boolean) => {
+    if (channel) setFavorites((current) => ({ ...current, [channel.id]: favorite }));
+  };
+  const music = session?.program.itemType === "track";
+  const analyser = useMediaAnalyser(video, music);
   const duration = session ? programSeconds(session) : 0;
   const live = session ? liveSeconds(session) : 0;
   const behind = Math.max(0, live - position);
@@ -327,6 +350,7 @@ export function LivePlayerPage() {
         onPointerDown={showChrome}
       >
         <video ref={video} className="live-video" playsInline autoPlay onClick={togglePlay} onDoubleClick={toggleFullscreen} />
+        {session && music && started ? <LiveMusicVisual analyser={analyser} cover={imageUrl(session.program.image)} /> : null}
         {!started && !error ? (
           <div className="live-tuning">
             {channel ? <ChannelLogo channel={channel} className="large" /> : null}
@@ -340,7 +364,19 @@ export function LivePlayerPage() {
             <Link className="secondary-button" to="/live">{t.liveGuide}</Link>
           </div>
         ) : null}
-        {session && (banner || chrome || paused) ? <LiveBanner session={session} t={t} locale={locale} /> : null}
+        {session && (banner || chrome || paused) && !miniGuide ? <LiveBanner session={session} t={t} locale={locale} /> : null}
+        {miniGuide ? (
+          <MiniGuide
+            currentId={channelId}
+            t={t}
+            locale={locale}
+            onClose={() => setMiniGuide(false)}
+            onPick={(picked) => {
+              setMiniGuide(false);
+              if (picked.id !== channelId) navigate(`/live/${picked.id}`, { replace: true });
+            }}
+          />
+        ) : null}
         <button className="live-zap up" type="button" onClick={() => zap(1)} aria-label={t.liveChannelUp} title={t.liveChannelUp}>
           <Icon name="up" />
         </button>
@@ -384,6 +420,10 @@ export function LivePlayerPage() {
               </button>
             )}
             <span className="live-spacer" />
+            {channel ? <FavoriteButton channel={channel} t={t} onChange={onFavorite} /> : null}
+            <button type="button" onClick={() => setMiniGuide((open) => !open)} aria-label={t.liveMiniGuide} title={`${t.liveMiniGuide} (G)`} aria-pressed={miniGuide}>
+              <Icon name="guide" />
+            </button>
             <button
               type="button"
               onClick={() => {

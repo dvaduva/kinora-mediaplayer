@@ -135,6 +135,8 @@ export const tracks = sqliteTable("tracks", {
   discNumber: integer("disc_number"),
   artistName: text("artist_name"),
   duration: real("duration"),
+  /** First genre tag; "" once read and absent, null while not read yet (rows from before genres were kept). */
+  genre: text("genre"),
 }, (table) => [
   index("tracks_album").on(table.albumId),
 ]);
@@ -241,9 +243,24 @@ export const channels = sqliteTable("channels", {
   seed: integer("seed").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   categoryOverride: text("category_override"),
+  /** Set on channels the server generated ("genre:Drama", "series:<id>", "music:Rock"); one per key. */
+  autoKey: text("auto_key"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+/** Per-profile view of the channels: favorites and the profile's own channel order. */
+export const profileChannels = sqliteTable(
+  "profile_channels",
+  {
+    profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+    channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+    favorite: integer("favorite", { mode: "boolean" }).notNull().default(false),
+    /** Place in the profile's order; null follows the channel number. */
+    position: integer("position"),
+  },
+  (table) => [primaryKey({ columns: [table.profileId, table.channelId] })],
+);
 
 /** Rules of a virtual channel; the channel plays everything any rule matches. */
 export const channelSources = sqliteTable("channel_sources", {

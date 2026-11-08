@@ -10,9 +10,14 @@ import {
   getChannel,
   guide,
   listChannels,
+  liveTvSettings,
   playChannel,
   regenerateChannel,
+  saveLiveTvSettings,
   setChannelLogo,
+  setChannelOrder,
+  setFavorite,
+  syncAutoChannels,
   updateChannel,
   validateChannelInput,
 } from "./channels.js";
@@ -39,6 +44,37 @@ function timeParam(value: unknown, fallback: number) {
 export function registerLiveTv(app: FastifyInstance) {
   app.get("/api/livetv/channels", async () => listChannels());
   app.get("/api/livetv/options", async () => channelOptions());
+
+  app.get("/api/livetv/settings", async () => liveTvSettings());
+  app.put("/api/livetv/settings", async (request, reply) => {
+    try {
+      const before = liveTvSettings();
+      const saved = saveLiveTvSettings(asRecord(request.body));
+      // Turning automatic channels on, or lowering the series threshold, adds channels right away.
+      const sync = saved.autoChannels && (!before.autoChannels || saved.autoSeriesMinEpisodes !== before.autoSeriesMinEpisodes) ? syncAutoChannels() : { created: 0 };
+      return { settings: saved, ...sync };
+    } catch (error) {
+      return channelFailure(reply, error);
+    }
+  });
+  /** "Generate now": runs the sync even while automatic channels are off; `restore` brings deleted ones back. */
+  app.post("/api/livetv/auto/sync", async (request) => {
+    return syncAutoChannels({ force: true, restoreDismissed: asRecord(request.body).restore === true });
+  });
+
+  app.put("/api/livetv/order", async (request, reply) => {
+    try {
+      return setChannelOrder(asRecord(request.body).ids);
+    } catch (error) {
+      return channelFailure(reply, error);
+    }
+  });
+
+  app.put("/api/livetv/channels/:id/favorite", async (request, reply) => {
+    const favorite = asRecord(request.body).favorite;
+    if (typeof favorite !== "boolean") return reply.code(400).send({ error: "bad_favorite" });
+    return setFavorite((request.params as { id: string }).id, favorite) ?? reply.code(404).send({ error: "not_found" });
+  });
 
   app.get("/api/livetv/guide", async (request, reply) => {
     const query = request.query as { from?: string; to?: string };

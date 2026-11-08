@@ -95,6 +95,17 @@ Implementată. Pe lângă coloanele din plan, `channel_programs` are `seq` (pozi
 - **Canale de muzică:** reguli pe artist, album sau gen muzical; playerul arată vizualizarea existentă sau coperta albumului.
 - **Mini-ghid suprapus** în player.
 
+### Stare (8 nov. 2026)
+
+Implementată (migrarea `0006_live_tv_phase2`). Detalii și abateri de la plan:
+
+- **Categorii:** prima regulă de gen dă categoria; canalele cu reguli de un singur tip primesc „Filme”, „Seriale” sau „Muzică”; regulile amestecate nu dau categorie (canalul apare doar la „Toate”). Derivarea e în `packages/shared`, ca formularul să arate categoria propusă.
+- **Ordinea per profil** se schimbă din Setări → Live TV (săgeți sus/jos, „Ordine după număr”). Zapping-ul o respectă.
+- **Canale auto:** oprite implicit; se pornesc din Setări (prag implicit: 20 de episoade). Se sincronizează la pornire, la fiecare oră și după fiecare scanare. Un gen are nevoie de cel puțin 3 titluri; la muzică intră doar cele mai mari 8 genuri cu cel puțin 15 piese, fără valori ca „Other” sau „Unknown”. Un canal auto șters nu mai e generat („Readu canalele auto șterse” le aduce înapoi). Canalele auto rămase fără conținut nu se șterg singure, pentru că un disc deconectat le-ar renumerota; se ascund din ghid ca orice canal gol.
+- **Muzică:** `tracks.genre` se citește din taguri la scanare. Piesele scanate dinainte primesc genul o singură dată, la următoarea scanare. Regula „bibliotecă” acceptă acum și bibliotecile de muzică. În ordinea secvențială, albumele se redau cap-coadă, pe rând. Spectrul pornește doar după ce contextul audio rulează, ca să nu amuțească redarea.
+- **Mini-ghid:** tasta `G` sau butonul din bară; filtrabil pe categorie, cu săgeți sus/jos între rânduri.
+- Videoclipurile muzicale (`ClipLoop`) nu apar încă în vizualizarea live.
+
 ## Faza 3 — IPTV
 
 - Tabel `iptv_sources` (`id`, `name`, `m3u_url`, `xmltv_url`, `refreshed_at`, `status`); canalele importate au `kind = iptv` și păstrează URL-ul de stream.

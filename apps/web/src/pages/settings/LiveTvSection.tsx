@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import type { ChannelInput, ChannelOptions, ChannelOrder, ChannelSource, ChannelSourceType, LiveChannel } from "@kinora/shared";
-import { CHANNEL_SOURCE_TYPES } from "@kinora/shared";
+import type { ChannelInput, ChannelOptions, ChannelOrder, ChannelSource, ChannelSourceType, LiveChannel, LiveTvSettings } from "@kinora/shared";
+import { CHANNEL_SOURCE_TYPES, deriveCategory } from "@kinora/shared";
 import { api } from "../../api";
 import { useLocale, type Copy } from "../../i18n";
-import { ChannelLogo } from "../../liveTv";
+import { categoryLabel, ChannelLogo } from "../../liveTv";
 import { Icon } from "../../ui";
 import { errorText, SectionHead, Status, useReportDirty, type SectionProps } from "./common";
 
@@ -28,6 +28,12 @@ function ruleLabel(type: ChannelSourceType, t: Copy) {
       return t.liveRuleDecade;
     case "person":
       return t.liveRulePerson;
+    case "artist":
+      return t.liveRuleArtist;
+    case "album":
+      return t.liveRuleAlbum;
+    case "musicGenre":
+      return t.liveRuleMusicGenre;
   }
 }
 
@@ -46,6 +52,11 @@ function ruleValue(source: ChannelSource, options: ChannelOptions | null) {
     return movie ? withYear(movie.title, movie.year) : "…";
   }
   if (source.type === "library") return options?.libraries.find((entry) => entry.id === source.value)?.name ?? "…";
+  if (source.type === "artist") return options?.artists.find((entry) => entry.id === source.value)?.name ?? "…";
+  if (source.type === "album") {
+    const album = options?.albums.find((entry) => entry.id === source.value);
+    return album ? `${album.artist ? `${album.artist} — ` : ""}${withYear(album.title, album.year)}` : "…";
+  }
   if (source.type === "decade") return `${source.value}s`;
   return source.value;
 }
@@ -54,7 +65,13 @@ function liveError(t: Copy, reason: unknown) {
   const code = reason instanceof Error ? reason.message : "";
   if (code === "number_taken") return t.errNumberTaken;
   if (code === "bad_logo") return t.errBadLogo;
+  if (code === "bad_category") return t.errBadCategory;
   return errorText(t, reason);
+}
+
+function libraryTypeOf(options: ChannelOptions | null) {
+  const types = new Map((options?.libraries ?? []).map((library) => [library.id, library.type]));
+  return (id: string) => types.get(id);
 }
 
 export function LiveTvSection({ onDirty }: SectionProps) {
@@ -68,6 +85,25 @@ export function LiveTvSection({ onDirty }: SectionProps) {
     api<ChannelOptions>("/api/livetv/options").then(setOptions).catch(() => undefined);
   }
   useEffect(load, []);
+
+  /** Saves the profile's order with one channel moved a place up or down. */
+  async function move(index: number, step: -1 | 1) {
+    if (!channels) return;
+    const order = channels.map((channel) => channel.id);
+    const target = index + step;
+    if (target < 0 || target >= order.length) return;
+    [order[index], order[target]] = [order[target]!, order[index]!];
+    setChannels(order.map((id) => channels.find((channel) => channel.id === id)!));
+    await api<LiveChannel[]>("/api/livetv/order", { method: "PUT", body: JSON.stringify({ ids: order }) })
+      .then(setChannels)
+      .catch(load);
+  }
+
+  function resetOrder() {
+    api<LiveChannel[]>("/api/livetv/order", { method: "PUT", body: JSON.stringify({ ids: [] }) })
+      .then(setChannels)
+      .catch(load);
+  }
 
   const empty = channels !== null && channels.length === 0;
   return (
@@ -99,10 +135,27 @@ export function LiveTvSection({ onDirty }: SectionProps) {
           <button className="play live-first" type="button" onClick={() => setEditing({ channel: null })}>{t.liveCreateChannel}</button>
         </div>
       ) : null}
+      <AutoChannels t={t} onChange={load} />
+      {channels && channels.length > 1 ? (
+        <p className="field-help">
+          {t.liveOrderHelp}{" "}
+          <button className="text-button inline" type="button" onClick={resetOrder}>{t.liveOrderReset}</button>
+        </p>
+      ) : null}
       <div className="library-list">
-        {channels?.map((channel) =>
+        {channels?.map((channel, index) =>
           editing?.channel?.id === channel.id ? null : (
-            <ChannelCard key={channel.id} channel={channel} options={options} t={t} onEdit={() => setEditing({ channel })} onChange={load} />
+            <ChannelCard
+              key={channel.id}
+              channel={channel}
+              options={options}
+              t={t}
+              first={index === 0}
+              last={index === channels.length - 1}
+              onMove={(step) => void move(index, step)}
+              onEdit={() => setEditing({ channel })}
+              onChange={load}
+            />
           ),
         )}
       </div>
@@ -115,7 +168,95 @@ export function LiveTvSection({ onDirty }: SectionProps) {
   );
 }
 
-function ChannelCard(props: { channel: LiveChannel; options: ChannelOptions | null; t: Copy; onEdit: () => void; onChange: () => void }) {
+/** Server-wide switch for generated channels, the series threshold, and "generate now". */
+function AutoChannels(props: { t: Copy; onChange: () => void }) {
+  const { t } = props;
+  const [settings, setSettings] = useState<LiveTvSettings | null>(null);
+  const [threshold, setThreshold] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
+  useEffect(() => {
+    api<LiveTvSettings>("/api/livetv/settings")
+      .then((data) => {
+        setSettings(data);
+        setThreshold(String(data.autoSeriesMinEpisodes));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const report = (created: number) => {
+    setNote({ tone: "ok", text: created > 0 ? t.liveAutoCreated.replace("{count}", String(created)) : t.liveAutoNone });
+    if (created > 0) props.onChange();
+  };
+
+  async function save(change: Partial<LiveTvSettings>) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const result = await api<{ settings: LiveTvSettings; created: number }>("/api/livetv/settings", { method: "PUT", body: JSON.stringify(change) });
+      setSettings(result.settings);
+      setThreshold(String(result.settings.autoSeriesMinEpisodes));
+      if (result.settings.autoChannels) report(result.created);
+    } catch (reason) {
+      setNote({ tone: "error", text: liveError(t, reason) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generate(restore: boolean) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const result = await api<{ created: number }>("/api/livetv/auto/sync", { method: "POST", body: JSON.stringify({ restore }) });
+      report(result.created);
+    } catch (reason) {
+      setNote({ tone: "error", text: liveError(t, reason) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!settings) return null;
+  const parsed = Number(threshold);
+  const thresholdValid = Number.isInteger(parsed) && parsed >= 1 && parsed <= 10_000;
+  return (
+    <div className="settings-card auto-channels">
+      <h3>{t.liveAutoTitle}</h3>
+      <p className="field-help">{t.liveAutoHelp}</p>
+      <label className="radio">
+        <input type="checkbox" checked={settings.autoChannels} disabled={busy} onChange={(event) => void save({ autoChannels: event.target.checked })} />
+        {t.liveAutoEnable}
+      </label>
+      <div className="auto-channels-row">
+        <label className="field">
+          {t.liveAutoSeriesMin}
+          <input type="number" min={1} max={10000} step={1} value={threshold} onChange={(event) => setThreshold(event.target.value)} />
+        </label>
+        {thresholdValid && parsed !== settings.autoSeriesMinEpisodes ? (
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => void save({ autoSeriesMinEpisodes: parsed })}>{t.save}</button>
+        ) : null}
+      </div>
+      <div className="auto-channels-row">
+        <button className="secondary-button" type="button" disabled={busy} onClick={() => void generate(false)}>{t.liveAutoGenerateNow}</button>
+        <button className="text-button" type="button" disabled={busy} onClick={() => void generate(true)}>{t.liveAutoRestore}</button>
+        {note ? <span className={note.tone === "ok" ? "settings-saved" : "danger"} role="status">{note.text}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function ChannelCard(props: {
+  channel: LiveChannel;
+  options: ChannelOptions | null;
+  t: Copy;
+  first: boolean;
+  last: boolean;
+  onMove: (step: -1 | 1) => void;
+  onEdit: () => void;
+  onChange: () => void;
+}) {
   const { channel, t } = props;
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -152,11 +293,20 @@ function ChannelCard(props: { channel: LiveChannel; options: ChannelOptions | nu
         <ChannelLogo channel={channel} />
         <div className="channel-card-title">
           <h3>
-            <span className="guide-channel-number">{channel.number}</span> {channel.name}
+            <span className="guide-channel-number">{channel.number}</span> {channel.name} {channel.auto ? <span className="channel-auto">{t.liveAuto}</span> : null}
           </h3>
           <span className="library-type">
             {t.liveOrder}: {channel.orderMode === "shuffle" ? t.liveOrderShuffle : t.liveOrderSequentialShort}
+            {channel.category ? ` · ${t.liveCategory}: ${categoryLabel(channel.category, t)}` : ""}
           </span>
+        </div>
+        <div className="channel-order-buttons">
+          <button type="button" onClick={() => props.onMove(-1)} disabled={props.first} aria-label={`${t.liveMoveUp}: ${channel.name}`} title={t.liveMoveUp}>
+            <Icon name="up" />
+          </button>
+          <button type="button" onClick={() => props.onMove(1)} disabled={props.last} aria-label={`${t.liveMoveDown}: ${channel.name}`} title={t.liveMoveDown}>
+            <Icon name="down" />
+          </button>
         </div>
         {!channel.enabled ? <Status tone="busy">{t.liveOff}</Status> : channel.empty ? <Status tone="warn">{t.liveNoProgram}</Status> : <Status tone="ok">{t.liveActive}</Status>}
       </div>
@@ -207,6 +357,7 @@ function ChannelForm(props: {
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
   const [sources, setSources] = useState<ChannelSource[]>(channel?.sources ?? [emptyRule("genre")]);
   const [order, setOrder] = useState<ChannelOrder | null>(channel?.orderMode ?? null);
+  const [category, setCategory] = useState(channel?.categoryOverride ?? "");
   const [logo, setLogo] = useState<LogoChange>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -219,9 +370,16 @@ function ChannelForm(props: {
   const filled = sources.filter((source) => source.value.trim());
   // Until chosen by hand, series play in order and movies shuffle.
   const orderMode: ChannelOrder = order ?? (filled.some((source) => source.type === "series") ? "sequential" : "shuffle");
+  const derived = deriveCategory(filled, libraryTypeOf(options));
   const dirty = channel
-    ? name !== channel.name || number !== String(channel.number) || enabled !== channel.enabled || orderMode !== channel.orderMode || !sameSources(filled, channel.sources) || logo !== null
-    : Boolean(name.trim() || filled.length > 0 || logo);
+    ? name !== channel.name ||
+      number !== String(channel.number) ||
+      enabled !== channel.enabled ||
+      orderMode !== channel.orderMode ||
+      !sameSources(filled, channel.sources) ||
+      logo !== null ||
+      category.trim() !== (channel.categoryOverride ?? "")
+    : Boolean(name.trim() || filled.length > 0 || logo || category.trim());
   useReportDirty(props.onDirty, dirty);
 
   const preview = {
@@ -255,7 +413,7 @@ function ChannelForm(props: {
       setError(t.errNoRules);
       return;
     }
-    const body: ChannelInput = { name: name.trim(), number: Number(number), orderMode, enabled, sources: filled };
+    const body: ChannelInput = { name: name.trim(), number: Number(number), orderMode, enabled, sources: filled, categoryOverride: category.trim() || null };
     setBusy(true);
     setError(null);
     try {
@@ -338,6 +496,23 @@ function ChannelForm(props: {
         </label>
       </fieldset>
 
+      <label className="field">
+        {t.liveCategory}
+        <input
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+          maxLength={40}
+          list="live-categories"
+          placeholder={derived ? categoryLabel(derived, t) : t.liveCategoryNone}
+        />
+        <datalist id="live-categories">
+          {[...new Set([...(options?.categories ?? []), ...(options?.genres ?? [])])].map((value) => (
+            <option key={value} value={value} />
+          ))}
+        </datalist>
+      </label>
+      <p className="field-help">{t.liveCategoryHelp.replace("{derived}", derived ? categoryLabel(derived, t) : t.liveCategoryNone)}</p>
+
       <label className="radio">
         <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
         {t.liveEnabled}
@@ -380,7 +555,13 @@ function RuleValue(props: { source: ChannelSource; options: ChannelOptions | nul
           ? (options?.movies ?? []).map((movie) => ({ value: movie.id, label: withYear(movie.title, movie.year) }))
           : source.type === "library"
             ? (options?.libraries ?? []).map((library) => ({ value: library.id, label: library.name }))
-            : (options?.decades ?? []).map((decade) => ({ value: String(decade), label: `${decade}s` }));
+            : source.type === "artist"
+              ? (options?.artists ?? []).map((artist) => ({ value: artist.id, label: artist.name }))
+              : source.type === "album"
+                ? (options?.albums ?? []).map((album) => ({ value: album.id, label: ruleValue({ type: "album", value: album.id }, options) }))
+                : source.type === "musicGenre"
+                  ? (options?.musicGenres ?? []).map((genre) => ({ value: genre, label: genre }))
+                  : (options?.decades ?? []).map((decade) => ({ value: String(decade), label: `${decade}s` }));
   // A saved value the library no longer offers stays selectable, so editing does not drop it silently.
   if (source.value && !choices.some((choice) => choice.value === source.value)) choices.unshift({ value: source.value, label: ruleValue(source, options) });
   return (

@@ -279,6 +279,11 @@ async function ingestFile(libraryId: string, type: LibraryType, file: string, ro
     }
     if (existing.trackId) {
       const track = db.select().from(tracks).where(eq(tracks.id, existing.trackId)).get();
+      // Tracks scanned before genres were kept get theirs once ("" marks a file without one).
+      if (track && track.genre == null) {
+        const tags = await readTags(file);
+        db.update(tracks).set({ genre: tags?.genre ?? "" }).where(eq(tracks.id, track.id)).run();
+      }
       return track ? Boolean(db.select().from(albums).where(eq(albums.id, track.albumId)).get()?.matched) : false;
     }
     return false;
@@ -407,6 +412,7 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
       discNumber: tags?.discNumber ?? 1,
       artistName: tags?.artist || artistName,
       duration: tags?.duration ?? null,
+      genre: tags?.genre ?? "",
     })
     .onConflictDoUpdate({
       target: tracks.id,
@@ -417,6 +423,7 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
         discNumber: tags?.discNumber ?? 1,
         artistName: tags?.artist || artistName,
         duration: tags?.duration ?? null,
+        genre: tags?.genre ?? "",
       },
     })
     .run();
@@ -457,6 +464,7 @@ async function readTags(file: string) {
       year: data.common.year ?? null,
       trackNumber: data.common.track?.no ?? null,
       discNumber: data.common.disk?.no ?? null,
+      genre: data.common.genre?.map((genre) => genre.trim()).find(Boolean) ?? null,
       duration: data.format.duration ?? null,
       picture: picture ? { data: Buffer.from(picture.data), format: picture.format ?? "image/jpeg" } : null,
     };

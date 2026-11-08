@@ -1,15 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
-import type { ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, LiveChannel, LivePlayback, ProgramItemType } from "@kinora/shared";
+import type { ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
 import { isChannelSourceType } from "@kinora/shared";
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { channelPrograms, channels, channelSources, episodes, mediaFiles, movies } from "../db/schema.js";
+import { channelPrograms, channels, channelSources, episodes, mediaFiles, movies, profileChannels, tracks } from "../db/schema.js";
 import { dataDir } from "../paths.js";
 import { beginTranscode, describePlayback, wholeTranscodeReach } from "../playback/session.js";
 import { sessionStarts } from "../playback/transcode.js";
-import { resolveSources } from "./sources.js";
+import { getSetting, PROFILE_ID, setSetting } from "../settings.js";
+import { DEFAULT_SERIES_MIN_EPISODES, newAutoChannels, planAutoChannels } from "./auto.js";
+import { deriveCategory, isMusicChannel } from "./categories.js";
+import { libraryInventory, libraryTypes, resolveSources } from "./sources.js";
 import { continueSchedule, HORIZON_MS, KEEP_PAST_MS } from "./schedule.js";
 
 type ChannelRow = typeof channels.$inferSelect;
@@ -50,7 +53,28 @@ function scheduledUntil() {
   return until;
 }
 
-function channelDto(row: ChannelRow, until: Map<string, number>): LiveChannel {
+/** Lookups shared by every channel of one listing. */
+interface DtoContext {
+  until: Map<string, number>;
+  libraryType: (id: string) => LibraryType | undefined;
+  profile: Map<string, { favorite: boolean; position: number | null }>;
+}
+
+function dtoContext(): DtoContext {
+  const types = libraryTypes();
+  const profile = new Map(
+    db
+      .select()
+      .from(profileChannels)
+      .where(eq(profileChannels.profileId, PROFILE_ID))
+      .all()
+      .map((row) => [row.channelId, { favorite: row.favorite, position: row.position }]),
+  );
+  return { until: scheduledUntil(), libraryType: (id) => types.get(id), profile };
+}
+
+function channelDto(row: ChannelRow, context: DtoContext): LiveChannel {
+  const sources = sourcesOf(row.id);
   return {
     id: row.id,
     kind: row.kind === "iptv" ? "iptv" : "virtual",
@@ -59,19 +83,34 @@ function channelDto(row: ChannelRow, until: Map<string, number>): LiveChannel {
     logoUrl: row.logoPath ? `/api/livetv/channels/${row.id}/logo?v=${row.updatedAt}` : null,
     orderMode: row.orderMode === "sequential" ? "sequential" : "shuffle",
     enabled: row.enabled,
-    sources: sourcesOf(row.id),
-    empty: !until.has(row.id),
+    sources,
+    empty: !context.until.has(row.id),
+    category: row.categoryOverride || deriveCategory(sources, context.libraryType),
+    categoryOverride: row.categoryOverride,
+    auto: row.autoKey != null,
+    music: isMusicChannel(sources, context.libraryType),
+    favorite: context.profile.get(row.id)?.favorite ?? false,
   };
 }
 
+/** All channels in the profile's order: the ones it placed first, then the rest by number. */
 export function listChannels(): LiveChannel[] {
-  const until = scheduledUntil();
+  const context = dtoContext();
+  const position = (id: string) => context.profile.get(id)?.position ?? null;
   return db
     .select()
     .from(channels)
     .orderBy(asc(channels.number), asc(channels.name))
     .all()
-    .map((row) => channelDto(row, until));
+    .sort((a, b) => {
+      const pa = position(a.id);
+      const pb = position(b.id);
+      if (pa != null && pb != null) return pa - pb;
+      if (pa != null) return -1;
+      if (pb != null) return 1;
+      return 0;
+    })
+    .map((row) => channelDto(row, context));
 }
 
 /** Channels the guide and the player show: enabled and with something to air. */
@@ -81,12 +120,17 @@ export function visibleChannels() {
 
 export function getChannel(id: string): LiveChannel | null {
   const row = db.select().from(channels).where(eq(channels.id, id)).get();
-  return row ? channelDto(row, scheduledUntil()) : null;
+  return row ? channelDto(row, dtoContext()) : null;
 }
 
 function programDtos(rows: ProgramRow[]): ChannelProgram[] {
   const episodeIds = [...new Set(rows.filter((row) => row.itemType === "episode" && row.itemId).map((row) => row.itemId!))];
   const movieIds = [...new Set(rows.filter((row) => row.itemType === "movie" && row.itemId).map((row) => row.itemId!))];
+  const trackIds = [...new Set(rows.filter((row) => row.itemType === "track" && row.itemId).map((row) => row.itemId!))];
+  const albumOf = new Map<string, string>();
+  for (const part of chunks(trackIds, 500)) {
+    for (const row of db.select({ id: tracks.id, albumId: tracks.albumId }).from(tracks).where(inArray(tracks.id, part)).all()) albumOf.set(row.id, row.albumId);
+  }
   const seriesOf = new Map<string, string>();
   for (const part of chunks(episodeIds, 500)) {
     for (const row of db.select({ id: episodes.id, seriesId: episodes.seriesId }).from(episodes).where(inArray(episodes.id, part)).all()) seriesOf.set(row.id, row.seriesId);
@@ -101,7 +145,9 @@ function programDtos(rows: ProgramRow[]): ChannelProgram[] {
         ? `/movies/${row.itemId}`
         : row.itemType === "episode" && row.itemId && seriesOf.has(row.itemId)
           ? `/series/${seriesOf.get(row.itemId)}`
-          : null;
+          : row.itemType === "track" && row.itemId && albumOf.has(row.itemId)
+            ? `/music/albums/${albumOf.get(row.itemId)}`
+            : null;
     return {
       id: row.id,
       channelId: row.channelId,
@@ -219,7 +265,11 @@ export function validateChannelInput(body: Record<string, unknown>): ChannelInpu
     seen.add(id);
     sources.push({ type: entry.type, value });
   }
-  return { name, number, orderMode, enabled, sources };
+  const rawCategory = body.categoryOverride;
+  if (rawCategory != null && typeof rawCategory !== "string") throw new ChannelError("bad_category");
+  const categoryOverride = typeof rawCategory === "string" && rawCategory.trim() ? rawCategory.trim() : null;
+  if (categoryOverride && (categoryOverride.length > 40 || categoryOverride.startsWith("@"))) throw new ChannelError("bad_category");
+  return { name, number, orderMode, enabled, sources, categoryOverride };
 }
 
 function writeSources(channelId: string, sources: ChannelSource[]) {
@@ -236,7 +286,7 @@ function assertNumberFree(number: number, exceptId: string | null) {
   if (taken) throw new ChannelError("number_taken");
 }
 
-export function createChannel(input: ChannelInput) {
+export function createChannel(input: ChannelInput, autoKey: string | null = null) {
   assertNumberFree(input.number, null);
   const id = randomUUID();
   const now = Date.now();
@@ -250,7 +300,8 @@ export function createChannel(input: ChannelInput) {
       orderMode: input.orderMode,
       seed: randomInt(0, 2 ** 31 - 1),
       enabled: input.enabled,
-      categoryOverride: null,
+      categoryOverride: input.categoryOverride ?? null,
+      autoKey,
       createdAt: now,
       updatedAt: now,
     })
@@ -266,7 +317,7 @@ export function updateChannel(id: string, input: ChannelInput) {
   assertNumberFree(input.number, id);
   const now = Date.now();
   db.update(channels)
-    .set({ name: input.name, number: input.number, orderMode: input.orderMode, enabled: input.enabled, updatedAt: now })
+    .set({ name: input.name, number: input.number, orderMode: input.orderMode, enabled: input.enabled, categoryOverride: input.categoryOverride ?? null, updatedAt: now })
     .where(eq(channels.id, id))
     .run();
   writeSources(id, input.sources);
@@ -296,8 +347,91 @@ export function deleteChannel(id: string) {
   if (!row) return false;
   db.delete(channels).where(eq(channels.id, id)).run();
   removeLogoFile(row.logoPath);
+  // A deleted automatic channel is not generated again.
+  if (row.autoKey) setSetting("liveAutoDismissed", JSON.stringify([...new Set([...dismissedAutoKeys(), row.autoKey])]));
   return true;
 }
+
+/* Favorites and order (per profile) ----------------------------------------- */
+
+export function setFavorite(id: string, favorite: boolean) {
+  if (!db.select({ id: channels.id }).from(channels).where(eq(channels.id, id)).get()) return null;
+  db.insert(profileChannels)
+    .values({ profileId: PROFILE_ID, channelId: id, favorite, position: null })
+    .onConflictDoUpdate({ target: [profileChannels.profileId, profileChannels.channelId], set: { favorite } })
+    .run();
+  return getChannel(id);
+}
+
+/** Puts the listed channels first, in that order; `[]` goes back to ordering by number. */
+export function setChannelOrder(ids: unknown) {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string") || ids.length > 10_000) throw new ChannelError("bad_order");
+  const known = new Set(db.select({ id: channels.id }).from(channels).all().map((row) => row.id));
+  const order = [...new Set(ids as string[])].filter((id) => known.has(id));
+  db.transaction((tx) => {
+    tx.update(profileChannels).set({ position: null }).where(eq(profileChannels.profileId, PROFILE_ID)).run();
+    order.forEach((channelId, position) => {
+      tx.insert(profileChannels)
+        .values({ profileId: PROFILE_ID, channelId, favorite: false, position })
+        .onConflictDoUpdate({ target: [profileChannels.profileId, profileChannels.channelId], set: { position } })
+        .run();
+    });
+  });
+  return listChannels();
+}
+
+/* Automatic channels --------------------------------------------------------- */
+
+function dismissedAutoKeys(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(getSetting("liveAutoDismissed") ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((key): key is string => typeof key === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function liveTvSettings(): LiveTvSettings {
+  const min = Number(getSetting("liveAutoSeriesMinEpisodes"));
+  return {
+    autoChannels: getSetting("liveAutoChannels") === "1",
+    autoSeriesMinEpisodes: Number.isInteger(min) && min > 0 ? min : DEFAULT_SERIES_MIN_EPISODES,
+  };
+}
+
+export function saveLiveTvSettings(body: Record<string, unknown>): LiveTvSettings {
+  const current = liveTvSettings();
+  const autoChannels = body.autoChannels === undefined ? current.autoChannels : body.autoChannels;
+  if (typeof autoChannels !== "boolean") throw new ChannelError("bad_settings");
+  const min = body.autoSeriesMinEpisodes === undefined ? current.autoSeriesMinEpisodes : body.autoSeriesMinEpisodes;
+  if (typeof min !== "number" || !Number.isInteger(min) || min < 1 || min > 10_000) throw new ChannelError("bad_settings");
+  setSetting("liveAutoChannels", autoChannels ? "1" : null);
+  setSetting("liveAutoSeriesMinEpisodes", String(min));
+  return liveTvSettings();
+}
+
+/**
+ * Creates the automatic channels the library calls for. Does nothing while automatic channels are
+ * off; `force` runs it anyway (the "generate now" button), `restoreDismissed` brings deleted ones back.
+ */
+export function syncAutoChannels(options: { force?: boolean; restoreDismissed?: boolean } = {}) {
+  const settings = liveTvSettings();
+  if (!settings.autoChannels && !options.force) return { created: 0 };
+  if (options.restoreDismissed) setSetting("liveAutoDismissed", null);
+  const plans = planAutoChannels(libraryInventory(), settings.autoSeriesMinEpisodes);
+  const rows = db.select({ number: channels.number, autoKey: channels.autoKey }).from(channels).all();
+  const create = newAutoChannels(plans, new Set(rows.flatMap((row) => (row.autoKey ? [row.autoKey] : []))), new Set(dismissedAutoKeys()));
+  let number = Math.max(0, ...rows.map((row) => row.number));
+  let created = 0;
+  for (const plan of create) {
+    if (number >= 9999) break;
+    number += 1;
+    createChannel({ name: plan.name.slice(0, 60), number, orderMode: plan.orderMode, enabled: true, sources: plan.sources, categoryOverride: null }, plan.key);
+    created += 1;
+  }
+  return { created };
+}
+
 
 const LOGO_TYPES: Record<string, string> = { png: "png", jpeg: "jpg", webp: "webp" };
 const MAX_LOGO_BYTES = 1024 * 1024;

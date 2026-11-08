@@ -3,7 +3,21 @@ import { Link, useNavigate } from "react-router-dom";
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale, type Copy, type Locale } from "../i18n";
-import { ChannelLogo, clockTime, dayLabel, programProgress, serverNow, startOfDay, syncClock, useNow } from "../liveTv";
+import {
+  CategoryBar,
+  ChannelLogo,
+  clockTime,
+  dayLabel,
+  effectiveFilter,
+  FavoriteButton,
+  filterChannels,
+  programProgress,
+  serverNow,
+  startOfDay,
+  syncClock,
+  useChannelFilter,
+  useNow,
+} from "../liveTv";
 import { imageUrl } from "../media";
 import { Icon } from "../ui";
 
@@ -76,28 +90,68 @@ function byChannel(programs: ChannelProgram[]) {
   return map;
 }
 
+type Tab = "guide" | "whatson";
+const TAB_KEY = "kinora.liveTab";
+
+function readTab(): Tab {
+  try {
+    return window.localStorage.getItem(TAB_KEY) === "whatson" ? "whatson" : "guide";
+  } catch {
+    return "guide";
+  }
+}
+
 export function LiveTvPage() {
   const { t, locale } = useLocale();
   const narrow = useNarrow();
   const now = useNow(30_000);
   const days = guideDays(now);
+  const [tab, setTabState] = useState<Tab>(readTab);
   const [dayIndex, setDayIndex] = useState(0);
-  const day = narrow ? days[0]! : (days[dayIndex] ?? days[0]!);
+  // What's On and the phone list are about now, so they always load today.
+  const day = narrow || tab === "whatson" ? days[0]! : (days[dayIndex] ?? days[0]!);
   const from = day;
   const to = nextMidnight(day);
   const { guide, stale, failed } = useGuide(from, to);
   const [selected, setSelected] = useState<ChannelProgram | null>(null);
+  const [filterChoice, setFilter] = useChannelFilter();
+  /** Stars toggled here, ahead of the next guide refresh. */
+  const [favorites, setFavorites] = useState<Record<string, boolean>>({});
 
-  const shown = guide ?? stale;
+  const setTab = (next: Tab) => {
+    setTabState(next);
+    try {
+      window.localStorage.setItem(TAB_KEY, next);
+    } catch {
+      // Only remembered when storage works.
+    }
+  };
+
+  const loaded = guide ?? stale;
+  const allChannels = useMemo(
+    () => (loaded ? loaded.channels.map((channel) => (channel.id in favorites ? { ...channel, favorite: favorites[channel.id]! } : channel)) : []),
+    [loaded, favorites],
+  );
+  const filter = effectiveFilter(filterChoice, allChannels);
+  const channels = filterChannels(allChannels, filter);
+  const shown = loaded ? { ...loaded, channels } : null;
+  const onFavorite = (id: string, favorite: boolean) => setFavorites((current) => ({ ...current, [id]: favorite }));
+  const hasChannels = allChannels.length > 0;
   return (
     <section className="live-page">
       <header className="live-head">
         <h1>{t.liveTv}</h1>
         <div className="live-tabs" role="tablist" aria-label={t.liveTv}>
-          <button type="button" role="tab" aria-selected="true" className="active">{t.liveGuide}</button>
+          <button type="button" role="tab" aria-selected={tab === "guide"} className={tab === "guide" ? "active" : undefined} onClick={() => setTab("guide")}>
+            {t.liveGuide}
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "whatson"} className={tab === "whatson" ? "active" : undefined} onClick={() => setTab("whatson")}>
+            {t.liveWhatsOn}
+          </button>
         </div>
       </header>
-      {!narrow && shown && shown.channels.length > 0 ? (
+      {hasChannels ? <CategoryBar channels={allChannels} filter={filter} onChange={setFilter} t={t} /> : null}
+      {!narrow && tab === "guide" && shown && shown.channels.length > 0 ? (
         <div className="live-days" role="group" aria-label={t.liveGuide}>
           {days.map((value, index) => (
             <button key={value} type="button" className={index === dayIndex ? "active" : undefined} aria-pressed={index === dayIndex} onClick={() => setDayIndex(index)}>
@@ -108,7 +162,10 @@ export function LiveTvPage() {
       ) : null}
       {failed && !shown ? <p className="danger">{t.liveGuideFailed}</p> : null}
       {!shown && !failed ? <GuideSkeleton /> : null}
-      {shown && shown.channels.length === 0 ? (
+      {loaded && hasChannels && channels.length === 0 ? (
+        <p className="muted live-filter-empty">{filter.kind === "favorites" ? t.liveNoFavorites : t.liveNothingHere}</p>
+      ) : null}
+      {loaded && !hasChannels ? (
         <div className="live-empty">
           <Icon name="live" />
           <p>{t.liveNoChannels}</p>
@@ -117,10 +174,12 @@ export function LiveTvPage() {
         </div>
       ) : null}
       {shown && shown.channels.length > 0 ? (
-        narrow ? (
-          <NowNextList guide={shown} now={now} t={t} locale={locale} />
+        tab === "whatson" ? (
+          <WhatsOn guide={shown} now={now} t={t} locale={locale} />
+        ) : narrow ? (
+          <NowNextList guide={shown} now={now} t={t} locale={locale} onFavorite={onFavorite} />
         ) : (
-          <GuideGrid guide={shown} from={from} to={to} now={now} locale={locale} onSelect={setSelected} t={t} />
+          <GuideGrid guide={shown} from={from} to={to} now={now} locale={locale} onSelect={setSelected} onFavorite={onFavorite} t={t} />
         )
       ) : null}
       {selected ? <ProgramPanel program={selected} channel={shown?.channels.find((channel) => channel.id === selected.channelId) ?? null} now={now} onClose={() => setSelected(null)} /> : null}
@@ -138,7 +197,16 @@ function GuideSkeleton() {
   );
 }
 
-function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: number; locale: Locale; t: Copy; onSelect: (program: ChannelProgram) => void }) {
+function GuideGrid(props: {
+  guide: LiveGuide;
+  from: number;
+  to: number;
+  now: number;
+  locale: Locale;
+  t: Copy;
+  onSelect: (program: ChannelProgram) => void;
+  onFavorite: (channelId: string, favorite: boolean) => void;
+}) {
   const { guide, from, to, now, locale, t } = props;
   const navigate = useNavigate();
   const scroller = useRef<HTMLDivElement>(null);
@@ -178,11 +246,14 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
         <div className="guide-body">
         {guide.channels.map((channel) => (
           <div className="guide-row" key={channel.id}>
-            <Link className="guide-channel" to={`/live/${channel.id}`} title={`${t.liveWatch}: ${channel.name}`}>
-              <ChannelLogo channel={channel} />
-              <span className="guide-channel-number">{channel.number}</span>
-              <span className="guide-channel-name">{channel.name}</span>
-            </Link>
+            <div className="guide-channel">
+              <Link className="guide-channel-link" to={`/live/${channel.id}`} title={`${t.liveWatch}: ${channel.name}`}>
+                <ChannelLogo channel={channel} />
+                <span className="guide-channel-number">{channel.number}</span>
+                <span className="guide-channel-name">{channel.name}</span>
+              </Link>
+              <FavoriteButton channel={channel} t={t} onChange={(favorite) => props.onFavorite(channel.id, favorite)} />
+            </div>
             <div className="guide-track">
               {(programs.get(channel.id) ?? []).map((program) => {
                 const left = ((Math.max(program.start, from) - from) / MINUTE) * PPM;
@@ -217,17 +288,63 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
   );
 }
 
-function NowNextList(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale }) {
+function currentAndNext(list: ChannelProgram[], now: number) {
+  const current = list.find((program) => program.start <= now && now < program.end) ?? null;
+  const next = list.find((program) => program.start >= (current?.end ?? now)) ?? null;
+  return { current, next };
+}
+
+/** Cards of what airs right now, one per channel. */
+function WhatsOn(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale }) {
+  const { guide, now, t, locale } = props;
+  const programs = useMemo(() => byChannel(guide.programs), [guide.programs]);
+  return (
+    <ul className="whats-on">
+      {guide.channels.map((channel) => {
+        const { current, next } = currentAndNext(programs.get(channel.id) ?? [], now);
+        if (!current) return null;
+        const image = imageUrl(current.image, "w780");
+        const left = Math.max(0, Math.round((current.end - now) / MINUTE));
+        return (
+          <li key={channel.id}>
+            <Link className="whats-on-card" to={`/live/${channel.id}`}>
+              <span className="whats-on-image">
+                {image ? <img src={image} alt="" loading="lazy" decoding="async" /> : <span className="whats-on-blank" />}
+                <ChannelLogo channel={channel} />
+                <span className="whats-on-progress"><span style={{ width: `${programProgress(current, now) * 100}%` }} /></span>
+              </span>
+              <span className="whats-on-text">
+                <small className="muted">
+                  <span className="guide-channel-number">{channel.number}</span> {channel.name}
+                </small>
+                <strong>{current.title}</strong>
+                {current.subtitle ? <small className="muted">{current.subtitle}</small> : null}
+                <small className="whats-on-time">
+                  {clockTime(current.start, locale)}–{clockTime(current.end, locale)} · {t.liveMinutesLeft.replace("{min}", String(left))}
+                </small>
+                {next ? (
+                  <small className="muted">
+                    {t.liveNext} {clockTime(next.start, locale)} · {next.title}
+                  </small>
+                ) : null}
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function NowNextList(props: { guide: LiveGuide; now: number; t: Copy; locale: Locale; onFavorite: (channelId: string, favorite: boolean) => void }) {
   const { guide, now, t, locale } = props;
   const programs = useMemo(() => byChannel(guide.programs), [guide.programs]);
   return (
     <ul className="guide-list">
       {guide.channels.map((channel) => {
-        const list = programs.get(channel.id) ?? [];
-        const current = list.find((program) => program.start <= now && now < program.end) ?? null;
-        const next = list.find((program) => program.start >= (current?.end ?? now)) ?? null;
+        const { current, next } = currentAndNext(programs.get(channel.id) ?? [], now);
         return (
-          <li key={channel.id}>
+          <li key={channel.id} className="guide-list-row">
             <Link className="guide-list-item" to={`/live/${channel.id}`}>
               <ChannelLogo channel={channel} />
               <span className="guide-list-text">
@@ -249,6 +366,7 @@ function NowNextList(props: { guide: LiveGuide; now: number; t: Copy; locale: Lo
                 ) : null}
               </span>
             </Link>
+            <FavoriteButton channel={channel} t={t} onChange={(favorite) => props.onFavorite(channel.id, favorite)} />
           </li>
         );
       })}

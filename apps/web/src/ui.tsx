@@ -143,6 +143,9 @@ const ICONS = {
   muted: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3zM16 9.5l5 5M21 9.5l-5 5" />,
   fullscreen: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
   up: <path d="m6 15 6-6 6 6" />,
+  star: <path d="m12 3.8 2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.7l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" />,
+  /* Rows of a program guide. */
+  guide: <path d="M4 6h3M10 6h10M4 12h3M10 12h6M4 18h3M10 18h8" />,
   down: <path d="m6 9 6 6 6-6" />,
   rewind: <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4.5v4h4" />,
   forward: <path d="M20 12a8 8 0 1 1-2.4-5.7M20 4.5v4h-4" />,

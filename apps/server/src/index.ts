@@ -7,7 +7,7 @@ import { detectTools } from "./process.js";
 import { gigabytes } from "./playback/cache.js";
 import { pruneTranscodes, setTranscodeCacheLimit, stopOrphanEncoders } from "./playback/transcode.js";
 import { onScanFinished, restartWatches, startScan } from "./scan.js";
-import { repairMissing, topUpChannels } from "./livetv/channels.js";
+import { repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
 import { getSetting, isLocalHost, seedProfile, transcodeCacheGb } from "./settings.js";
 
 // Windows often tries IPv6 first; TMDB connects hang until undici's default 10s timeout.
@@ -39,6 +39,7 @@ await app.listen({ host, port });
 // Live TV keeps 72h of program ahead; the job also replaces programs whose files went away.
 const runLiveTvJob = () => {
   try {
+    syncAutoChannels();
     topUpChannels();
   } catch (error) {
     app.log.error(error);
@@ -46,6 +47,14 @@ const runLiveTvJob = () => {
 };
 runLiveTvJob();
 setInterval(runLiveTvJob, 60 * 60 * 1000).unref();
-onScanFinished(() => repairMissing());
+onScanFinished(() => {
+  try {
+    repairMissing();
+    // New genres or a series that grew past the threshold get their channels.
+    syncAutoChannels();
+  } catch (error) {
+    app.log.error(error);
+  }
+});
 await restartWatches();
 for (const library of db.select().from(libraries).all()) startScan(library.id);

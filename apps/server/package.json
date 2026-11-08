@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/security.test.ts src/parse/names.test.ts src/metadata/trailer.test.ts src/metadata/clips.test.ts src/metadata/tmdb-search.test.ts src/playback/plan.test.ts src/playback/srt.test.ts src/playback/transcode.test.ts src/playback/cache.test.ts src/db/migrate.test.ts src/metadata/ratings.test.ts src/livetv/schedule.test.ts",
+    "test": "tsx --test src/security.test.ts src/parse/names.test.ts src/metadata/trailer.test.ts src/metadata/clips.test.ts src/metadata/tmdb-search.test.ts src/playback/plan.test.ts src/playback/srt.test.ts src/playback/transcode.test.ts src/playback/cache.test.ts src/db/migrate.test.ts src/metadata/ratings.test.ts src/livetv/schedule.test.ts src/livetv/organize.test.ts",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
