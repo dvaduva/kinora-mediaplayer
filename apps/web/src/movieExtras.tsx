@@ -9,6 +9,7 @@ import type {
   MovieReview,
   MovieReviews,
   OwnReview,
+  TmdbCandidate,
 } from "@kinora/shared";
 import { api } from "./api";
 import { useLocale } from "./i18n";
@@ -426,7 +427,18 @@ export function ReviewDialog(props: { movie: MovieDetail; own: OwnReview | null;
 
 // ---------- Plex-style edit dialog ----------
 
-type EditTab = "general" | "tags" | "poster" | "background" | "info";
+type EditTab = "general" | "tags" | "poster" | "background" | "info" | "match";
+
+function matchQuery(movie: MovieDetail) {
+  return movie.year ? `${movie.title} ${movie.year}` : movie.title;
+}
+
+function tmdbError(reason: unknown, t: { tmdbMissing: string; tmdbUnreachable: string }) {
+  const code = reason instanceof Error ? reason.message : "error";
+  if (code === "tmdb_not_configured") return t.tmdbMissing;
+  if (code === "tmdb_unreachable" || code === "tmdb_failed") return t.tmdbUnreachable;
+  return code;
+}
 
 interface Draft {
   title: string;
@@ -592,14 +604,21 @@ function ArtworkPicker(props: { kind: "poster" | "backdrop"; options: ArtworkOpt
 
 export function EditMovieDialog(props: { movie: MovieDetail; onClose: () => void; onSaved: (movie: MovieDetail) => void }) {
   const { t } = useLocale();
-  const { movie } = props;
+  const [movie, setMovie] = useState(props.movie);
   const [tab, setTab] = useState<EditTab>("general");
-  const [draft, setDraft] = useState<Draft>(() => draftOf(movie));
-  const [locked, setLocked] = useState<Set<MovieEditField>>(() => new Set(movie.locked));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(props.movie));
+  const [locked, setLocked] = useState<Set<MovieEditField>>(() => new Set(props.movie.locked));
   const [artwork, setArtwork] = useState<MovieArtwork | null>(null);
   const [artworkFailed, setArtworkFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState(() => matchQuery(props.movie));
+  const [candidates, setCandidates] = useState<TmdbCandidate[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [choosing, setChoosing] = useState<number | null>(null);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const [matchNote, setMatchNote] = useState<string | null>(null);
 
   useEffect(() => {
     if ((tab !== "poster" && tab !== "background") || artwork || artworkFailed) return;
@@ -618,6 +637,59 @@ export function EditMovieDialog(props: { movie: MovieDetail; onClose: () => void
       else next.add(field);
       return next;
     });
+
+  const applyMatched = (updated: MovieDetail) => {
+    setMovie(updated);
+    setDraft(draftOf(updated));
+    setLocked(new Set(updated.locked));
+    setArtwork(null);
+    setArtworkFailed(false);
+    setCandidates([]);
+    setSearched(false);
+    setQuery(matchQuery(updated));
+    setMatchNote(t.matchApplied);
+    props.onSaved(updated);
+  };
+
+  const lookup = async () => {
+    setMatchError(null);
+    setMatchNote(null);
+    setSearching(true);
+    setSearched(false);
+    try {
+      const year = draft.year.trim() ? Number(draft.year) : movie.year;
+      const result = await api<{ results: TmdbCandidate[] }>("/api/tmdb/search", {
+        method: "POST",
+        body: JSON.stringify({ kind: "movie", query, year }),
+      });
+      setCandidates(result.results);
+      setSearched(true);
+    } catch (reason) {
+      setMatchError(tmdbError(reason, t));
+      setCandidates([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const choose = async (tmdbId: number) => {
+    if (choosing != null) return;
+    setMatchError(null);
+    setMatchNote(null);
+    setChoosing(tmdbId);
+    try {
+      const updated = await api<MovieDetail>(`/api/movies/${movie.id}/match`, {
+        method: "POST",
+        body: JSON.stringify({ tmdbId }),
+      });
+      applyMatched(updated);
+      setTab("general");
+    } catch (reason) {
+      setMatchError(tmdbError(reason, t));
+    } finally {
+      setChoosing(null);
+    }
+  };
 
   const save = async () => {
     const payload = editPayload(movie, draft, locked);
@@ -638,6 +710,7 @@ export function EditMovieDialog(props: { movie: MovieDetail; onClose: () => void
     }
   };
 
+  const busy = searching || choosing != null;
   const row = { locked, onLock: toggleLock };
   const tabs: { id: EditTab; label: string; icon: string }[] = [
     { id: "general", label: t.tabGeneral, icon: "M4 6h16M4 12h16M4 18h10" },
@@ -645,6 +718,7 @@ export function EditMovieDialog(props: { movie: MovieDetail; onClose: () => void
     { id: "poster", label: t.tabPoster, icon: "M5 3h14v18H5z M5 16l4-4 3 3 3-3 4 4" },
     { id: "background", label: t.tabBackground, icon: "M3 5h18v14H3z M3 15l5-5 4 4 3-3 6 6" },
     { id: "info", label: t.tabInfo, icon: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z M12 11v6 M12 7.5h.01" },
+    { id: "match", label: t.tabMatch, icon: "M11 5a6 6 0 1 1 0 12 6 6 0 0 1 0-12z M16.5 16.5L21 21" },
   ];
 
   return (
@@ -714,13 +788,56 @@ export function EditMovieDialog(props: { movie: MovieDetail; onClose: () => void
               <p className="muted small-print">{t.lockHelp}</p>
             </>
           ) : null}
+          {tab === "match" ? (
+            <div className="edit-match">
+              <p className="muted">{t.matchHint}</p>
+              <div className="inline-form">
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  aria-label={t.lookup}
+                  placeholder={t.matchPlaceholder}
+                  disabled={busy}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void lookup();
+                    }
+                  }}
+                />
+                <button className="text-button" type="button" onClick={() => void lookup()} disabled={busy || !query.trim()}>
+                  {searching ? t.matching : t.lookup}
+                </button>
+              </div>
+              {matchError ? <p className="danger">{t.matchFailed}: {matchError}</p> : null}
+              {matchNote ? <p className="ok">{matchNote}</p> : null}
+              {!matchError && !searching && searched && candidates.length === 0 ? <p className="muted">{t.matchEmpty}</p> : null}
+              <div className="candidates">
+                {candidates.map((candidate) => (
+                  <button
+                    className="candidate"
+                    type="button"
+                    key={candidate.tmdbId}
+                    disabled={busy}
+                    onClick={() => void choose(candidate.tmdbId)}
+                  >
+                    {candidate.posterPath ? <img src={imageUrl(candidate.posterPath, "w185") ?? ""} alt="" loading="lazy" /> : <span />}
+                    <span>{candidate.title} {candidate.year ? `(${candidate.year})` : ""}</span>
+                    <span>{choosing === candidate.tmdbId ? t.matching : t.choose}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
       <footer className="edit-footer">
         {error ? <span className="danger">{t.editFailed}: {error}</span> : null}
         <span className="spacer" />
         <button className="secondary-button" type="button" onClick={props.onClose}>{t.cancel}</button>
-        <button className="play" type="button" disabled={saving || !draft.title.trim()} onClick={() => void save()}>{saving ? t.saving : t.saveChanges}</button>
+        {tab === "match" ? null : (
+          <button className="play" type="button" disabled={saving || !draft.title.trim()} onClick={() => void save()}>{saving ? t.saving : t.saveChanges}</button>
+        )}
       </footer>
     </Dialog>
   );

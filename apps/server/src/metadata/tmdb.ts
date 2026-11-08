@@ -58,6 +58,36 @@ export function parseSearchInput(query: string, year: number | null) {
   return { title: title || trimmed, year: resolvedYear };
 }
 
+/**
+ * A pasted TMDB page (`…/movie/81527-aurora`) or a bare numeric id.
+ * Wrong-kind URLs (tv link while matching a movie) return null so the caller can stop.
+ */
+export function parseTmdbRef(query: string, kind: "movie" | "tv"): number | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const movie = trimmed.match(/(?:themoviedb\.org|tmdb\.org)\/movie\/(\d+)/i);
+  if (movie) return kind === "movie" ? Number(movie[1]) : null;
+  const show = trimmed.match(/(?:themoviedb\.org|tmdb\.org)\/tv\/(\d+)/i);
+  if (show) return kind === "tv" ? Number(show[1]) : null;
+  if (/^\d{1,10}$/.test(trimmed)) return Number(trimmed);
+  return null;
+}
+
+function isTmdbUrl(query: string) {
+  return /(?:themoviedb\.org|tmdb\.org)\/(?:movie|tv)\/\d+/i.test(query.trim());
+}
+
+async function candidateById(kind: "movie" | "tv", tmdbId: number): Promise<TmdbCandidate[]> {
+  try {
+    const body = await tmdbGet(`/${kind}/${tmdbId}?language=ro-RO`);
+    const candidate = candidateFrom(body);
+    return candidate ? [candidate] : [];
+  } catch (error) {
+    if (error instanceof Error && error.message === "tmdb_404") return [];
+    throw error;
+  }
+}
+
 /** @deprecated kept for tests — prefer parseSearchInput */
 export function withYearQuery(query: string, year: number | null) {
   const { title, year: resolved } = parseSearchInput(query, year);
@@ -281,6 +311,9 @@ async function movieCandidateSearch(title: string, year: number | null, mode: "p
 }
 
 export async function searchMovieCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
+  const direct = parseTmdbRef(query, "movie");
+  if (direct != null) return candidateById("movie", direct);
+  if (isTmdbUrl(query)) return [];
   const parsed = parseSearchInput(query, year);
   if (parsed.year != null) {
     const primary = await movieCandidateSearch(parsed.title, parsed.year, "primary");
@@ -293,6 +326,9 @@ export async function searchMovieCandidates(query: string, year: number | null):
 }
 
 export async function searchSeriesCandidates(query: string, year: number | null): Promise<TmdbCandidate[]> {
+  const direct = parseTmdbRef(query, "tv");
+  if (direct != null) return candidateById("tv", direct);
+  if (isTmdbUrl(query)) return [];
   const parsed = parseSearchInput(query, year);
   const params = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
   if (parsed.year != null) params.set("first_air_date_year", String(parsed.year));

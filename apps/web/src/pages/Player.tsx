@@ -8,8 +8,10 @@ import { embeddedTextTrack, useEmbeddedSubtitles } from "../embeddedSubtitles";
 import { useLocale } from "../i18n";
 import { codecLabel, formatClock, subtitleLabel } from "../media";
 import { cueStyleSheet, formatDelay, setSubtitleDelay, shiftCues } from "../subtitleTiming";
+import { Icon } from "../ui";
 
 const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
+type SubPanel = "subs" | "delay" | null;
 
 export function PlayerPage() {
   const { fileId } = useParams();
@@ -26,10 +28,12 @@ export function PlayerPage() {
   });
   const [captions, setCaptions] = useState(false);
   const [delay, setDelay] = useState(0);
+  const [panel, setPanel] = useState<SubPanel>(null);
   const delayRef = useRef(0);
   delayRef.current = delay;
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
+  const toolsRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useCallback((element: HTMLVideoElement | null) => {
     mediaRef.current = element;
     setVideo(element);
@@ -235,6 +239,30 @@ export function PlayerPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [hasCaption, changeDelay]);
 
+  useEffect(() => {
+    if (!panel) return;
+    const onPointer = (event: PointerEvent) => {
+      if (toolsRef.current && !toolsRef.current.contains(event.target as Node)) setPanel(null);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPanel(null);
+    };
+    window.addEventListener("pointerdown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [panel]);
+
+  useEffect(() => {
+    setPanel(null);
+  }, [fileId]);
+
+  useEffect(() => {
+    if (!hasCaption && panel === "delay") setPanel(null);
+  }, [hasCaption, panel]);
+
   if (error) return <p className="danger">{error}</p>;
   if (!view) {
     return (
@@ -253,17 +281,22 @@ export function PlayerPage() {
   const waited = startProgress(play.status, play.from, startAt);
   const percent = waited == null ? "" : `${Math.round(waited * 100)}%`;
   const convertedClock = play.status && play.status.seconds > 0 ? formatClock(play.status.seconds) : null;
+  const selectedLabel = caption ? subtitleLabel(caption, locale) : t.off;
+  const togglePanel = (next: Exclude<SubPanel, null>) => setPanel((current) => (current === next ? null : next));
+
   return (
     <article className="player-stage">
       <style>{cueStyleSheet("video.player-video", view.subtitleStyle)}</style>
       <p className="crumb"><Link to="/">{t.home}</Link></p>
-      <h1>{view.title}</h1>
-      {view.subtitle ? <p className="muted">{view.subtitle}</p> : null}
+      <header className="player-heading">
+        <h1>{view.title}</h1>
+        {view.subtitle ? <p className="muted">{view.subtitle}</p> : null}
+      </header>
       {view.plan.available ? (
         view.kind === "track" ? (
           <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={`/api/stream/${view.fileId}`} controls autoPlay />
         ) : (
-          <>
+          <div className="player-frame">
             {preparing && !play.started && play.status?.state !== "error" ? (
               <div className="prepare">
                 <p>{t.preparing.replace("{progress}", percent).trim()}</p>
@@ -292,56 +325,102 @@ export function PlayerPage() {
                 ) : null}
               </video>
             ) : null}
-          </>
+            <div className="player-tools" ref={toolsRef}>
+              {panel === "subs" ? (
+                <div className="player-pop" role="dialog" aria-label={t.subtitles}>
+                  <p className="player-pop-title">{t.subtitles}</p>
+                  <div className="player-pop-list" role="listbox" aria-label={t.subtitles}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={!selected}
+                      className={!selected ? "is-active" : undefined}
+                      onClick={() => {
+                        subtitleDirty.current = true;
+                        setSelected(null);
+                        setPanel(null);
+                      }}
+                    >
+                      {t.off}
+                    </button>
+                    {view.subtitles.map((track) => (
+                      <button
+                        key={track.id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected === track.id}
+                        className={selected === track.id ? "is-active" : undefined}
+                        disabled={!track.available}
+                        onClick={() => {
+                          subtitleDirty.current = true;
+                          setSelected(track.id);
+                          setPanel(null);
+                        }}
+                      >
+                        {subtitleLabel(track, locale)}
+                      </button>
+                    ))}
+                  </div>
+                  {embeddedState === "loading" ? <p className="muted">{t.loadingSubtitles}</p> : null}
+                  {embeddedState === "error" ? <p className="danger">{t.subtitlesFailed}</p> : null}
+                  {selected ? <p className="muted player-pop-current">{selectedLabel}</p> : null}
+                </div>
+              ) : null}
+              {panel === "delay" && hasCaption ? (
+                <div className="player-pop" role="dialog" aria-label={t.subtitleDelay}>
+                  <p className="player-pop-title">{t.subtitleDelay}</p>
+                  <div className="sub-delay-controls">
+                    {DELAY_STEPS.slice(0, 2).map((step) => (
+                      <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                        {formatDelay(step, locale)}
+                      </button>
+                    ))}
+                    <output aria-live="polite">{formatDelay(delay, locale)}</output>
+                    {DELAY_STEPS.slice(2).map((step) => (
+                      <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                        {formatDelay(step, locale)}
+                      </button>
+                    ))}
+                    <button className="text-button small" type="button" onClick={() => changeDelay(null)} disabled={delay === 0}>
+                      {t.reset}
+                    </button>
+                  </div>
+                  <p className="muted">{t.subtitleDelayHelp}</p>
+                </div>
+              ) : null}
+              <div className="player-tool-buttons">
+                <button
+                  type="button"
+                  className="player-tool"
+                  aria-label={t.subtitles}
+                  title={t.subtitles}
+                  aria-expanded={panel === "subs"}
+                  aria-pressed={Boolean(selected)}
+                  onClick={() => togglePanel("subs")}
+                >
+                  <Icon name="captions" />
+                </button>
+                {hasCaption ? (
+                  <button
+                    type="button"
+                    className="player-tool delay"
+                    aria-label={t.subtitleDelay}
+                    title={t.subtitleDelay}
+                    aria-expanded={panel === "delay"}
+                    onClick={() => togglePanel("delay")}
+                  >
+                    {formatDelay(delay, locale)}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
         )
       ) : (
         <div className="unsupported">
           <p>{reason}</p>
         </div>
       )}
-      {view.kind !== "track" ? (
-        <label className="sub-select">
-          {t.subtitles}
-          <select
-            value={selected ?? "off"}
-            onChange={(event) => {
-              subtitleDirty.current = true;
-              setSelected(event.target.value === "off" ? null : event.target.value);
-            }}
-          >
-            <option value="off">{t.off}</option>
-            {view.subtitles.map((track) => (
-              <option key={track.id} value={track.id} disabled={!track.available}>
-                {subtitleLabel(track, locale)}
-              </option>
-            ))}
-          </select>
-          {embeddedState === "loading" ? <span className="muted">{t.loadingSubtitles}</span> : null}
-          {embeddedState === "error" ? <span className="danger">{t.subtitlesFailed}</span> : null}
-        </label>
-      ) : null}
-      {view.kind !== "track" && hasCaption ? (
-        <div className="sub-delay" role="group" aria-label={t.subtitleDelay}>
-          <span>{t.subtitleDelay}</span>
-          <div className="sub-delay-controls">
-            {DELAY_STEPS.slice(0, 2).map((step) => (
-              <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
-                {formatDelay(step, locale)}
-              </button>
-            ))}
-            <output aria-live="polite">{formatDelay(delay, locale)}</output>
-            {DELAY_STEPS.slice(2).map((step) => (
-              <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
-                {formatDelay(step, locale)}
-              </button>
-            ))}
-            <button className="text-button small" type="button" onClick={() => changeDelay(null)} disabled={delay === 0}>
-              {t.reset}
-            </button>
-          </div>
-          <span className="muted">{t.subtitleDelayHelp}</span>
-        </div>
-      ) : null}
     </article>
   );
 }

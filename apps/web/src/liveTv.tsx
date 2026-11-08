@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CATEGORY_MOVIES, CATEGORY_MUSIC, CATEGORY_SERIES, channelColor, channelInitials, type ChannelProgram, type LiveChannel } from "@kinora/shared";
 import { api } from "./api";
 import type { Copy, Locale } from "./i18n";
-import { Icon } from "./ui";
+import { Icon, ScrollRail } from "./ui";
 
 /** An uploaded logo, or the channel's initials on a color derived from its name. */
 export function ChannelLogo(props: { channel: Pick<LiveChannel, "name" | "logoUrl">; className?: string }) {
@@ -158,13 +158,15 @@ export function CategoryBar(props: { channels: Pick<LiveChannel, "category">[]; 
     ...categories.map((value) => ({ filter: { kind: "category", value } as ChannelFilter, label: categoryLabel(value, t) })),
   ];
   return (
-    <div className="live-categories" role="group" aria-label={t.liveCategories}>
-      {tabs.map((tab) => (
-        <button key={tab.filter.kind === "category" ? `c:${tab.filter.value}` : tab.filter.kind} type="button" className={is(tab.filter) ? "active" : undefined} aria-pressed={is(tab.filter)} onClick={() => props.onChange(tab.filter)}>
-          {tab.filter.kind === "favorites" ? <Icon name="star" /> : null}
-          {tab.label}
-        </button>
-      ))}
+    <div className="live-category-rail" role="group" aria-label={t.liveCategories}>
+      <ScrollRail className="live-categories">
+        {tabs.map((tab) => (
+          <button key={tab.filter.kind === "category" ? `c:${tab.filter.value}` : tab.filter.kind} type="button" className={is(tab.filter) ? "active" : undefined} aria-pressed={is(tab.filter)} onClick={() => props.onChange(tab.filter)}>
+            {tab.filter.kind === "favorites" ? <Icon name="star" /> : null}
+            {tab.label}
+          </button>
+        ))}
+      </ScrollRail>
     </div>
   );
 }

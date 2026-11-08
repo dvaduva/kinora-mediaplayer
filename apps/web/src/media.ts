@@ -79,7 +79,7 @@ export function subtitleLabel(track: SubtitleTrack, locale: "ro" | "en") {
     language,
     track.hearingImpaired ? "SDH" : null,
     track.forced ? (locale === "ro" ? "forțată" : "forced") : null,
-    track.origin === "embedded" ? (locale === "ro" ? "în fișier" : "embedded") : locale === "ro" ? "lângă film" : "external",
+    track.origin === "embedded" ? (locale === "ro" ? "în fișier" : "embedded") : locale === "ro" ? "externă" : "external",
   ];
   const reason = !track.available ? (track.unavailableReason === "bitmap" ? (locale === "ro" ? "imagine, după transcodare" : "image, after transcode") : locale === "ro" ? "necesită ffmpeg" : "needs ffmpeg") : null;
   return [...notes, reason].filter(Boolean).join(", ");
