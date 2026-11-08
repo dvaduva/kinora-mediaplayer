@@ -1572,3 +1572,40 @@ a.rating-chip:hover strong { color: var(--brass); }
 .auto-channels { display: grid; gap: 12px; }
 .auto-channels-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .auto-channels-row input[type="number"] { width: 90px; }
+
+/* Live TV — IPTV sources ------------------------------------------------------ */
+.iptv-sources { display: grid; gap: 14px; }
+.iptv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.iptv-head h3 { margin: 0 0 4px; }
+.iptv-head .field-help { margin: 0; }
+.iptv-source { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.iptv-source-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.iptv-source-head h4 { margin: 0 0 2px; }
+.iptv-source p.danger { margin: 0; font-size: 15px; }
+.iptv-form { display: grid; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); }
+.iptv-form h4 { margin: 0; }
+.iptv-form .field-help { margin: -4px 0 0; }
+.iptv-match { display: grid; gap: 10px; }
+.iptv-match .field-help { margin: 0; }
+.iptv-match-empty { margin: 0; }
+.iptv-match-tools { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.iptv-match-tools input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.iptv-match-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.iptv-match-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.iptv-match-name { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.iptv-match-row input {
+  flex: 1 1 200px;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 6px 0;
+  font: inherit;
+  color: inherit;
+}
+.iptv-match-row input:focus { outline: none; border-bottom-color: var(--brass); }
+.iptv-public { display: grid; gap: 8px; }
+.iptv-public .field-help { margin: 0; }
+.iptv-public-buttons { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.iptv-public-added { color: var(--faint); font-size: 14px; }

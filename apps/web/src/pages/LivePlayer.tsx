@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import Hls from "hls.js";
-import type { LiveChannel, LivePlayback, TranscodeStatus } from "@kinora/shared";
+import type { ChannelNow, ChannelProgram, LiveChannel, LivePlayback, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
 import { api } from "../api";
 import { useAudio } from "../audio";
@@ -16,15 +16,25 @@ const LIVE_SLACK = 15;
 const SEEK_STEP = 10;
 const BANNER_MS = 5000;
 const CHROME_MS = 3000;
+/** An IPTV stream sits this far behind the newest segment, as hls.js keeps three segments of margin. */
+const EDGE_MARGIN = 12;
 
-function programSeconds(session: LivePlayback) {
-  return (session.program.end - session.program.start) / 1000;
+function programSeconds(program: ChannelProgram | null) {
+  return program ? (program.end - program.start) / 1000 : 0;
 }
 
 /** Seconds into the program that are airing right now. */
-function liveSeconds(session: LivePlayback) {
-  return Math.min(programSeconds(session), Math.max(0, (serverNow() - session.program.start) / 1000));
+function liveSeconds(program: ChannelProgram | null) {
+  return program ? Math.min(programSeconds(program), Math.max(0, (serverNow() - program.start) / 1000)) : 0;
 }
+
+/** Start and end of what an IPTV stream still holds (its rolling window), in media time. */
+function seekableRange(media: HTMLVideoElement) {
+  if (media.seekable.length === 0) return null;
+  return { start: media.seekable.start(0), end: media.seekable.end(media.seekable.length - 1) };
+}
+
+type GuideInfo = { program: ChannelProgram | null; next: ChannelProgram | null };
 
 export function LivePlayerPage() {
   const { channelId } = useParams();
@@ -32,20 +42,27 @@ export function LivePlayerPage() {
   const { t, locale } = useLocale();
   const [channels, setChannels] = useState<LiveChannel[] | null>(null);
   const [session, setSession] = useState<LivePlayback | null>(null);
+  /** What airs now; for IPTV it is refreshed as programs change, while the stream keeps running. */
+  const [info, setInfo] = useState<GuideInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const [position, setPosition] = useState(0);
+  /** IPTV: seconds behind the newest picture the relay has. */
+  const [behindEdge, setBehindEdge] = useState(0);
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
   const [chrome, setChrome] = useState(true);
   const [banner, setBanner] = useState(true);
   const stage = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const tuning = useRef(0);
   /** Fatal stream errors on this channel; the first few re-tune instead of giving up. */
   const retries = useRef(0);
   const copy = useRef(t);
   copy.current = t;
+  const infoRef = useRef(info);
+  infoRef.current = info;
   const [miniGuide, setMiniGuide] = useState(false);
   const miniGuideOpen = useRef(false);
   miniGuideOpen.current = miniGuide;
@@ -90,7 +107,9 @@ export function LivePlayerPage() {
         if (token !== tuning.current) return;
         syncClock(data.now, sentAt);
         setSession(data);
+        setInfo({ program: data.program, next: data.next });
         setPosition(data.offset);
+        setBehindEdge(0);
       })
       .catch((reason: Error) => {
         if (token !== tuning.current) return;
@@ -106,7 +125,8 @@ export function LivePlayerPage() {
     flashBanner();
   }, [channelId, tune, flashBanner]);
 
-  // Starts the stream of a session: a direct file seeks to the live point, HLS waits for its conversion first.
+  // Starts the stream of a session: a direct file seeks to the live point, HLS waits for its conversion
+  // (or, for IPTV, for the relay's first segments) first.
   useEffect(() => {
     const media = video.current;
     if (!session || !media) return;
@@ -115,8 +135,9 @@ export function LivePlayerPage() {
     let timer = 0;
     let corrections = 0;
     let target = 0;
+    const program = session.program;
     const onMeta = () => {
-      media.currentTime = target;
+      if (session.mode !== "live") media.currentTime = target;
       void media.play().catch(() => undefined);
     };
     // hls.js may jump to the live edge of the growing playlist; bring it back to the start point a few times.
@@ -128,8 +149,38 @@ export function LivePlayerPage() {
     const onPlaying = () => {
       corrections = 3;
     };
+    const onFatal = () => {
+      // The conversion or relay may have been replaced (another viewer, a server restart): ask again.
+      if (retries.current < 3 && channelId) {
+        retries.current += 1;
+        tune(channelId);
+      } else setError(copy.current.playbackFailed);
+    };
+    const attachHls = (config: Partial<Hls["config"]>) => {
+      hls = new Hls({ enableWorker: false, lowLatencyMode: false, maxLiveSyncPlaybackRate: 1, ...config });
+      hlsRef.current = hls;
+      hls.loadSource(session.src);
+      hls.attachMedia(media);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => void media.play().catch(() => undefined));
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal && !cancelled) onFatal();
+      });
+    };
+    /** IPTV: plays at the live edge of the relay's rolling window. */
+    const beginLive = () => {
+      if (cancelled) return;
+      if (Hls.isSupported()) attachHls({ backBufferLength: 300, liveSyncDurationCount: 3 });
+      else if (media.canPlayType("application/vnd.apple.mpegurl")) {
+        media.addEventListener("loadedmetadata", onMeta, { once: true });
+        media.src = session.src;
+      } else {
+        setError(copy.current.playbackFailed);
+        return;
+      }
+      setStarted(true);
+    };
     /** `at` is program time; a conversion that is still catching up starts a little behind live. */
-    const begin = (at = liveSeconds(session)) => {
+    const begin = (at = liveSeconds(program)) => {
       if (cancelled) return;
       target = Math.max(0, at - session.mediaStart);
       media.addEventListener("seeking", onSeeking);
@@ -142,25 +193,7 @@ export function LivePlayerPage() {
         media.addEventListener("loadedmetadata", onMeta, { once: true });
         media.src = session.src;
       } else {
-        hls = new Hls({
-          enableWorker: false,
-          startPosition: target,
-          lowLatencyMode: false,
-          maxLiveSyncPlaybackRate: 1,
-          backBufferLength: Number.POSITIVE_INFINITY,
-          liveSyncDurationCount: 1_000_000,
-        });
-        hls.loadSource(session.src);
-        hls.attachMedia(media);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => void media.play().catch(() => undefined));
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!data.fatal || cancelled) return;
-          // The conversion may have been replaced (another viewer, a server restart): ask again where live is.
-          if (retries.current < 3 && channelId) {
-            retries.current += 1;
-            tune(channelId);
-          } else setError(copy.current.playbackFailed);
-        });
+        attachHls({ startPosition: target, backBufferLength: Number.POSITIVE_INFINITY, liveSyncDurationCount: 1_000_000 });
       }
       setStarted(true);
     };
@@ -172,10 +205,16 @@ export function LivePlayerPage() {
           .then((status) => {
             if (cancelled) return;
             if (status.state === "error") {
-              setError(status.error || copy.current.transcodeFailed);
+              if (session.mode === "live") setError(status.error === "ffmpeg_missing" ? copy.current.errIptvFfmpeg : copy.current.errIptvStream);
+              else setError(status.error || copy.current.transcodeFailed);
               return;
             }
-            const live = liveSeconds(session);
+            if (session.mode === "live") {
+              if (status.playlist) beginLive();
+              else timer = window.setTimeout(poll, 500);
+              return;
+            }
+            const live = liveSeconds(program);
             if (transcodePlaybackReady(status, live)) begin(live);
             // Waiting for the encoder to pass a moving live point can take long; start with what is ready.
             else if (status.playlist && status.seconds >= session.mediaStart + 8) begin(Math.min(live, status.seconds - 4));
@@ -194,6 +233,7 @@ export function LivePlayerPage() {
       media.removeEventListener("seeking", onSeeking);
       media.removeEventListener("playing", onPlaying);
       hls?.destroy();
+      if (hlsRef.current === hls) hlsRef.current = null;
       media.pause();
       media.removeAttribute("src");
       media.load();
@@ -201,13 +241,60 @@ export function LivePlayerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  // Keeps the position, holds playback behind the live point, and moves on when the program ends.
+  // Keeps the position. Library programs: holds playback behind the live point and moves on when the
+  // program ends. IPTV: measures the distance to the live edge and refreshes the guide info.
   useEffect(() => {
     const media = video.current;
     if (!session || !media) return;
+    const onPlayState = () => setPaused(media.paused);
+    const onVolume = () => setMuted(media.muted);
+    media.addEventListener("play", onPlayState);
+    media.addEventListener("pause", onPlayState);
+    media.addEventListener("volumechange", onVolume);
+    const common = () => {
+      media.removeEventListener("play", onPlayState);
+      media.removeEventListener("pause", onPlayState);
+      media.removeEventListener("volumechange", onVolume);
+    };
+
+    if (session.mode === "live") {
+      const onTime = () => {
+        if (media.readyState === HTMLMediaElement.HAVE_NOTHING) return;
+        const range = seekableRange(media);
+        setBehindEdge(range ? Math.max(0, range.end - EDGE_MARGIN - media.currentTime) : 0);
+      };
+      let checkedAt = Date.now();
+      let asking = false;
+      const refresh = () => {
+        if (asking || !channelId) return;
+        asking = true;
+        checkedAt = Date.now();
+        api<ChannelNow>(`/api/livetv/channels/${channelId}/now`)
+          .then((now) => setInfo({ program: now.current, next: now.next }))
+          .catch(() => undefined)
+          .finally(() => {
+            asking = false;
+          });
+      };
+      // The banner follows the guide: a new program shows up as it starts, without touching the stream.
+      const timer = window.setInterval(() => {
+        const current = infoRef.current?.program ?? null;
+        if (current ? serverNow() >= current.end : Date.now() - checkedAt > 60_000) {
+          refresh();
+          flashBanner();
+        }
+      }, 2000);
+      media.addEventListener("timeupdate", onTime);
+      return () => {
+        common();
+        media.removeEventListener("timeupdate", onTime);
+        window.clearInterval(timer);
+      };
+    }
+
     let advanced = false;
     const advance = () => {
-      if (advanced || !channelId) return;
+      if (advanced || !channelId || !session.program) return;
       advanced = true;
       tune(channelId, session.program.end);
       flashBanner();
@@ -216,58 +303,73 @@ export function LivePlayerPage() {
       // Nothing loaded yet (still tuning): keep the offset the server reported.
       if (media.readyState === HTMLMediaElement.HAVE_NOTHING) return;
       const at = session.mediaStart + media.currentTime;
-      const live = liveSeconds(session);
+      const live = liveSeconds(session.program);
       if (at > live + 3 && !media.seeking) {
         media.currentTime = Math.max(0, live - session.mediaStart);
         return;
       }
       setPosition(at);
-      if (at >= programSeconds(session) - 0.25) advance();
+      if (at >= programSeconds(session.program) - 0.25) advance();
     };
-    const onPlayState = () => setPaused(media.paused);
-    const onVolume = () => setMuted(media.muted);
     media.addEventListener("timeupdate", onTime);
     media.addEventListener("ended", advance);
-    media.addEventListener("play", onPlayState);
-    media.addEventListener("pause", onPlayState);
-    media.addEventListener("volumechange", onVolume);
     // A program can also end while its stream is still being prepared.
     const timer = window.setInterval(() => {
-      if (media.readyState === HTMLMediaElement.HAVE_NOTHING && liveSeconds(session) >= programSeconds(session)) advance();
+      if (media.readyState === HTMLMediaElement.HAVE_NOTHING && liveSeconds(session.program) >= programSeconds(session.program)) advance();
     }, 2000);
     return () => {
+      common();
       media.removeEventListener("timeupdate", onTime);
       media.removeEventListener("ended", advance);
-      media.removeEventListener("play", onPlayState);
-      media.removeEventListener("pause", onPlayState);
-      media.removeEventListener("volumechange", onVolume);
       window.clearInterval(timer);
     };
   }, [session, channelId, tune, flashBanner]);
+
+  const isLive = session?.mode === "live";
+
+  /** IPTV: moves within the relay's window, never past the live point. */
+  const seekLive = useCallback((delta: number) => {
+    const media = video.current;
+    const range = media ? seekableRange(media) : null;
+    if (!media || !range) return;
+    media.currentTime = Math.max(range.start, Math.min(range.end - EDGE_MARGIN, media.currentTime + delta));
+  }, []);
 
   const seekTo = useCallback(
     (programTime: number) => {
       const media = video.current;
       if (!session || !media || !started) return;
-      const clamped = Math.max(session.mediaStart, Math.min(liveSeconds(session), programTime));
+      if (session.mode === "live") {
+        const shown = liveSeconds(infoRef.current?.program ?? null) - behindEdge;
+        seekLive(programTime - shown);
+        return;
+      }
+      const clamped = Math.max(session.mediaStart, Math.min(liveSeconds(session.program), programTime));
       media.currentTime = clamped - session.mediaStart;
     },
-    [session, started],
+    [session, started, behindEdge, seekLive],
   );
 
   /** Relative to where the video actually is, so quick repeated presses add up. */
   const seekBy = useCallback(
     (step: number) => {
       const media = video.current;
-      if (session && media) seekTo(session.mediaStart + media.currentTime + step);
+      if (!session || !media) return;
+      if (session.mode === "live") seekLive(step);
+      else seekTo(session.mediaStart + media.currentTime + step);
     },
-    [session, seekTo],
+    [session, seekTo, seekLive],
   );
 
   const goLive = useCallback(() => {
-    if (!session) return;
-    seekTo(liveSeconds(session));
-    void video.current?.play().catch(() => undefined);
+    const media = video.current;
+    if (!session || !media) return;
+    if (session.mode === "live") {
+      const range = seekableRange(media);
+      const edge = hlsRef.current?.liveSyncPosition ?? (range ? range.end - EDGE_MARGIN : null);
+      if (edge != null) media.currentTime = edge;
+    } else seekTo(liveSeconds(session.program));
+    void media.play().catch(() => undefined);
   }, [session, seekTo]);
 
   const togglePlay = useCallback(() => {
@@ -325,11 +427,14 @@ export function LivePlayerPage() {
   const onFavorite = (favorite: boolean) => {
     if (channel) setFavorites((current) => ({ ...current, [channel.id]: favorite }));
   };
-  const music = session?.program.itemType === "track";
+  const program = isLive ? (info?.program ?? null) : (session?.program ?? null);
+  const next = isLive ? (info?.next ?? null) : (session?.next ?? null);
+  const music = program?.itemType === "track";
   const analyser = useMediaAnalyser(video, music);
-  const duration = session ? programSeconds(session) : 0;
-  const live = session ? liveSeconds(session) : 0;
-  const behind = Math.max(0, live - position);
+  const duration = programSeconds(program);
+  const live = liveSeconds(program);
+  const behind = isLive ? behindEdge : Math.max(0, live - position);
+  const shownPosition = isLive ? Math.max(0, live - behindEdge) : position;
   const atLive = !started || behind < LIVE_SLACK;
 
   const onBarPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -350,7 +455,7 @@ export function LivePlayerPage() {
         onPointerDown={showChrome}
       >
         <video ref={video} className="live-video" playsInline autoPlay onClick={togglePlay} onDoubleClick={toggleFullscreen} />
-        {session && music && started ? <LiveMusicVisual analyser={analyser} cover={imageUrl(session.program.image)} /> : null}
+        {session && music && started && program ? <LiveMusicVisual analyser={analyser} cover={imageUrl(program.image)} /> : null}
         {!started && !error ? (
           <div className="live-tuning">
             {channel ? <ChannelLogo channel={channel} className="large" /> : null}
@@ -364,7 +469,9 @@ export function LivePlayerPage() {
             <Link className="secondary-button" to="/live">{t.liveGuide}</Link>
           </div>
         ) : null}
-        {session && (banner || chrome || paused) && !miniGuide ? <LiveBanner session={session} t={t} locale={locale} /> : null}
+        {session && (banner || chrome || paused) && !miniGuide ? (
+          <LiveBanner channel={session.channel} program={program} next={next} t={t} locale={locale} />
+        ) : null}
         {miniGuide ? (
           <MiniGuide
             currentId={channelId}
@@ -388,16 +495,16 @@ export function LivePlayerPage() {
             className="live-bar"
             role="slider"
             tabIndex={0}
-            aria-label={session?.program.title ?? t.liveTv}
+            aria-label={program?.title ?? channel?.name ?? t.liveTv}
             aria-valuemin={0}
             aria-valuemax={Math.round(duration)}
-            aria-valuenow={Math.round(position)}
-            aria-valuetext={`${formatClock(position) ?? "0:00"} / ${formatClock(duration) ?? "0:00"}`}
+            aria-valuenow={Math.round(shownPosition)}
+            aria-valuetext={`${formatClock(shownPosition) ?? "0:00"} / ${formatClock(duration) ?? "0:00"}`}
             onPointerDown={onBarPointer}
           >
             <span className="live-bar-aired" style={{ width: `${duration ? (live / duration) * 100 : 0}%` }} />
-            <span className="live-bar-played" style={{ width: `${duration ? (position / duration) * 100 : 0}%` }} />
-            <span className="live-bar-head" style={{ left: `${duration ? (position / duration) * 100 : 0}%` }} />
+            <span className="live-bar-played" style={{ width: `${duration ? (shownPosition / duration) * 100 : 0}%` }} />
+            <span className="live-bar-head" style={{ left: `${duration ? (shownPosition / duration) * 100 : 0}%` }} />
           </div>
           <div className="live-buttons">
             <button type="button" onClick={togglePlay} aria-label={paused ? t.play : t.livePause} title={paused ? t.play : t.livePause}>
@@ -409,9 +516,11 @@ export function LivePlayerPage() {
             <button type="button" onClick={() => seekBy(SEEK_STEP)} aria-label={t.liveForward} title={t.liveForward} disabled={atLive}>
               <Icon name="forward" />
             </button>
-            <span className="live-clock">
-              {formatClock(position) ?? "0:00"} / {formatClock(duration) ?? "0:00"}
-            </span>
+            {program ? (
+              <span className="live-clock">
+                {formatClock(shownPosition) ?? "0:00"} / {formatClock(duration) ?? "0:00"}
+              </span>
+            ) : null}
             {atLive ? (
               <span className="live-badge">{t.liveBadge}</span>
             ) : (
@@ -444,11 +553,16 @@ export function LivePlayerPage() {
   );
 }
 
-function LiveBanner(props: { session: LivePlayback; t: ReturnType<typeof useLocale>["t"]; locale: ReturnType<typeof useLocale>["locale"] }) {
-  const { session, t, locale } = props;
+function LiveBanner(props: {
+  channel: LiveChannel;
+  program: ChannelProgram | null;
+  next: ChannelProgram | null;
+  t: ReturnType<typeof useLocale>["t"];
+  locale: ReturnType<typeof useLocale>["locale"];
+}) {
+  const { channel, program, next, t, locale } = props;
   const now = useNow(5000);
-  const { channel, program, next } = session;
-  const left = Math.max(0, Math.round((program.end - now) / 60_000));
+  const left = program ? Math.max(0, Math.round((program.end - now) / 60_000)) : 0;
   return (
     <div className="live-banner">
       <ChannelLogo channel={channel} className="large" />
@@ -456,16 +570,22 @@ function LiveBanner(props: { session: LivePlayback; t: ReturnType<typeof useLoca
         <p className="live-banner-channel">
           <span className="guide-channel-number">{channel.number}</span> {channel.name}
         </p>
-        <p className="live-banner-now">
-          <em>{t.liveNow}</em> <strong>{program.title}</strong>
-          {program.subtitle ? <span className="muted"> · {program.subtitle}</span> : null}
-        </p>
-        <div className="live-banner-progress">
-          <span>{clockTime(program.start, locale)}</span>
-          <span className="meter small"><span style={{ width: `${programProgress(program, now) * 100}%` }} /></span>
-          <span>{clockTime(program.end, locale)}</span>
-          <small className="muted">{t.liveMinutesLeft.replace("{min}", String(left))}</small>
-        </div>
+        {program ? (
+          <>
+            <p className="live-banner-now">
+              <em>{t.liveNow}</em> <strong>{program.title}</strong>
+              {program.subtitle ? <span className="muted"> · {program.subtitle}</span> : null}
+            </p>
+            <div className="live-banner-progress">
+              <span>{clockTime(program.start, locale)}</span>
+              <span className="meter small"><span style={{ width: `${programProgress(program, now) * 100}%` }} /></span>
+              <span>{clockTime(program.end, locale)}</span>
+              <small className="muted">{t.liveMinutesLeft.replace("{min}", String(left))}</small>
+            </div>
+          </>
+        ) : (
+          <p className="live-banner-now muted">{t.liveIptvNoInfo}</p>
+        )}
         {next ? (
           <p className="live-banner-next muted">
             <em>{t.liveNext}</em> {clockTime(next.start, locale)} · {next.title}

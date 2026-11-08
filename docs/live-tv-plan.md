@@ -115,6 +115,18 @@ Implementată (migrarea `0006_live_tv_phase2`). Detalii și abateri de la plan:
 - Redare: un ffmpeg partajat per canal (remux când codecul e compatibil, altfel transcodare, după logica din `apps/server/src/playback/plan.ts`), oprit la ~60s după ultimul spectator. URL-urile sursă nu ajung în browser.
 - Categorii din `group-title`, logo și număr din M3U, toate suprascriptibile.
 
+### Stare (8 nov. 2026)
+
+Implementată (migrarea `0007_live_tv_iptv`). Detalii și abateri de la plan:
+
+- **Date:** pe lângă `iptv_sources`, tabelul `iptv_epg_channels` ține canalele din ghid, pentru maparea manuală. Coloanele IPTV stau direct în `channels` (`stream_url`, `tvg_id`, `group_title`, `remote_logo`, `epg_channel`, `epg_match`, `iptv_missing` etc.). Sursa poate fi un URL http(s) sau o cale absolută pe server; dacă XMLTV lipsește, se folosește `url-tvg` din antetul M3U. Ghidurile `.gz` sunt suportate, iar XMLTV se citește în flux.
+- **Reîmprospătare:** un canal e recunoscut după `tvg-id` + nume, chiar dacă URL-ul se schimbă. Un nume modificat manual rămâne. Numărul din `tvg-chno` se folosește doar dacă e liber și se atribuie o singură dată. Canalele dispărute din playlist sunt marcate „lipsă” (își păstrează favoritele) și se ascund din ghid. Canalele IPTV nu se șterg individual: se dezactivează sau se șterge sursa. Ghidul descărcat rămâne în cache, așa că o mapare manuală se aplică fără o nouă descărcare. Maparea manuală are prioritate față de potrivirea automată.
+- **Releu** (`livetv/relay.ts`): un singur ffmpeg per canal, cu `ffprobe` înainte pentru alegerea între remux și transcodare (aceleași reguli ca în `plan.ts`). Produce o fereastră HLS de 5 minute în `data/cache/iptv/<canal>`, cu `-protocol_whitelist` (fără `file:`) și reconectare automată la http. Se oprește după ~60s fără cereri și pornește din nou de până la 5 ori cât timp cineva se uită. Implicit rulează cel mult 4 relee simultan (`KINORA_IPTV_MAX_STREAMS`). URL-urile sursă și erorile ffmpeg care le conțin nu ajung la browser.
+- **Player:** IPTV rulează în modul `live`, la marginea fluxului. Pauza și derularea funcționează doar în fereastra de 5 minute, nu de la începutul emisiunii. Bannerul se actualizează din EPG fără să repornească streamul, iar fără EPG afișează „Fără informații de program”.
+- **Logo-urile** `tvg-logo` sunt descărcate de server și păstrate în cache (doar PNG/JPEG/GIF/WebP). Imaginile programelor din XMLTV nu se folosesc.
+- **Surse publice:** butoanele „+ România” și „+ Republica Moldova” din Setări adaugă playlisturile iptv-org (`IPTV_PRESETS` din `packages/shared`), adică doar stream-uri făcute publice de posturi, cu ghidul de la iptv-epg.org. Moldova nu are ghid propriu și folosește ghidul românesc, care acoperă canalele `.ro` din listă. Potrivirea după `tvg-id` ignoră sufixul `@SD`/`@HD` al iptv-org, iar din nume se elimină notele „(1080p)” și „[Not 24/7]”. La testul din 8 nov. 2026, România a avut 183 de canale, dintre care 76 cu ghid. Unele stream-uri sunt oprite temporar sau blocate geografic.
+- Opțiunile `#EXTVLCOPT` (user-agent sau referrer per canal) nu sunt suportate încă. Playlisturile mari (mii de canale) încarcă greu ghidul și lista din Setări.
+
 ## Faza 4 — Optimizări
 
 - Pre-transcodarea emisiunii următoare, cu câteva minute înainte, pe canalele urmărite activ.

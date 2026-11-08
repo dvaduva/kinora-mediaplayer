@@ -245,9 +245,58 @@ export const channels = sqliteTable("channels", {
   categoryOverride: text("category_override"),
   /** Set on channels the server generated ("genre:Drama", "series:<id>", "music:Rock"); one per key. */
   autoKey: text("auto_key"),
+  /* IPTV channels: imported from a playlist of this source. */
+  iptvSourceId: text("iptv_source_id").references(() => iptvSources.id, { onDelete: "cascade" }),
+  /** Identity of the entry within its playlist (tvg-id and name), stable across refreshes. */
+  iptvKey: text("iptv_key"),
+  /** Never sent to clients: the server relays the stream. */
+  streamUrl: text("stream_url"),
+  tvgId: text("tvg_id"),
+  /** Name the playlist gave; while `name` still equals it, a refresh may rename the channel. */
+  m3uName: text("m3u_name"),
+  /** tvg-logo address; an uploaded logo (logo_path) takes precedence. */
+  remoteLogo: text("remote_logo"),
+  groupTitle: text("group_title"),
+  /** XMLTV channel id chosen by hand; null matches by tvg-id, then by name. */
+  epgChannel: text("epg_channel"),
+  /** How the EPG was matched on the last refresh: tvg-id, name, manual, or null. */
+  epgMatch: text("epg_match"),
+  /** Dropped from the playlist on the last refresh; kept (with its favorites) in case it comes back. */
+  iptvMissing: integer("iptv_missing", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("channels_iptv_source").on(table.iptvSourceId),
+]);
+
+/** IPTV playlists (M3U), each with an optional XMLTV guide. */
+export const iptvSources = sqliteTable("iptv_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  m3uUrl: text("m3u_url").notNull(),
+  xmltvUrl: text("xmltv_url"),
+  /** Guide address the playlist announces itself (url-tvg), used when xmltv_url is empty. */
+  playlistEpgUrl: text("playlist_epg_url"),
+  refreshedAt: integer("refreshed_at"),
+  /** pending | refreshing | ok | error */
+  status: text("status").notNull(),
+  error: text("error"),
+  /** The playlist loaded but the guide did not. */
+  epgError: text("epg_error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+/** Channels listed by a source's XMLTV guide, offered for matching by hand. */
+export const iptvEpgChannels = sqliteTable(
+  "iptv_epg_channels",
+  {
+    sourceId: text("source_id").notNull().references(() => iptvSources.id, { onDelete: "cascade" }),
+    epgId: text("epg_id").notNull(),
+    name: text("name").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.sourceId, table.epgId] })],
+);
 
 /** Per-profile view of the channels: favorites and the profile's own channel order. */
 export const profileChannels = sqliteTable(

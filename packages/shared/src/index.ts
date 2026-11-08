@@ -597,6 +597,78 @@ export interface LiveChannel {
   music: boolean;
   /** Per profile. */
   favorite: boolean;
+  /** Set on channels imported from an IPTV playlist. */
+  iptv: LiveChannelIptv | null;
+}
+
+/** How an IPTV channel found its guide: chosen by hand, by tvg-id, or by name. */
+export type EpgMatchKind = "manual" | "tvg-id" | "name";
+
+export interface LiveChannelIptv {
+  sourceId: string;
+  sourceName: string;
+  /** group-title from the playlist; the category unless overridden. */
+  group: string | null;
+  tvgId: string | null;
+  /** Guide channel chosen by hand; null matches automatically. */
+  epgChannel: string | null;
+  /** How the last refresh matched the guide; null when the channel has none. */
+  epgMatch: EpgMatchKind | null;
+  /** Dropped from the playlist on the last refresh. */
+  missing: boolean;
+}
+
+export type IptvSourceStatus = "pending" | "refreshing" | "ok" | "error";
+
+/** An M3U playlist with its optional XMLTV guide. */
+export interface IptvSource {
+  id: string;
+  name: string;
+  m3uUrl: string;
+  xmltvUrl: string | null;
+  /** Guide address the playlist announces itself, used when `xmltvUrl` is empty. */
+  playlistEpgUrl: string | null;
+  refreshedAt: number | null;
+  status: IptvSourceStatus;
+  error: string | null;
+  /** The playlist loaded but its guide did not. */
+  epgError: string | null;
+  channelCount: number;
+  /** Channels with a guide. */
+  matchedCount: number;
+  /** Channels the guide lists, offered for matching by hand. */
+  guideChannelCount: number;
+}
+
+export interface IptvSourceInput {
+  name: string;
+  /** http(s) address or a local file path. */
+  m3uUrl: string;
+  xmltvUrl: string | null;
+}
+
+/**
+ * Public playlists offered with one click: iptv-org lists streams the broadcasters themselves make
+ * freely available. The guide comes from iptv-epg.org, which uses the same channel ids.
+ */
+export interface IptvPreset {
+  id: string;
+  /** Country code; clients show the name in their own language. */
+  country: string;
+  m3uUrl: string;
+  xmltvUrl: string | null;
+}
+
+export const IPTV_PRESETS: readonly IptvPreset[] = [
+  { id: "ro", country: "RO", m3uUrl: "https://iptv-org.github.io/iptv/countries/ro.m3u", xmltvUrl: "https://iptv-epg.org/files/epg-ro.xml.gz" },
+  // No Moldovan guide is published; many channels of the list are Romanian and match the Romanian guide.
+  { id: "md", country: "MD", m3uUrl: "https://iptv-org.github.io/iptv/countries/md.m3u", xmltvUrl: "https://iptv-epg.org/files/epg-ro.xml.gz" },
+];
+
+/** A channel of a source's XMLTV guide. */
+export interface GuideChannelOption {
+  id: string;
+  name: string;
 }
 
 export interface ChannelInput {
@@ -660,11 +732,16 @@ export interface ChannelNow {
 export interface LivePlayback {
   now: number;
   channel: LiveChannel;
-  program: ChannelProgram;
+  /** Null only for an IPTV channel without a guide entry for now. */
+  program: ChannelProgram | null;
   next: ChannelProgram | null;
   /** Seconds into the program at `now`. */
   offset: number;
-  mode: "direct" | "hls";
+  /**
+   * direct: a library file; hls: a conversion of one; live: an IPTV channel relayed by the server,
+   * played at its live edge and not tied to the program's timeline.
+   */
+  mode: "direct" | "hls" | "live";
   src: string;
   /** Transcode status to poll before an HLS stream can start; null for direct play. */
   statusUrl: string | null;

@@ -359,7 +359,7 @@ export function stopOrphanEncoders() {
     [
       "-NoProfile",
       "-Command",
-      "Get-CimInstance Win32_Process -Filter \"Name = 'ffmpeg.exe'\" | Where-Object { $_.CommandLine -match 'hls_playlist_type' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'ffmpeg.exe'\" | Where-Object { $_.CommandLine -match 'hls_playlist_type' -or $_.CommandLine -match 'cache[\\\\/]+iptv[\\\\/]' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
     ],
     { windowsHide: true, stdio: "ignore" },
   );

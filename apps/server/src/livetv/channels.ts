@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
-import type { ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
+import type { ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, EpgMatchKind, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
 import { isChannelSourceType } from "@kinora/shared";
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
@@ -12,6 +12,8 @@ import { sessionStarts } from "../playback/transcode.js";
 import { getSetting, PROFILE_ID, setSetting } from "../settings.js";
 import { DEFAULT_SERIES_MIN_EPISODES, newAutoChannels, planAutoChannels } from "./auto.js";
 import { deriveCategory, isMusicChannel } from "./categories.js";
+import { remoteLogoFile, sourceNames } from "./iptv.js";
+import { startRelay, stopRelay } from "./relay.js";
 import { libraryInventory, libraryTypes, resolveSources } from "./sources.js";
 import { continueSchedule, HORIZON_MS, KEEP_PAST_MS } from "./schedule.js";
 
@@ -58,6 +60,7 @@ interface DtoContext {
   until: Map<string, number>;
   libraryType: (id: string) => LibraryType | undefined;
   profile: Map<string, { favorite: boolean; position: number | null }>;
+  sources: Map<string, string>;
 }
 
 function dtoContext(): DtoContext {
@@ -70,10 +73,44 @@ function dtoContext(): DtoContext {
       .all()
       .map((row) => [row.channelId, { favorite: row.favorite, position: row.position }]),
   );
-  return { until: scheduledUntil(), libraryType: (id) => types.get(id), profile };
+  return { until: scheduledUntil(), libraryType: (id) => types.get(id), profile, sources: sourceNames() };
+}
+
+function isIptv(row: Pick<ChannelRow, "kind">) {
+  return row.kind === "iptv";
+}
+
+function iptvDto(row: ChannelRow, context: DtoContext): LiveChannel {
+  return {
+    id: row.id,
+    kind: "iptv",
+    number: row.number,
+    name: row.name,
+    logoUrl: row.logoPath || row.remoteLogo ? `/api/livetv/channels/${row.id}/logo?v=${row.updatedAt}` : null,
+    orderMode: "sequential",
+    enabled: row.enabled,
+    sources: [],
+    // A live stream always has something on; only a channel the playlist dropped has nothing to air.
+    empty: row.iptvMissing || !row.streamUrl,
+    category: row.categoryOverride || row.groupTitle,
+    categoryOverride: row.categoryOverride,
+    auto: false,
+    music: false,
+    favorite: context.profile.get(row.id)?.favorite ?? false,
+    iptv: {
+      sourceId: row.iptvSourceId ?? "",
+      sourceName: context.sources.get(row.iptvSourceId ?? "") ?? "",
+      group: row.groupTitle,
+      tvgId: row.tvgId,
+      epgChannel: row.epgChannel,
+      epgMatch: (["manual", "tvg-id", "name"].includes(row.epgMatch ?? "") ? row.epgMatch : null) as EpgMatchKind | null,
+      missing: row.iptvMissing,
+    },
+  };
 }
 
 function channelDto(row: ChannelRow, context: DtoContext): LiveChannel {
+  if (isIptv(row)) return iptvDto(row, context);
   const sources = sourcesOf(row.id);
   return {
     id: row.id,
@@ -90,6 +127,7 @@ function channelDto(row: ChannelRow, context: DtoContext): LiveChannel {
     auto: row.autoKey != null,
     music: isMusicChannel(sources, context.libraryType),
     favorite: context.profile.get(row.id)?.favorite ?? false,
+    iptv: null,
   };
 }
 
@@ -171,7 +209,8 @@ function programDtos(rows: ProgramRow[]): ChannelProgram[] {
  */
 export function scheduleChannel(channelId: string, options: { cutAt?: number | null; now?: number } = {}) {
   const channel = db.select().from(channels).where(eq(channels.id, channelId)).get();
-  if (!channel) return;
+  // IPTV programs come from the guide, not from rules.
+  if (!channel || isIptv(channel)) return;
   const now = options.now ?? Date.now();
   const items = channel.enabled ? resolveSources(sourcesOf(channelId)) : [];
   let existing = db
@@ -238,7 +277,7 @@ export function repairMissing(now = Date.now()) {
 export function topUpChannels(now = Date.now()) {
   repairMissing(now);
   const until = scheduledUntil();
-  for (const channel of db.select().from(channels).where(eq(channels.enabled, true)).all()) {
+  for (const channel of db.select().from(channels).where(and(eq(channels.enabled, true), eq(channels.kind, "virtual"))).all()) {
     if ((until.get(channel.id) ?? 0) < now + HORIZON_MS - TOP_UP_MARGIN_MS) scheduleChannel(channel.id, { now });
   }
 }
@@ -316,6 +355,15 @@ export function updateChannel(id: string, input: ChannelInput) {
   if (!row) return null;
   assertNumberFree(input.number, id);
   const now = Date.now();
+  if (isIptv(row)) {
+    // Rules and order do not apply; the playlist keeps feeding the stream and the guide.
+    db.update(channels)
+      .set({ name: input.name, number: input.number, enabled: input.enabled, categoryOverride: input.categoryOverride ?? null, updatedAt: now })
+      .where(eq(channels.id, id))
+      .run();
+    if (!input.enabled) stopRelay(id);
+    return getChannel(id);
+  }
   db.update(channels)
     .set({ name: input.name, number: input.number, orderMode: input.orderMode, enabled: input.enabled, categoryOverride: input.categoryOverride ?? null, updatedAt: now })
     .where(eq(channels.id, id))
@@ -327,13 +375,15 @@ export function updateChannel(id: string, input: ChannelInput) {
 }
 
 export function regenerateChannel(id: string) {
-  if (!db.select({ id: channels.id }).from(channels).where(eq(channels.id, id)).get()) return null;
+  const row = db.select({ id: channels.id, kind: channels.kind }).from(channels).where(eq(channels.id, id)).get();
+  if (!row) return null;
+  if (isIptv(row)) return getChannel(id);
   const now = Date.now();
   scheduleChannel(id, { cutAt: now, now });
   return getChannel(id);
 }
 
-function removeLogoFile(name: string | null) {
+export function removeLogoFile(name: string | null) {
   if (!name) return;
   try {
     fs.rmSync(path.join(logoDir, path.basename(name)), { force: true });
@@ -345,6 +395,8 @@ function removeLogoFile(name: string | null) {
 export function deleteChannel(id: string) {
   const row = db.select().from(channels).where(eq(channels.id, id)).get();
   if (!row) return false;
+  // The next refresh would bring it back; IPTV channels are turned off instead, or go with their source.
+  if (isIptv(row)) throw new ChannelError("iptv_channel");
   db.delete(channels).where(eq(channels.id, id)).run();
   removeLogoFile(row.logoPath);
   // A deleted automatic channel is not generated again.
@@ -461,11 +513,15 @@ export function clearChannelLogo(id: string) {
   return getChannel(id);
 }
 
-export function channelLogoFile(id: string) {
-  const row = db.select({ logoPath: channels.logoPath }).from(channels).where(eq(channels.id, id)).get();
-  if (!row?.logoPath) return null;
-  const file = path.join(logoDir, path.basename(row.logoPath));
-  return fs.existsSync(file) ? file : null;
+/** The uploaded logo, or for IPTV channels the playlist's logo, fetched and kept by the server. */
+export async function channelLogoFile(id: string) {
+  const row = db.select({ logoPath: channels.logoPath, remoteLogo: channels.remoteLogo }).from(channels).where(eq(channels.id, id)).get();
+  if (!row) return null;
+  if (row.logoPath) {
+    const file = path.join(logoDir, path.basename(row.logoPath));
+    if (fs.existsSync(file)) return file;
+  }
+  return row.remoteLogo ? remoteLogoFile(row.remoteLogo) : null;
 }
 
 export function guide(from: number, to: number) {
@@ -532,6 +588,7 @@ export function channelNow(id: string): ChannelNow | null {
 export function playChannel(id: string, after?: number): LivePlayback | "not_found" | "empty" {
   const row = db.select().from(channels).where(eq(channels.id, id)).get();
   if (!row || !row.enabled) return "not_found";
+  if (isIptv(row)) return playIptv(row);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const now = Date.now();
     const at = Math.max(now, after ?? 0);
@@ -566,4 +623,26 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
     return { ...base, mode: "hls", src: `${stream}/index.m3u8`, statusUrl: `${stream}/status`, mediaStart };
   }
   return "empty";
+}
+
+/** An IPTV channel plays at its live edge through the shared relay; the guide only labels it. */
+function playIptv(row: ChannelRow): LivePlayback | "empty" {
+  if (!row.streamUrl || row.iptvMissing) return "empty";
+  startRelay(row.id, row.streamUrl);
+  const now = Date.now();
+  const current = programAt(row.id, now);
+  const next = programAfter(row.id, current ? current.end : now);
+  const dtos = programDtos([current, next].filter((entry): entry is ProgramRow => entry != null));
+  const base = `/api/livetv/channels/${row.id}/stream`;
+  return {
+    now,
+    channel: getChannel(row.id)!,
+    program: current ? dtos[0]! : null,
+    next: next ? dtos[current ? 1 : 0]! : null,
+    offset: current ? (now - current.start) / 1000 : 0,
+    mode: "live",
+    src: `${base}/index.m3u8`,
+    statusUrl: `${base}/status`,
+    mediaStart: 0,
+  };
 }

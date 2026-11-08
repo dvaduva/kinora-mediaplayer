@@ -7,6 +7,7 @@ import { useLocale, type Copy } from "../../i18n";
 import { categoryLabel, ChannelLogo } from "../../liveTv";
 import { Icon } from "../../ui";
 import { errorText, SectionHead, Status, useReportDirty, type SectionProps } from "./common";
+import { IptvSources, matchLabel } from "./IptvSources";
 
 const MAX_LOGO_BYTES = 1024 * 1024;
 const LOGO_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -66,6 +67,7 @@ function liveError(t: Copy, reason: unknown) {
   if (code === "number_taken") return t.errNumberTaken;
   if (code === "bad_logo") return t.errBadLogo;
   if (code === "bad_category") return t.errBadCategory;
+  if (code === "iptv_channel") return t.errIptvChannel;
   return errorText(t, reason);
 }
 
@@ -75,7 +77,7 @@ function libraryTypeOf(options: ChannelOptions | null) {
 }
 
 export function LiveTvSection({ onDirty }: SectionProps) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [channels, setChannels] = useState<LiveChannel[] | null>(null);
   const [options, setOptions] = useState<ChannelOptions | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
@@ -136,6 +138,7 @@ export function LiveTvSection({ onDirty }: SectionProps) {
         </div>
       ) : null}
       <AutoChannels t={t} onChange={load} />
+      <IptvSources t={t} locale={locale} channels={channels} onChange={load} />
       {channels && channels.length > 1 ? (
         <p className="field-help">
           {t.liveOrderHelp}{" "}
@@ -258,6 +261,7 @@ function ChannelCard(props: {
   onChange: () => void;
 }) {
   const { channel, t } = props;
+  const iptv = channel.iptv;
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
@@ -295,10 +299,17 @@ function ChannelCard(props: {
           <h3>
             <span className="guide-channel-number">{channel.number}</span> {channel.name} {channel.auto ? <span className="channel-auto">{t.liveAuto}</span> : null}
           </h3>
-          <span className="library-type">
-            {t.liveOrder}: {channel.orderMode === "shuffle" ? t.liveOrderShuffle : t.liveOrderSequentialShort}
-            {channel.category ? ` · ${t.liveCategory}: ${categoryLabel(channel.category, t)}` : ""}
-          </span>
+          {iptv ? (
+            <span className="library-type">
+              IPTV · {t.liveIptvSource}: {iptv.sourceName} · EPG: {matchLabel(channel, t)}
+              {channel.category ? ` · ${t.liveCategory}: ${categoryLabel(channel.category, t)}` : ""}
+            </span>
+          ) : (
+            <span className="library-type">
+              {t.liveOrder}: {channel.orderMode === "shuffle" ? t.liveOrderShuffle : t.liveOrderSequentialShort}
+              {channel.category ? ` · ${t.liveCategory}: ${categoryLabel(channel.category, t)}` : ""}
+            </span>
+          )}
         </div>
         <div className="channel-order-buttons">
           <button type="button" onClick={() => props.onMove(-1)} disabled={props.first} aria-label={`${t.liveMoveUp}: ${channel.name}`} title={t.liveMoveUp}>
@@ -308,9 +319,17 @@ function ChannelCard(props: {
             <Icon name="down" />
           </button>
         </div>
-        {!channel.enabled ? <Status tone="busy">{t.liveOff}</Status> : channel.empty ? <Status tone="warn">{t.liveNoProgram}</Status> : <Status tone="ok">{t.liveActive}</Status>}
+        {!channel.enabled ? (
+          <Status tone="busy">{t.liveOff}</Status>
+        ) : iptv?.missing ? (
+          <Status tone="warn">{t.liveIptvMissing}</Status>
+        ) : channel.empty ? (
+          <Status tone="warn">{t.liveNoProgram}</Status>
+        ) : (
+          <Status tone="ok">{t.liveActive}</Status>
+        )}
       </div>
-      {channel.enabled && channel.empty ? <p className="danger channel-warning">{t.liveEmptyWarning}</p> : null}
+      {channel.enabled && channel.empty && !iptv ? <p className="danger channel-warning">{t.liveEmptyWarning}</p> : null}
       <ul className="rule-chips">
         {channel.sources.map((source, index) => (
           <li key={index}>
@@ -320,8 +339,10 @@ function ChannelCard(props: {
       </ul>
       <div className="library-card-foot">
         <button className="text-button" type="button" onClick={props.onEdit} disabled={busy}>{t.edit}</button>
-        <button className="text-button" type="button" onClick={() => void regenerate()} disabled={busy}>{t.liveRegenerate}</button>
-        {confirming ? (
+        {iptv ? null : (
+          <button className="text-button" type="button" onClick={() => void regenerate()} disabled={busy}>{t.liveRegenerate}</button>
+        )}
+        {iptv ? null : confirming ? (
           <>
             <button className="text-button danger" type="button" onClick={() => void remove()} disabled={busy}>{t.liveConfirmDelete}</button>
             <button className="text-button" type="button" onClick={() => setConfirming(false)}>{t.cancel}</button>
@@ -352,10 +373,11 @@ function ChannelForm(props: {
 }) {
   const { t } = useLocale();
   const { channel, options } = props;
+  const iptv = channel?.iptv ?? null;
   const [name, setName] = useState(channel?.name ?? "");
   const [number, setNumber] = useState(channel ? String(channel.number) : "");
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
-  const [sources, setSources] = useState<ChannelSource[]>(channel?.sources ?? [emptyRule("genre")]);
+  const [sources, setSources] = useState<ChannelSource[]>(channel?.sources.length || iptv ? (channel?.sources ?? []) : [emptyRule("genre")]);
   const [order, setOrder] = useState<ChannelOrder | null>(channel?.orderMode ?? null);
   const [category, setCategory] = useState(channel?.categoryOverride ?? "");
   const [logo, setLogo] = useState<LogoChange>(null);
@@ -370,7 +392,7 @@ function ChannelForm(props: {
   const filled = sources.filter((source) => source.value.trim());
   // Until chosen by hand, series play in order and movies shuffle.
   const orderMode: ChannelOrder = order ?? (filled.some((source) => source.type === "series") ? "sequential" : "shuffle");
-  const derived = deriveCategory(filled, libraryTypeOf(options));
+  const derived = iptv ? iptv.group : deriveCategory(filled, libraryTypeOf(options));
   const dirty = channel
     ? name !== channel.name ||
       number !== String(channel.number) ||
@@ -409,7 +431,7 @@ function ChannelForm(props: {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (filled.length === 0) {
+    if (filled.length === 0 && !iptv) {
       setError(t.errNoRules);
       return;
     }
@@ -463,6 +485,9 @@ function ChannelForm(props: {
         </div>
       </div>
 
+      {iptv ? <p className="field-help">IPTV · {t.liveIptvSource}: {iptv.sourceName}{iptv.group ? ` · ${t.liveIptvGroup}: ${iptv.group}` : ""}. {t.liveIptvNoDelete}</p> : null}
+
+      {iptv ? null : (
       <fieldset className="folder-rows">
         <legend>{t.liveRules}</legend>
         <p className="field-help">{t.liveRulesHelp}</p>
@@ -483,7 +508,9 @@ function ChannelForm(props: {
           + {t.liveAddRule}
         </button>
       </fieldset>
+      )}
 
+      {iptv ? null : (
       <fieldset className="field order-field">
         <legend>{t.liveOrder}</legend>
         <label className="radio">
@@ -495,6 +522,7 @@ function ChannelForm(props: {
           {t.liveOrderSequential}
         </label>
       </fieldset>
+      )}
 
       <label className="field">
         {t.liveCategory}
@@ -511,7 +539,11 @@ function ChannelForm(props: {
           ))}
         </datalist>
       </label>
-      <p className="field-help">{t.liveCategoryHelp.replace("{derived}", derived ? categoryLabel(derived, t) : t.liveCategoryNone)}</p>
+      <p className="field-help">
+        {iptv
+          ? t.liveIptvCategoryHelp.replace("{group}", derived ?? t.liveCategoryNone)
+          : t.liveCategoryHelp.replace("{derived}", derived ? categoryLabel(derived, t) : t.liveCategoryNone)}
+      </p>
 
       <label className="radio">
         <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />

@@ -8,6 +8,8 @@ import { gigabytes } from "./playback/cache.js";
 import { pruneTranscodes, setTranscodeCacheLimit, stopOrphanEncoders } from "./playback/transcode.js";
 import { onScanFinished, restartWatches, startScan } from "./scan.js";
 import { repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
+import { refreshDueSources } from "./livetv/iptv.js";
+import { clearRelayCache, stopAllRelays, sweepRelays } from "./livetv/relay.js";
 import { getSetting, isLocalHost, seedProfile, transcodeCacheGb } from "./settings.js";
 
 // Windows often tries IPv6 first; TMDB connects hang until undici's default 10s timeout.
@@ -47,6 +49,18 @@ const runLiveTvJob = () => {
 };
 runLiveTvJob();
 setInterval(runLiveTvJob, 60 * 60 * 1000).unref();
+// IPTV playlists and guides are read again every 12 hours (checked hourly); idle relays stop after a minute.
+clearRelayCache();
+const runIptvJob = () => void refreshDueSources().catch((error: unknown) => app.log.error(error));
+runIptvJob();
+setInterval(runIptvJob, 60 * 60 * 1000).unref();
+setInterval(() => sweepRelays(), 15_000).unref();
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    stopAllRelays();
+    process.exit(0);
+  });
+}
 onScanFinished(() => {
   try {
     repairMissing();
