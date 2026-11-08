@@ -55,6 +55,14 @@ function enqueue<T>(task: () => Promise<T>) {
   return run;
 }
 
+const scanListeners = new Set<(libraryId: string) => void>();
+
+/** Runs after every library scan, finished or failed (Live TV replaces programs whose files went away). */
+export function onScanFinished(listener: (libraryId: string) => void) {
+  scanListeners.add(listener);
+  return () => scanListeners.delete(listener);
+}
+
 export function getScanState(libraryId: string): ScanState {
   return states.get(libraryId) ?? { libraryId, status: "idle", scanned: 0, matched: 0, message: null };
 }
@@ -77,6 +85,13 @@ export function startScan(libraryId: string) {
       });
     } finally {
       running.delete(libraryId);
+      for (const listener of scanListeners) {
+        try {
+          listener(libraryId);
+        } catch (error) {
+          console.error(error);
+        }
+      }
     }
   });
   return true;

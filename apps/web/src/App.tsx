@@ -10,6 +10,8 @@ import { ExternalTitlePage, MoviePage, SeriesPage } from "./pages/Detail";
 import { PersonPage } from "./pages/Person";
 import { AlbumPage, ArtistPage, IdentifyPage } from "./pages/Listen";
 import { PlayerPage } from "./pages/Player";
+import { LiveTvPage } from "./pages/LiveTv";
+import { LivePlayerPage } from "./pages/LivePlayer";
 import { SettingsPage } from "./pages/Settings";
 import { Icon, Mark } from "./ui";
 
@@ -275,6 +277,10 @@ function Shell(props: { ffprobe: boolean }) {
             <Icon name="music" />
             <span>{t.music}</span>
           </NavLink>
+          <NavLink to="/live" title={t.liveTv}>
+            <Icon name="live" />
+            <span>{t.liveTv}</span>
+          </NavLink>
         </nav>
       </aside>
       {menuOpen ? <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} /> : null}
@@ -292,6 +298,8 @@ function Shell(props: { ffprobe: boolean }) {
           <Route path="/music/albums/:id" element={<AlbumPage />} />
           <Route path="/music/artists/:id" element={<ArtistPage />} />
           <Route path="/play/:fileId" element={<PlayerPage />} />
+          <Route path="/live" element={<LiveTvPage />} />
+          <Route path="/live/:channelId" element={<LivePlayerPage />} />
           <Route path="/identify" element={<IdentifyPage />} />
           <Route path="/settings/:section?" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />

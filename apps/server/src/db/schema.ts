@@ -227,3 +227,49 @@ export const movieReviews = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.profileId, table.movieId] })],
 );
+
+/** Live TV channels. Virtual channels are built from library rules; IPTV channels come from playlists. */
+export const channels = sqliteTable("channels", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(),
+  number: integer("number").notNull(),
+  name: text("name").notNull(),
+  /** File name of an uploaded logo under data/channel-logos; null draws one from the name. */
+  logoPath: text("logo_path"),
+  orderMode: text("order_mode").notNull(),
+  /** Seeds the shuffle, so a channel's order survives restarts and regenerations. */
+  seed: integer("seed").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  categoryOverride: text("category_override"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+/** Rules of a virtual channel; the channel plays everything any rule matches. */
+export const channelSources = sqliteTable("channel_sources", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  value: text("value").notNull(),
+}, (table) => [
+  index("channel_sources_channel").on(table.channelId),
+]);
+
+/** The materialized schedule: what each channel airs, in epoch milliseconds. */
+export const channelPrograms = sqliteTable("channel_programs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  channelId: text("channel_id").notNull().references(() => channels.id, { onDelete: "cascade" }),
+  start: integer("start").notNull(),
+  end: integer("end").notNull(),
+  /** Position in the channel's endless play order; the next program continues from here. */
+  seq: integer("seq").notNull(),
+  itemType: text("item_type").notNull(),
+  itemId: text("item_id"),
+  fileId: text("file_id"),
+  title: text("title").notNull(),
+  subtitle: text("subtitle"),
+  description: text("description"),
+  image: text("image"),
+}, (table) => [
+  index("channel_programs_channel_start").on(table.channelId, table.start),
+]);

@@ -16,6 +16,11 @@ export interface TranscodeRequest {
   copyAudio: boolean;
   /** Embedded text subtitle streams written as WebVTT while the same pass reads the file. */
   subtitleStreams?: number[];
+  /**
+   * Media time (whole seconds) where a separate session starts, for Live TV joining a program midway.
+   * Its playlist counts from this point; 0 or absent is the regular whole-file conversion.
+   */
+  start?: number;
 }
 
 export interface HlsCodecs {
@@ -66,8 +71,20 @@ const sessions = new Map<string, TranscodeRequest>();
 export const transcodeRoot = path.join(dataDir, "cache", "transcode");
 let cacheLimitBytes = gigabytes(DEFAULT_CACHE_GB);
 
-export function transcodeLocation(input: Pick<TranscodeRequest, "fileId" | "size" | "mtime">) {
-  const key = `${input.fileId}-${input.size}-${input.mtime}`;
+type SessionInput = Pick<TranscodeRequest, "fileId" | "size" | "mtime" | "start">;
+
+function startOf(input: { start?: number }) {
+  return input.start && input.start > 0 ? Math.floor(input.start) : 0;
+}
+
+/** Sessions are per file and start point; the whole-file session keeps the bare file id. */
+export function sessionKey(fileId: string, start = 0) {
+  return start > 0 ? `${fileId}@${Math.floor(start)}` : fileId;
+}
+
+export function transcodeLocation(input: SessionInput) {
+  const start = startOf(input);
+  const key = `${input.fileId}-${input.size}-${input.mtime}${start > 0 ? `-at${start}` : ""}`;
   const dir = path.join(transcodeRoot, key);
   return { key, dir };
 }
@@ -95,6 +112,8 @@ export function transcodeCacheUsage() {
 export interface HlsResume {
   seek: number;
   startNumber: number;
+  /** Add to the existing playlist (a resumed pass); false starts a new playlist at `seek`. Default true. */
+  append?: boolean;
 }
 
 export function subtitleRunFile(directory: string, streamIndex: number, runStart: number) {
@@ -136,6 +155,7 @@ async function copiedVideoLag(source: string, seek: number) {
 
 export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, resume?: HlsResume, subtitleStreams: number[] = []) {
   const { copyVideo, copyAudio } = codecs;
+  const append = Boolean(resume) && resume?.append !== false;
   return [
     "-hide_banner",
     "-loglevel",
@@ -169,8 +189,8 @@ export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, re
     "-hls_playlist_type",
     "event",
     "-hls_flags",
-    resume ? "independent_segments+temp_file+append_list" : "independent_segments+temp_file",
-    ...(resume ? ["-start_number", String(resume.startNumber)] : []),
+    append ? "independent_segments+temp_file+append_list" : "independent_segments+temp_file",
+    ...(resume && resume.startNumber > 0 ? ["-start_number", String(resume.startNumber)] : []),
     "-hls_segment_filename",
     path.join(directory, "seg%05d.ts"),
     path.join(directory, "index.m3u8"),
@@ -292,15 +312,23 @@ function readyStatus(duration: number | null): TranscodeStatus {
   return statusFor("ready", duration ?? 0, duration, true, null);
 }
 
-export function hasOtherTranscode(fileId: string) {
-  for (const otherId of sessions.keys()) {
-    if (otherId !== fileId) return true;
+export function hasOtherTranscode(fileId: string, start = 0) {
+  const own = sessionKey(fileId, start);
+  for (const other of sessions.keys()) {
+    if (other !== own) return true;
   }
   return false;
 }
 
-export function lookupTranscode(fileId: string, probePlaylist = true): { status: TranscodeStatus; dir: string } | null {
-  const input = sessions.get(fileId);
+/** Start points of the open sessions of a file (0 is the whole-file session). */
+export function sessionStarts(fileId: string) {
+  const starts: number[] = [];
+  for (const input of sessions.values()) if (input.fileId === fileId) starts.push(startOf(input));
+  return starts;
+}
+
+export function lookupTranscode(fileId: string, probePlaylist = true, start = 0): { status: TranscodeStatus; dir: string } | null {
+  const input = sessions.get(sessionKey(fileId, start));
   if (!input) return null;
   const { key, dir } = transcodeLocation(input);
   if (fs.existsSync(path.join(dir, "done"))) return { status: readyStatus(input.duration), dir };
@@ -313,13 +341,13 @@ export function lookupTranscode(fileId: string, probePlaylist = true): { status:
   return null;
 }
 
-function stopOtherJobs(fileId: string) {
-  for (const [otherId, input] of sessions) {
-    if (otherId === fileId) continue;
+function stopOtherJobs(own: string) {
+  for (const [other, input] of sessions) {
+    if (other === own) continue;
     const located = transcodeLocation(input);
     const job = jobs.get(located.key);
     jobs.delete(located.key);
-    sessions.delete(otherId);
+    sessions.delete(other);
     job?.child?.kill();
   }
 }
@@ -343,7 +371,9 @@ function tail(text: string) {
 }
 
 export async function ensureTranscode(input: TranscodeRequest, restartError = false): Promise<{ status: TranscodeStatus; dir: string }> {
-  sessions.set(input.fileId, input);
+  const base = startOf(input);
+  const own = sessionKey(input.fileId, base);
+  sessions.set(own, input);
   const { key, dir } = transcodeLocation(input);
   const done = path.join(dir, "done");
   if (fs.existsSync(done)) {
@@ -360,18 +390,25 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
 
   const existingPlaylist = readPlaylist(dir);
   const cursor = playlistCursor(existingPlaylist);
-  if (cursor.count > 0 && coversDuration(cursor.seconds, input.duration)) {
+  // A session that starts midway has a playlist counting from `base`.
+  const reached = base + cursor.seconds;
+  if (cursor.count > 0 && coversDuration(reached, input.duration)) {
     fs.writeFileSync(done, "");
     return { status: readyStatus(input.duration), dir };
   }
 
-  stopOtherJobs(input.fileId);
-  const job: Job = { state: "running", runStart: cursor.count > 0 ? cursor.seconds : 0, seconds: cursor.count > 0 ? cursor.seconds : 0, error: null, child: null };
+  stopOtherJobs(own);
+  const appending = cursor.count > 0;
+  const job: Job = { state: "running", runStart: appending ? reached : base, seconds: appending ? reached : base, error: null, child: null };
   jobs.set(key, job);
-  const resume = cursor.count > 0 ? { seek: cursor.seconds, startNumber: cursor.nextNumber } : undefined;
+  const resume: HlsResume | undefined = appending
+    ? { seek: reached, startNumber: cursor.nextNumber }
+    : base > 0
+      ? { seek: base, startNumber: 0, append: false }
+      : undefined;
   try {
     await fs.promises.mkdir(dir, { recursive: true });
-    if (resume) {
+    if (appending) {
       fs.writeFileSync(path.join(dir, "index.m3u8"), prepareAppendPlaylist(existingPlaylist));
     } else if (segmentFiles(dir).length === 0) {
       await fs.promises.rm(dir, { recursive: true, force: true });
@@ -389,8 +426,8 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     job.error = error instanceof Error ? error.message : "cache";
     return { status: statusFor("error", 0, input.duration, false, job.error), dir };
   }
-  if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
-  if (resume && input.copyVideo && input.subtitleStreams?.length) {
+  if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, appending, null), dir };
+  if (appending && resume && input.copyVideo && input.subtitleStreams?.length) {
     const lag = await copiedVideoLag(input.sourcePath, resume.seek);
     if (lag > 0) fs.writeFileSync(subtitleShiftFile(dir, resume.seek), String(lag));
     if (jobs.get(key) !== job) return { status: statusFor("running", job.seconds, input.duration, true, null), dir };
@@ -417,7 +454,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     job.state = "error";
     job.error = message.slice(0, 300) || "ffmpeg failed";
     job.child = null;
-    if (!resume) void fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    if (!appending) void fs.promises.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   };
 
   child.stdout.on("data", (chunk: Buffer) => {
@@ -445,7 +482,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
     fail(tail(stderr) || `ffmpeg exited with ${code ?? "no code"}`);
   });
 
-  return { status: statusFor("running", job.seconds, input.duration, Boolean(resume), null), dir };
+  return { status: statusFor("running", job.seconds, input.duration, appending, null), dir };
 }
 
 export interface SubtitleRun {
@@ -499,11 +536,11 @@ export function transcodeSubtitleRuns(fileId: string, streamIndex: number): Subt
   });
 }
 
-export function discardTranscode(input: Pick<TranscodeRequest, "fileId" | "size" | "mtime">) {
+export function discardTranscode(input: SessionInput) {
   const { key, dir } = transcodeLocation(input);
   const job = jobs.get(key);
   jobs.delete(key);
-  sessions.delete(input.fileId);
+  sessions.delete(sessionKey(input.fileId, startOf(input)));
   job?.child?.kill();
   try {
     fs.rmSync(dir, { recursive: true, force: true });

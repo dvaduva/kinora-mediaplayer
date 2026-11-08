@@ -78,6 +78,14 @@ DVR/înregistrare, tuner fizic (HDHomeRun/DVB), catch-up IPTV, sincronizare la c
 - Programul nu se schimbă la restartul serverului.
 - `pnpm test` și `pnpm typecheck` trec.
 
+### Stare (8 nov. 2026)
+
+Implementată. Pe lângă coloanele din plan, `channel_programs` are `seq` (poziția în ordinea de redare a canalului), din care continuă extinderea programului. Limite cunoscute:
+
+- La fișierele transcodate, derularea înapoi se oprește la punctul de start al sesiunii (`/api/stream/:fileId/at/:start/…`); emisiunea de la început ar cere sesiunea întregului fișier.
+- Playerul live nu afișează încă subtitrări.
+- O singură transcodare rulează la un moment dat. Spectatorii aceleiași emisiuni folosesc aceeași sesiune, dar două emisiuni diferite urmărite simultan se opresc una pe alta.
+
 ## Faza 2 — Organizare și extindere
 
 - **Categorii:** derivate din reguli (gen → categorie), cu suprascriere manuală. Bara de tab-uri: Favorite, Toate și categoriile care au cel puțin un canal.

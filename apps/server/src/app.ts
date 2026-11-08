@@ -4,7 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { ExternalTitleDetail, LibraryType, PersonDetail } from "@kinora/shared";
 import { isSubtitleColor, isSubtitleSize, SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import {
@@ -39,11 +39,12 @@ import { albumClips } from "./metadata/clips.js";
 import { fetchMovie, fetchPerson, fetchSeries, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { EditError, movieArtwork, movieRatings, movieReviewList, saveOwnReview, updateMovie } from "./movieExtras.js";
-import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
-import { embeddedTextStreams, materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
+import { contentTypeFor } from "./playback/plan.js";
+import { materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
+import { beginTranscode, describePlayback, refreshTools } from "./playback/session.js";
+import { registerLiveTv } from "./livetv/routes.js";
 import { gigabytes } from "./playback/cache.js";
 import {
-  ensureTranscode,
   hasOtherTranscode,
   lookupTranscode,
   playlistForClient,
@@ -51,7 +52,7 @@ import {
   setTranscodeCacheLimit,
   transcodeCacheUsage,
 } from "./playback/transcode.js";
-import { detectTools, tools } from "./process.js";
+import { tools } from "./process.js";
 import { browse, BrowseError } from "./browse.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
 import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
@@ -69,21 +70,6 @@ function asRecord(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function refreshTools() {
-  if (!tools.ffmpeg || !tools.ffprobe) detectTools();
-}
-
-function describePlayback(fileId: string) {
-  refreshTools();
-  const row = db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId)).get();
-  if (!row) return null;
-  const filePath = resolveMediaPath(row);
-  if (!filePath) return null;
-  const view = playbackView(fileId);
-  if (!view) return null;
-  return { row, filePath, view };
-}
-
 async function waitForFile(file: string, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -97,24 +83,13 @@ async function waitForFile(file: string, timeoutMs = 8000) {
   }
 }
 
-async function beginTranscode(fileId: string, restartError: boolean) {
-  const described = describePlayback(fileId);
-  if (!described || !described.view.plan.available || described.view.plan.mode === "direct") return null;
-  const stat = fs.statSync(described.filePath);
-  const opened = await ensureTranscode(
-    {
-      fileId,
-      sourcePath: described.filePath,
-      size: stat.size,
-      mtime: Math.round(stat.mtimeMs),
-      duration: described.row.duration,
-      copyVideo: canCopyVideo(described.view.plan.videoCodec),
-      copyAudio: canCopyAudio(described.view.plan.audioCodec),
-      subtitleStreams: embeddedTextStreams(fileId),
-    },
-    restartError,
-  );
-  return opened;
+/** Start point of a midway Live TV session from the URL; null when it is not a whole second inside the file. */
+function sessionStart(raw: string, fileId: string) {
+  if (!/^\d{1,6}$/.test(raw)) return null;
+  const start = Number(raw);
+  const duration = db.select({ duration: mediaFiles.duration }).from(mediaFiles).where(eq(mediaFiles.id, fileId)).get()?.duration;
+  if (start <= 0 || duration == null || start >= duration) return null;
+  return start;
 }
 
 export async function buildApp(options: { bindHost?: string; logger?: boolean } = {}) {
@@ -509,13 +484,12 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     return { ok: true };
   });
 
-  app.get("/api/stream/:fileId/status", async (request, reply) => {
-    const fileId = (request.params as { fileId: string }).fileId;
-    reply.header("Cache-Control", "no-store");
-    const cached = lookupTranscode(fileId);
+  /** Transcode status; `start` > 0 is a separate Live TV session that begins midway. */
+  async function streamStatus(fileId: string, start: number) {
+    const cached = lookupTranscode(fileId, true, start);
     if (cached) return cached.status;
     const described = describePlayback(fileId);
-    if (!described) return reply.code(404).send({ error: "not_found" });
+    if (!described) return null;
     if (!described.view.plan.available) {
       return {
         state: "error",
@@ -536,14 +510,17 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
         error: null,
       };
     }
-    const opened = await beginTranscode(fileId, false);
-    if (!opened) return reply.code(404).send({ error: "not_found" });
-    return opened.status;
-  });
+    const opened = await beginTranscode(fileId, false, start);
+    return opened?.status ?? null;
+  }
 
-  app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => {
-    const fileId = (request.params as { fileId: string }).fileId;
-    const opened = lookupTranscode(fileId, false) ?? (hasOtherTranscode(fileId) ? null : await beginTranscode(fileId, false));
+  /** The session a playlist or segment request belongs to; a request from a player that was switched away does not restart it. */
+  async function openSession(fileId: string, start: number) {
+    return lookupTranscode(fileId, false, start) ?? (hasOtherTranscode(fileId, start) ? null : await beginTranscode(fileId, false, start));
+  }
+
+  async function sendPlaylist(reply: FastifyReply, fileId: string, start: number) {
+    const opened = await openSession(fileId, start);
     if (!opened) return reply.code(404).send({ error: "not_found" });
     const playlist = path.join(opened.dir, "index.m3u8");
     if (!(await waitForFile(playlist))) return reply.code(404).send({ error: "not_ready" });
@@ -551,44 +528,79 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     reply.type("application/vnd.apple.mpegurl");
     reply.header("Cache-Control", "no-cache");
     return reply.send(playlistForClient(contents));
-  });
+  }
 
-  app.get("/api/stream/:fileId/:segment", async (request, reply) => {
-    const params = request.params as { fileId: string; segment: string };
-    if (!/^seg\d+\.ts$/.test(params.segment)) return reply.code(404).send({ error: "not_found" });
-    const opened = lookupTranscode(params.fileId, false) ?? (hasOtherTranscode(params.fileId) ? null : await beginTranscode(params.fileId, false));
+  async function sendSegment(request: FastifyRequest, reply: FastifyReply, fileId: string, start: number, segment: string) {
+    if (!/^seg\d+\.ts$/.test(segment)) return reply.code(404).send({ error: "not_found" });
+    const opened = await openSession(fileId, start);
     if (!opened) return reply.code(404).send({ error: "not_found" });
-    const file = path.join(opened.dir, params.segment);
+    const file = path.join(opened.dir, segment);
     if (!(await waitForFile(file, 1000))) return reply.code(404).send({ error: "not_ready" });
     const bytes = fs.readFileSync(file);
     const range = typeof request.headers.range === "string" ? request.headers.range : undefined;
     let status = 200;
-    let start = 0;
-    let end = bytes.length - 1;
+    let first = 0;
+    let last = bytes.length - 1;
     if (range) {
       const match = /^bytes=(\d*)-(\d*)$/.exec(range);
       if (!match) return reply.code(416).send();
-      start = match[1] ? Number(match[1]) : 0;
-      end = match[2] ? Number(match[2]) : bytes.length - 1;
-      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= bytes.length) {
+      first = match[1] ? Number(match[1]) : 0;
+      last = match[2] ? Number(match[2]) : bytes.length - 1;
+      if (!Number.isFinite(first) || !Number.isFinite(last) || first > last || first >= bytes.length) {
         reply.header("Content-Range", `bytes */${bytes.length}`);
         return reply.code(416).send();
       }
-      end = Math.min(end, bytes.length - 1);
+      last = Math.min(last, bytes.length - 1);
       status = 206;
     }
-    const slice = bytes.subarray(start, end + 1);
+    const slice = bytes.subarray(first, last + 1);
     const headers: Record<string, string | number> = {
       "Content-Type": "video/mp2t",
       "Content-Length": slice.length,
       "Accept-Ranges": "bytes",
       "Cache-Control": "public, max-age=86400",
     };
-    if (status === 206) headers["Content-Range"] = `bytes ${start}-${end}/${bytes.length}`;
+    if (status === 206) headers["Content-Range"] = `bytes ${first}-${last}/${bytes.length}`;
     reply.hijack();
     reply.raw.socket?.resume();
     reply.raw.writeHead(status, headers);
     reply.raw.end(slice);
+  }
+
+  app.get("/api/stream/:fileId/status", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const status = await streamStatus((request.params as { fileId: string }).fileId, 0);
+    return status ?? reply.code(404).send({ error: "not_found" });
+  });
+
+  app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => sendPlaylist(reply, (request.params as { fileId: string }).fileId, 0));
+
+  app.get("/api/stream/:fileId/:segment", async (request, reply) => {
+    const params = request.params as { fileId: string; segment: string };
+    return sendSegment(request, reply, params.fileId, 0, params.segment);
+  });
+
+  app.get("/api/stream/:fileId/at/:start/status", async (request, reply) => {
+    const params = request.params as { fileId: string; start: string };
+    const start = sessionStart(params.start, params.fileId);
+    if (start == null) return reply.code(404).send({ error: "not_found" });
+    reply.header("Cache-Control", "no-store");
+    const status = await streamStatus(params.fileId, start);
+    return status ?? reply.code(404).send({ error: "not_found" });
+  });
+
+  app.get("/api/stream/:fileId/at/:start/index.m3u8", async (request, reply) => {
+    const params = request.params as { fileId: string; start: string };
+    const start = sessionStart(params.start, params.fileId);
+    if (start == null) return reply.code(404).send({ error: "not_found" });
+    return sendPlaylist(reply, params.fileId, start);
+  });
+
+  app.get("/api/stream/:fileId/at/:start/:segment", async (request, reply) => {
+    const params = request.params as { fileId: string; start: string; segment: string };
+    const start = sessionStart(params.start, params.fileId);
+    if (start == null) return reply.code(404).send({ error: "not_found" });
+    return sendSegment(request, reply, params.fileId, start, params.segment);
   });
 
   app.get("/api/stream/:fileId", async (request, reply) => {
@@ -683,6 +695,8 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     reply.type(name.endsWith(".png") ? "image/png" : "image/jpeg");
     return reply.send(fs.createReadStream(file));
   });
+
+  registerLiveTv(app);
 
   const dist = path.join(repoRoot, "apps", "web", "dist");
   if (fs.existsSync(dist)) {

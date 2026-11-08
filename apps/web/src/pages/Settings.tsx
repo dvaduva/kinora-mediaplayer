@@ -7,22 +7,24 @@ import { Dialog } from "../movieExtras";
 import { Icon } from "../ui";
 import type { SectionProps } from "./settings/common";
 import { LibrariesSection } from "./settings/LibrariesSection";
+import { LiveTvSection } from "./settings/LiveTvSection";
 import { MetadataSection } from "./settings/MetadataSection";
 import { NetworkSection } from "./settings/NetworkSection";
 import { PlaybackSection } from "./settings/PlaybackSection";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 
-type SectionId = "libraries" | "playback" | "metadata" | "network" | "storage" | "system";
+type SectionId = "libraries" | "livetv" | "playback" | "metadata" | "network" | "storage" | "system";
 
 const SECTIONS: {
   id: SectionId;
-  icon: "folder" | "captions" | "tag" | "network" | "storage" | "system";
+  icon: "folder" | "live" | "captions" | "tag" | "network" | "storage" | "system";
   title: (t: Copy) => string;
   help: (t: Copy) => string;
   view: ComponentType<SectionProps>;
 }[] = [
   { id: "libraries", icon: "folder", title: (t) => t.settingsLibraries, help: (t) => t.settingsLibrariesHelp, view: LibrariesSection },
+  { id: "livetv", icon: "live", title: (t) => t.settingsLiveTv, help: (t) => t.settingsLiveTvHelp, view: LiveTvSection },
   { id: "playback", icon: "captions", title: (t) => t.settingsPlayback, help: (t) => t.settingsPlaybackHelp, view: PlaybackSection },
   { id: "metadata", icon: "tag", title: (t) => t.settingsMetadata, help: (t) => t.settingsMetadataHelp, view: MetadataSection },
   { id: "network", icon: "network", title: (t) => t.settingsNetwork, help: (t) => t.settingsNetworkHelp, view: NetworkSection },

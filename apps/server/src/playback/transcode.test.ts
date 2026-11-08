@@ -18,6 +18,8 @@ import {
   playlistForClient,
   playlistHasSegment,
   prepareAppendPlaylist,
+  sessionKey,
+  transcodeLocation,
   videoEncoder,
 } from "./transcode.js";
 
@@ -64,6 +66,20 @@ test("encodes other video to 8-bit H.264 with keyframes on segment boundaries", 
   assert.equal(videoEncoder(undefined), "libx264");
   assert.equal(videoEncoder("h264_qsv"), "h264_qsv");
   assert.equal(videoEncoder("x; rm -rf"), "libx264");
+});
+
+test("starts a separate session midway for Live TV", () => {
+  const args = hlsArgs("movie.mkv", "C:\cache", { copyVideo: true, copyAudio: true }, { seek: 1800, startNumber: 0, append: false });
+  assert.equal(args[args.indexOf("-ss") + 1], "1800.000");
+  assert.ok(args.indexOf("-ss") < args.indexOf("-i"));
+  assert.doesNotMatch(args[args.indexOf("-hls_flags") + 1]!, /append_list/);
+  assert.equal(args.includes("-start_number"), false);
+  const whole = transcodeLocation({ fileId: "f1", size: 10, mtime: 20 });
+  const midway = transcodeLocation({ fileId: "f1", size: 10, mtime: 20, start: 1800 });
+  assert.notEqual(whole.dir, midway.dir);
+  assert.equal(transcodeLocation({ fileId: "f1", size: 10, mtime: 20, start: 0 }).key, whole.key);
+  assert.equal(sessionKey("f1"), "f1");
+  assert.equal(sessionKey("f1", 1800), "f1@1800");
 });
 
 test("continues a partial transcode after the segments already written", () => {

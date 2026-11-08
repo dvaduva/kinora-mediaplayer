@@ -130,6 +130,22 @@ const ICONS = {
       <path d="m7 10 3 2.5L7 15M12.5 15H17" />
     </>
   ),
+  /* A point broadcasting waves to both sides. */
+  live: (
+    <>
+      <circle cx="12" cy="12" r="2" />
+      <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
+    </>
+  ),
+  play: <path d="M8 5.5v13l10.5-6.5z" />,
+  pause: <path d="M8.5 5.5v13M15.5 5.5v13" />,
+  volume: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />,
+  muted: <path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3zM16 9.5l5 5M21 9.5l-5 5" />,
+  fullscreen: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
+  up: <path d="m6 15 6-6 6 6" />,
+  down: <path d="m6 9 6 6 6-6" />,
+  rewind: <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4.5v4h4" />,
+  forward: <path d="M20 12a8 8 0 1 1-2.4-5.7M20 4.5v4h-4" />,
   chevron: <path d="m9 5 7 7-7 7" />,
   back: <path d="m15 5-7 7 7 7" />,
   settings: (

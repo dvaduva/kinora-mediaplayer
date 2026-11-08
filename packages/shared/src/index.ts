@@ -539,3 +539,132 @@ export interface DirectoryListing {
   parent: string | null;
   entries: { name: string; path: string }[];
 }
+
+/* Live TV ---------------------------------------------------------------- */
+
+export type ChannelKind = "virtual" | "iptv";
+
+/** Sequential plays episodes in order and rotates between series; shuffle uses the channel's seed. */
+export type ChannelOrder = "sequential" | "shuffle";
+
+export type ChannelSourceType = "genre" | "series" | "movie" | "library" | "decade" | "person";
+
+export const CHANNEL_SOURCE_TYPES: readonly ChannelSourceType[] = ["genre", "series", "movie", "library", "decade", "person"];
+
+export function isChannelSourceType(value: unknown): value is ChannelSourceType {
+  return typeof value === "string" && (CHANNEL_SOURCE_TYPES as readonly string[]).includes(value);
+}
+
+/** One rule of a virtual channel; a channel plays everything any of its rules matches. */
+export interface ChannelSource {
+  type: ChannelSourceType;
+  /** Genre name, series or movie id, library id, decade start year ("1990") or person name. */
+  value: string;
+}
+
+export interface LiveChannel {
+  id: string;
+  kind: ChannelKind;
+  number: number;
+  name: string;
+  /** Uploaded logo; null means the client draws one from the name. */
+  logoUrl: string | null;
+  orderMode: ChannelOrder;
+  enabled: boolean;
+  sources: ChannelSource[];
+  /** No program from now on: the rules match nothing playable. Such channels stay out of the guide. */
+  empty: boolean;
+}
+
+export interface ChannelInput {
+  name: string;
+  number: number;
+  orderMode: ChannelOrder;
+  enabled: boolean;
+  sources: ChannelSource[];
+}
+
+export type ProgramItemType = "movie" | "episode" | "track" | "external";
+
+export interface ChannelProgram {
+  id: number;
+  channelId: string;
+  /** Epoch milliseconds. */
+  start: number;
+  end: number;
+  itemType: ProgramItemType;
+  itemId: string | null;
+  fileId: string | null;
+  title: string;
+  /** e.g. "S1 · E4 · Pilot" for an episode, the year for a movie. */
+  subtitle: string | null;
+  description: string | null;
+  /** TMDB image path or "cover:" path, as used by the rest of the library. */
+  image: string | null;
+  /** Library page of the title ("/movies/…", "/series/…"), when it still exists. */
+  libraryPath: string | null;
+}
+
+export interface LiveGuide {
+  /** Server clock, epoch milliseconds, so clients can correct their own. */
+  now: number;
+  from: number;
+  to: number;
+  channels: LiveChannel[];
+  programs: ChannelProgram[];
+}
+
+export interface ChannelNow {
+  now: number;
+  channel: LiveChannel;
+  current: ChannelProgram | null;
+  next: ChannelProgram | null;
+  /** Seconds into the current program. */
+  offset: number;
+}
+
+/** How a client starts a channel: which stream, and where in it "live" is. */
+export interface LivePlayback {
+  now: number;
+  channel: LiveChannel;
+  program: ChannelProgram;
+  next: ChannelProgram | null;
+  /** Seconds into the program at `now`. */
+  offset: number;
+  mode: "direct" | "hls";
+  src: string;
+  /** Transcode status to poll before an HLS stream can start; null for direct play. */
+  statusUrl: string | null;
+  /** Program time (seconds) at which the stream's own timeline starts; 0 for direct play. */
+  mediaStart: number;
+}
+
+/** Choices offered by the channel form. */
+export interface ChannelOptions {
+  genres: string[];
+  series: { id: string; title: string; year: number | null }[];
+  movies: { id: string; title: string; year: number | null }[];
+  libraries: { id: string; name: string; type: LibraryType }[];
+  decades: number[];
+  people: string[];
+  nextNumber: number;
+}
+
+/** Stable color for a generated channel logo, derived from its name. */
+export function channelColor(name: string) {
+  let hash = 0;
+  for (const char of name.trim().toLowerCase()) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) >>> 0;
+  return `hsl(${hash % 360} 45% 34%)`;
+}
+
+/** Up to three letters for a generated channel logo: initials of the words, or the start of a single word. */
+export function channelInitials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "TV";
+  if (words.length === 1) return words[0]!.slice(0, 3).toUpperCase();
+  return words
+    .slice(0, 3)
+    .map((word) => [...word][0] ?? "")
+    .join("")
+    .toUpperCase();
+}
