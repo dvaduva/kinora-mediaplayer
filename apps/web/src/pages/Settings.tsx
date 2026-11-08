@@ -1,229 +1,118 @@
-import { useEffect, useState, type FormEvent } from "react";
-import type { AppSettings, LibraryType, LibraryView } from "@kinora/shared";
-import { SUBTITLE_SIZES } from "@kinora/shared";
+import { useEffect, useState, type ComponentType } from "react";
+import { Link, Navigate, useBlocker, useParams } from "react-router-dom";
+import type { AppSettings } from "@kinora/shared";
 import { api } from "../api";
-import { useLocale } from "../i18n";
-import { formatBytes } from "../media";
+import { useLocale, type Copy } from "../i18n";
+import { Dialog } from "../movieExtras";
+import { Icon } from "../ui";
+import type { SectionProps } from "./settings/common";
+import { LibrariesSection } from "./settings/LibrariesSection";
+import { MetadataSection } from "./settings/MetadataSection";
+import { NetworkSection } from "./settings/NetworkSection";
+import { PlaybackSection } from "./settings/PlaybackSection";
+import { StorageSection } from "./settings/StorageSection";
+import { SystemSection } from "./settings/SystemSection";
 
-const SUBTITLE_COLORS = ["#ffffff", "#ffe36e", "#9be7ff", "#b6f3a5", "#ffb3c7"];
+type SectionId = "libraries" | "playback" | "metadata" | "network" | "storage" | "system";
 
-export function SettingsPage() {
-  const { t, locale } = useLocale();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [libraries, setLibraries] = useState<LibraryView[]>([]);
-  const [name, setName] = useState("");
-  const [type, setType] = useState<LibraryType>("movie");
-  const [roots, setRoots] = useState("");
-  const [tmdb, setTmdb] = useState("");
-  const [omdb, setOmdb] = useState("");
-  const [access, setAccess] = useState("");
-  const [bindHost, setBindHost] = useState("127.0.0.1");
-  const [subtitleLanguage, setSubtitleLanguage] = useState("ro");
-  const [subtitleSize, setSubtitleSize] = useState(100);
-  const [subtitleColor, setSubtitleColor] = useState("#ffffff");
-  const [cacheGb, setCacheGb] = useState("30");
-  const [message, setMessage] = useState<string | null>(null);
+const SECTIONS: {
+  id: SectionId;
+  icon: "folder" | "captions" | "tag" | "network" | "storage" | "system";
+  title: (t: Copy) => string;
+  help: (t: Copy) => string;
+  view: ComponentType<SectionProps>;
+}[] = [
+  { id: "libraries", icon: "folder", title: (t) => t.settingsLibraries, help: (t) => t.settingsLibrariesHelp, view: LibrariesSection },
+  { id: "playback", icon: "captions", title: (t) => t.settingsPlayback, help: (t) => t.settingsPlaybackHelp, view: PlaybackSection },
+  { id: "metadata", icon: "tag", title: (t) => t.settingsMetadata, help: (t) => t.settingsMetadataHelp, view: MetadataSection },
+  { id: "network", icon: "network", title: (t) => t.settingsNetwork, help: (t) => t.settingsNetworkHelp, view: NetworkSection },
+  { id: "storage", icon: "storage", title: (t) => t.settingsStorage, help: (t) => t.settingsStorageHelp, view: StorageSection },
+  { id: "system", icon: "system", title: (t) => t.settingsSystem, help: (t) => t.settingsSystemHelp, view: SystemSection },
+];
 
-  function reload() {
-    api<AppSettings>("/api/settings").then((data) => {
-      setSettings(data);
-      setBindHost(data.bindHost);
-      setSubtitleLanguage(data.subtitleLanguage);
-      setSubtitleSize(data.subtitleStyle.size);
-      setSubtitleColor(data.subtitleStyle.color);
-      setCacheGb(String(data.transcodeCacheGb));
-    }).catch(() => undefined);
-    api<LibraryView[]>("/api/libraries").then(setLibraries).catch(() => setLibraries([]));
-  }
-  useEffect(() => {
-    reload();
-    const timer = window.setInterval(() => {
-      api<LibraryView[]>("/api/libraries").then(setLibraries).catch(() => undefined);
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  async function addLibrary(event: FormEvent) {
-    event.preventDefault();
-    setMessage(null);
-    try {
-      await api("/api/libraries", {
-        method: "POST",
-        body: JSON.stringify({ name, type, roots: roots.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) }),
-      });
-      setName("");
-      setRoots("");
-      reload();
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "error");
-    }
-  }
-
-  async function clearCache() {
-    await api("/api/cache/transcode/clear", { method: "POST" });
-    reload();
-  }
-
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    setMessage(null);
-    try {
-      await saveSettings();
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : "error");
-    }
-  }
-
-  async function saveSettings() {
-    await api("/api/settings", {
-      method: "PUT",
-      body: JSON.stringify({
-        tmdbReadToken: tmdb,
-        omdbApiKey: omdb,
-        bindHost,
-        accessToken: access,
-        transcodeCacheGb: Number(cacheGb),
-      }),
-    });
-    await api("/api/profile", { method: "PUT", body: JSON.stringify({ subtitleLanguage, subtitleSize, subtitleColor }) });
-    setTmdb("");
-    setOmdb("");
-    setAccess("");
-    setMessage(t.saved);
-    reload();
-  }
-
-  return (
-    <div className="stack">
-      <h1>{t.settings}</h1>
-      {settings && !settings.ffprobe ? <p className="banner">{t.ffprobeMissing}</p> : null}
-      {settings && !settings.ffmpeg ? <p className="banner">{t.ffmpegMissing}</p> : null}
-      <form className="stack" onSubmit={(event) => void addLibrary(event)}>
-        <h2>{t.addLibrary}</h2>
-        <label className="field">
-          {t.libraryName}
-          <input value={name} onChange={(event) => setName(event.target.value)} required />
-        </label>
-        <label className="field">
-          {t.typeMovie}
-          <select value={type} onChange={(event) => setType(event.target.value as LibraryType)}>
-            <option value="movie">{t.typeMovie}</option>
-            <option value="series">{t.typeSeries}</option>
-            <option value="music">{t.typeMusic}</option>
-          </select>
-        </label>
-        <label className="field">
-          {t.folder}
-          <textarea value={roots} onChange={(event) => setRoots(event.target.value)} required />
-        </label>
-        <button className="play" type="submit">{t.addLibrary}</button>
-      </form>
-      {libraries.map((library) => (
-        <section className="library-block" key={library.id}>
-          <h2>{library.name}</h2>
-          <p className="muted">{library.roots.join(", ")}</p>
-          <p className="muted">
-            {library.scan.status === "running"
-              ? `${t.scanning} ${library.scan.scanned}`
-              : library.scan.message ?? scanSummary(locale, library.scan.scanned, library.scan.matched)}
-          </p>
-          <div className="actions">
-            <button className="text-button" type="button" onClick={() => void api(`/api/libraries/${library.id}/scan`, { method: "POST" }).then(reload)}>
-              {t.rescan}
-            </button>
-            <button
-              className="text-button danger"
-              type="button"
-              onClick={() => void api(`/api/libraries/${library.id}`, { method: "DELETE" }).then(reload)}
-            >
-              {t.remove}
-            </button>
-          </div>
-        </section>
-      ))}
-      <form className="stack" onSubmit={(event) => void save(event)}>
-        <label className="field">
-          {t.tmdb}
-          <input value={tmdb} onChange={(event) => setTmdb(event.target.value)} placeholder={settings?.tmdbHint ?? ""} autoComplete="off" />
-        </label>
-        <p className="muted">{t.tmdbHelp}</p>
-        <label className="field">
-          {t.omdb}
-          <input value={omdb} onChange={(event) => setOmdb(event.target.value)} placeholder={settings?.omdbHint ?? ""} autoComplete="off" />
-        </label>
-        <p className="muted">{t.omdbHelp}</p>
-        <label className="field">
-          {t.access}
-          <input value={access} onChange={(event) => setAccess(event.target.value)} type="password" autoComplete="off" />
-        </label>
-        <p className="muted">{t.accessHelp}</p>
-        <label className="field">
-          {t.bind}
-          <input value={bindHost} onChange={(event) => setBindHost(event.target.value)} />
-        </label>
-        <p className="muted">{t.bindHelp}</p>
-        <label className="field">
-          {t.subtitles}
-          <select value={subtitleLanguage} onChange={(event) => setSubtitleLanguage(event.target.value)}>
-            <option value="ro">Română</option>
-            <option value="en">English</option>
-            <option value="off">{t.off}</option>
-          </select>
-        </label>
-        <fieldset className="field subtitle-look">
-          <legend>{t.subtitleLook}</legend>
-          <label className="field">
-            {t.subtitleSize}
-            <select value={subtitleSize} onChange={(event) => setSubtitleSize(Number(event.target.value))}>
-              {(SUBTITLE_SIZES.includes(subtitleSize as (typeof SUBTITLE_SIZES)[number]) ? SUBTITLE_SIZES : [...SUBTITLE_SIZES, subtitleSize].sort((a, b) => a - b)).map((size) => (
-                <option key={size} value={size}>{size}%</option>
-              ))}
-            </select>
-          </label>
-          <span>{t.subtitleColor}</span>
-          <div className="swatches">
-            {SUBTITLE_COLORS.map((color) => (
-              <button
-                key={color}
-                className="swatch"
-                type="button"
-                style={{ background: color }}
-                aria-label={color}
-                aria-pressed={subtitleColor.toLowerCase() === color}
-                onClick={() => setSubtitleColor(color)}
-              />
-            ))}
-            <input type="color" value={subtitleColor} onChange={(event) => setSubtitleColor(event.target.value)} aria-label={t.subtitleColor} />
-          </div>
-          <div className="cue-preview" aria-hidden="true">
-            <span style={{ color: subtitleColor, fontSize: `${(5 * subtitleSize) / 100}cqh` }}>{t.subtitlePreview}</span>
-          </div>
-        </fieldset>
-        <label className="field">
-          {t.cacheLimit}
-          <input value={cacheGb} onChange={(event) => setCacheGb(event.target.value)} type="number" min={1} step={1} />
-        </label>
-        <p className="muted">{t.cacheHelp}</p>
-        <div className="actions">
-          <span className="muted">{t.cacheUsed.replace("{size}", formatBytes(settings?.transcodeCacheBytes ?? 0, locale))}</span>
-          <button className="text-button" type="button" onClick={() => void clearCache()}>
-            {t.clearCache}
-          </button>
-        </div>
-        <button className="play" type="submit">{t.save}</button>
-        {message ? <p className="muted">{message}</p> : null}
-      </form>
-    </div>
-  );
+/** `/settings` and `/settings/libraries` show the same section; anything outside settings is its own page. */
+function openSection(pathname: string) {
+  const path = pathname.replace(/\/+$/, "");
+  return path === "/settings" ? "/settings/libraries" : path;
 }
 
-function scanSummary(locale: string, scanned: number, matched: number) {
-  if (locale === "ro") {
-    const files = scanned === 1 ? "1 fișier" : `${scanned} fișiere`;
-    const hits = matched === 1 ? "1 potrivit" : `${matched} potrivite`;
-    return `${files}, ${hits}`;
+/**
+ * Settings as a menu and one open section. On wide screens `/settings` opens the first section beside the menu;
+ * on narrow ones it shows only the menu, and a section replaces it with a way back.
+ */
+export function SettingsPage() {
+  const { t } = useLocale();
+  const { section } = useParams();
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  // Any navigation away from a section with unsaved edits waits for an answer: menu, sidebar, search, Back.
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && openSection(currentLocation.pathname) !== openSection(nextLocation.pathname));
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  function reload() {
+    api<AppSettings>("/api/settings").then(setSettings).catch(() => undefined);
   }
-  const files = scanned === 1 ? "1 file" : `${scanned} files`;
-  const hits = matched === 1 ? "1 matched" : `${matched} matched`;
-  return `${files}, ${hits}`;
+  useEffect(reload, []);
+
+  const current = SECTIONS.find((entry) => entry.id === (section ?? "libraries"));
+  if (!current) return <Navigate to="/settings" replace />;
+
+  const warnings: Partial<Record<SectionId, boolean>> = settings
+    ? { system: !settings.ffmpeg || !settings.ffprobe, metadata: !settings.tmdbConfigured }
+    : {};
+  const View = current.view;
+
+  return (
+    <div className={`settings${section ? " has-section" : ""}`}>
+      <h1 className="settings-title">{t.settings}</h1>
+      <nav className="settings-nav" aria-label={t.settings}>
+        {SECTIONS.map((entry) => (
+          <Link
+            key={entry.id}
+            to={`/settings/${entry.id}`}
+            className={entry.id === current.id ? "active" : undefined}
+            aria-current={entry.id === current.id ? "page" : undefined}
+          >
+            <Icon name={entry.icon} />
+            <span className="settings-nav-text">
+              <span>{entry.title(t)}</span>
+              <small>{entry.help(t)}</small>
+            </span>
+            {warnings[entry.id] ? <span className="settings-dot" aria-hidden="true" /> : null}
+            <span className="settings-nav-chevron"><Icon name="chevron" /></span>
+          </Link>
+        ))}
+      </nav>
+      <div className="settings-panel">
+        <Link className="settings-back" to="/settings">
+          <Icon name="back" />
+          {t.settingsBack}
+        </Link>
+        {settings ? (
+          <View key={current.id} settings={settings} reload={reload} onDirty={setDirty} />
+        ) : (
+          <div className="settings-card">
+            <span className="skeleton skeleton-line title" />
+            <span className="skeleton skeleton-field" />
+          </div>
+        )}
+      </div>
+      {blocker.state === "blocked" ? (
+        <Dialog label={t.leaveTitle} onClose={() => blocker.reset()} className="leave-dialog">
+          <h2 className="dialog-title">{t.leaveTitle}</h2>
+          <p>{t.leaveText.replace("{section}", current.title(t))}</p>
+          <div className="dialog-actions">
+            <button className="play" type="button" data-autofocus onClick={() => blocker.reset()}>{t.leaveStay}</button>
+            <button className="text-button danger" type="button" onClick={() => blocker.proceed()}>{t.leaveDiscard}</button>
+          </div>
+        </Dialog>
+      ) : null}
+    </div>
+  );
 }

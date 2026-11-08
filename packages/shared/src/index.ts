@@ -530,3 +530,12 @@ export const LANGUAGE_NAMES: Record<string, { ro: string; en: string }> = {
   hu: { ro: "Maghiară", en: "Hungarian" },
   pl: { ro: "Poloneză", en: "Polish" },
 };
+
+/** One level of the server's file system, for picking library folders. */
+export interface DirectoryListing {
+  /** The folder shown, or null for the top level (drives on Windows, "/" elsewhere). */
+  path: string | null;
+  /** The folder one level up; null at the top level, and "" when the parent is the top level itself. */
+  parent: string | null;
+  entries: { name: string; path: string }[];
+}

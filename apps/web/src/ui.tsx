@@ -96,6 +96,42 @@ const ICONS = {
       <circle cx="12" cy="16.6" r=".4" fill="currentColor" />
     </>
   ),
+  folder: <path d="M3.5 6.5a1 1 0 0 1 1-1h4.6l2 2.2h8.4a1 1 0 0 1 1 1v9.8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z" />,
+  /* A screen with two subtitle lines. */
+  captions: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M7 12.5h5M14 12.5h3M7 15.5h3M12 15.5h5" />
+    </>
+  ),
+  tag: (
+    <>
+      <path d="M3.5 12.6V4.5a1 1 0 0 1 1-1h8.1l8 8a1 1 0 0 1 0 1.4l-7.7 7.7a1 1 0 0 1-1.4 0z" />
+      <circle cx="8" cy="8" r="1.4" />
+    </>
+  ),
+  network: (
+    <>
+      <rect x="9" y="3.5" width="6" height="5" rx="1" />
+      <rect x="3" y="15.5" width="6" height="5" rx="1" />
+      <rect x="15" y="15.5" width="6" height="5" rx="1" />
+      <path d="M12 8.5v3.5M6 15.5V12h12v3.5" />
+    </>
+  ),
+  storage: (
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="2.5" />
+      <path d="M4.5 6v12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V6M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5" />
+    </>
+  ),
+  system: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="1.5" />
+      <path d="m7 10 3 2.5L7 15M12.5 15H17" />
+    </>
+  ),
+  chevron: <path d="m9 5 7 7-7 7" />,
+  back: <path d="m15 5-7 7 7 7" />,
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />

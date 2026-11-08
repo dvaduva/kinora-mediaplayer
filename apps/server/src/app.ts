@@ -52,6 +52,7 @@ import {
   transcodeCacheUsage,
 } from "./playback/transcode.js";
 import { detectTools, tools } from "./process.js";
+import { browse, BrowseError } from "./browse.js";
 import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
 import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
 import { profiles } from "./db/schema.js";
@@ -240,6 +241,15 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   });
 
   app.get("/api/libraries", async () => libraryViews());
+
+  app.get("/api/folders", async (request, reply) => {
+    try {
+      return browse(String((request.query as { path?: string }).path ?? ""));
+    } catch (error) {
+      if (error instanceof BrowseError) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+  });
 
   app.post("/api/libraries", async (request, reply) => {
     const body = asRecord(request.body);

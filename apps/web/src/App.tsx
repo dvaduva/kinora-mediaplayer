@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { createBrowserRouter, Link, NavLink, Route, RouterProvider, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { AppSetup } from "@kinora/shared";
 import { api, setUnauthorized } from "./api";
 import { prefetch } from "./cache";
@@ -38,15 +38,29 @@ export function App() {
   }
   if (!setup) return null;
   if (setup.tokenRequired && !authed) return <Gate onSuccess={() => setAuthed(true)} />;
-  return (
-    <BrowserRouter>
-      <LocaleProvider>
-        <AudioProvider>
-          <Shell ffprobe={setup.ffprobe} />
-        </AudioProvider>
-      </LocaleProvider>
-    </BrowserRouter>
+  return <Routed ffprobe={setup.ffprobe} />;
+}
+
+/**
+ * A data router, so pages can hold navigation back (Settings asks before dropping unsaved edits).
+ * The routes themselves stay as <Routes> inside Shell; this only wraps them.
+ */
+function Routed(props: { ffprobe: boolean }) {
+  const [router] = useState(() =>
+    createBrowserRouter([
+      {
+        path: "*",
+        element: (
+          <LocaleProvider>
+            <AudioProvider>
+              <Shell ffprobe={props.ffprobe} />
+            </AudioProvider>
+          </LocaleProvider>
+        ),
+      },
+    ]),
   );
+  return <RouterProvider router={router} />;
 }
 
 function ServerDown() {
@@ -279,7 +293,7 @@ function Shell(props: { ffprobe: boolean }) {
           <Route path="/music/artists/:id" element={<ArtistPage />} />
           <Route path="/play/:fileId" element={<PlayerPage />} />
           <Route path="/identify" element={<IdentifyPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/settings/:section?" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />
         </Routes>
       </main>
