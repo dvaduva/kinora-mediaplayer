@@ -842,3 +842,16 @@ a.rating-chip:hover strong { color: var(--brass); }
 @media (prefers-reduced-motion: reduce) {
   .spin, .skeleton-chip { animation: none; }
 }
+
+/* Trailers & clips rail on the page of a title outside the library. */
+.video-rail { grid-auto-columns: 280px; }
+.video-card { display: grid; gap: 8px; text-align: left; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.video-card span, .video-card small { display: block; }
+.video-card small { color: var(--faint); }
+.video-thumb { position: relative; }
+.video-thumb svg {
+  position: absolute; inset: 50% auto auto 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+  padding: 10px; border-radius: 50%; background: rgba(20, 18, 26, 0.7); fill: var(--paper); transition: background 0.15s;
+}
+.video-card:hover .video-thumb svg, .video-card:focus-visible .video-thumb svg { background: var(--brass); }
+.poster-card.dim:hover, .poster-card.dim:focus-visible { opacity: 1; }

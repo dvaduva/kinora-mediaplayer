@@ -5,10 +5,11 @@ import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
-import type { LibraryType, PersonDetail } from "@kinora/shared";
+import type { ExternalTitleDetail, LibraryType, PersonDetail } from "@kinora/shared";
 import { isSubtitleColor, isSubtitleSize, SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import {
   albumDetail,
+  decorateSimilar,
   artistDetail,
   homeView,
   identifyQueue,
@@ -18,6 +19,7 @@ import {
   listArtists,
   listMovies,
   listSeries,
+  localTitleId,
   movieDetail,
   personCredits,
   playbackView,
@@ -34,7 +36,7 @@ import { eq } from "drizzle-orm";
 import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from "./metadata/images.js";
 import { searchReleases } from "./metadata/musicbrainz.js";
 import { albumClips } from "./metadata/clips.js";
-import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
+import { fetchMovie, fetchPerson, fetchSeries, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { EditError, movieArtwork, movieRatings, movieReviewList, saveOwnReview, updateMovie } from "./movieExtras.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
@@ -338,6 +340,46 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       credits,
     };
     return detail;
+  });
+  app.get("/api/tmdb/:kind/:id", async (request, reply) => {
+    const params = request.params as { kind: string; id: string };
+    const tmdbId = Number(params.id);
+    if ((params.kind !== "movie" && params.kind !== "tv") || !Number.isInteger(tmdbId) || tmdbId <= 0) return reply.code(400).send({ error: "bad_id" });
+    const kind = params.kind;
+    try {
+      const localId = localTitleId(kind, tmdbId);
+      if (kind === "movie") {
+        const movie = await fetchMovie(tmdbId);
+        const detail: ExternalTitleDetail = {
+          ...movie,
+          mediaType: "movie",
+          localId,
+          creators: [],
+          similar: decorateSimilar(movie.similar),
+        };
+        return detail;
+      }
+      const show = await fetchSeries(tmdbId);
+      const detail: ExternalTitleDetail = {
+        ...show,
+        mediaType: "tv",
+        localId,
+        tagline: null,
+        releaseDate: null,
+        runtime: null,
+        directors: [],
+        writers: [],
+        stills: [],
+        similar: decorateSimilar(show.similar),
+      };
+      return detail;
+    } catch (error) {
+      if (error instanceof TmdbNotConfiguredError) return reply.code(400).send({ error: "tmdb_not_configured" });
+      if (error instanceof TmdbUnreachableError) return reply.code(503).send({ error: "tmdb_unreachable" });
+      if (error instanceof Error && error.message === "tmdb_404") return reply.code(404).send({ error: "not_found" });
+      request.log.warn(error);
+      return reply.code(502).send({ error: "tmdb_failed" });
+    }
   });
   app.get("/api/albums", async () => listAlbums());
   app.get("/api/albums/:id", async (request, reply) => albumDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));

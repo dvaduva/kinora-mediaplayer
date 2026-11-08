@@ -107,6 +107,34 @@ export interface Trailer {
   official: boolean;
 }
 
+/** A TMDB title that is not (necessarily) in the library, fetched live for its detail page. */
+export interface ExternalTitleDetail {
+  mediaType: "movie" | "tv";
+  tmdbId: number;
+  imdbId: string | null;
+  /** Set when the library has this title; the client then opens the library page instead. */
+  localId: string | null;
+  title: string;
+  originalTitle: string | null;
+  tagline: string | null;
+  overview: string | null;
+  year: number | null;
+  releaseDate: string | null;
+  runtime: number | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  rating: number | null;
+  genres: string[];
+  directors: string[];
+  writers: string[];
+  creators: string[];
+  cast: CastMember[];
+  stills: string[];
+  similar: SimilarTitle[];
+  /** Trailers first, then teasers and clips. */
+  videos: Trailer[];
+}
+
 export type WatchStatus = "new" | "unwatched" | "watched";
 
 export const WATCH_STATUSES: readonly WatchStatus[] = ["new", "unwatched", "watched"];

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pickTrailer } from "./trailer.js";
+import { pickTrailer, rankVideos } from "./trailer.js";
 
 test("prefers an official Romanian trailer over a newer English one", () => {
   const chosen = pickTrailer([
@@ -52,4 +52,17 @@ test("falls back to a teaser when no trailer exists", () => {
 
 test("returns nothing when TMDB has no YouTube trailer or teaser", () => {
   assert.equal(pickTrailer([]), null);
+});
+
+test("lists trailers before teasers and clips, skipping other sites, other types and duplicates", () => {
+  const video = (key: string, type: string, site = "YouTube") => ({ key, name: key, site, type, official: true, language: "en", publishedAt: null });
+  const ranked = rankVideos([
+    video("clip", "Clip"),
+    video("vimeo", "Trailer", "Vimeo"),
+    video("teaser", "Teaser"),
+    video("bloopers", "Bloopers"),
+    video("trailer", "Trailer"),
+    video("trailer", "Trailer"),
+  ]);
+  assert.deepEqual(ranked.map((item) => item.key), ["trailer", "teaser", "clip"]);
 });

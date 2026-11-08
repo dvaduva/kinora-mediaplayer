@@ -7,7 +7,7 @@ import { getSetting } from "../settings.js";
 import { titlesEqual } from "../parse/names.js";
 import { createQueue } from "./gate.js";
 import { downloadTmdbImages } from "./images.js";
-import { pickTrailer, type TrailerCandidate } from "./trailer.js";
+import { pickTrailer, rankVideos, type TrailerCandidate } from "./trailer.js";
 
 // One in-flight TMDB call at a time — parallel connects pile up and hit Connect Timeout on flaky links.
 const enqueueTmdb = createQueue();
@@ -527,6 +527,8 @@ export interface MovieMetadata {
   stills: string[];
   similar: ReturnType<typeof similarOf>;
   trailer: Trailer | null;
+  /** Trailers, teasers and clips, best first (not stored for library titles). */
+  videos: Trailer[];
 }
 
 export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
@@ -583,6 +585,7 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
     stills,
     similar,
     trailer,
+    videos: rankVideos(videos),
   };
 }
 
@@ -655,6 +658,8 @@ export interface SeriesMetadata {
   cast: CastMember[];
   similar: ReturnType<typeof similarOf>;
   trailer: Trailer | null;
+  /** Trailers, teasers and clips, best first (not stored for library titles). */
+  videos: Trailer[];
 }
 
 export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
@@ -702,6 +707,7 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
     cast,
     similar,
     trailer,
+    videos: rankVideos(videos),
   };
 }
 

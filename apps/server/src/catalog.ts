@@ -187,15 +187,36 @@ function rank(version: MediaVersion) {
   return (version.playable ? 1_000_000_000 : 0) + (version.width ?? 0) * (version.height ?? 0) + version.size / 1_000_000_000;
 }
 
-function decorateSimilar(items: StoredSimilar[]): SimilarTitle[] {
-  return items.map((item) => {
-    if (item.mediaType === "tv") {
-      const local = db.select().from(series).all().find((show) => show.tmdbId === item.tmdbId);
-      return { ...item, inLibrary: Boolean(local), localId: local?.id ?? null };
-    }
-    const local = db.select().from(movies).all().find((movie) => movie.tmdbId === item.tmdbId);
-    return { ...item, inLibrary: Boolean(local), localId: local?.id ?? null };
+/** Local ids of library titles with these TMDB ids, keyed by TMDB id. */
+function localIdsByTmdb(kind: "movie" | "tv", tmdbIds: number[]) {
+  const ids = new Map<number, string>();
+  if (tmdbIds.length === 0) return ids;
+  const rows =
+    kind === "tv"
+      ? db.select({ id: series.id, tmdbId: series.tmdbId }).from(series).where(inArray(series.tmdbId, tmdbIds)).all()
+      : db.select({ id: movies.id, tmdbId: movies.tmdbId }).from(movies).where(inArray(movies.tmdbId, tmdbIds)).all();
+  for (const row of rows) {
+    if (row.tmdbId != null && !ids.has(row.tmdbId)) ids.set(row.tmdbId, row.id);
+  }
+  return ids;
+}
+
+/** The library copy of a TMDB title, if there is one. */
+export function localTitleId(kind: "movie" | "tv", tmdbId: number) {
+  return localIdsByTmdb(kind, [tmdbId]).get(tmdbId) ?? null;
+}
+
+/** Marks which recommendations are in the library and lists those first, keeping TMDB's order within each group. */
+export function decorateSimilar(items: StoredSimilar[]): SimilarTitle[] {
+  const local = {
+    movie: localIdsByTmdb("movie", items.filter((item) => item.mediaType !== "tv").map((item) => item.tmdbId)),
+    tv: localIdsByTmdb("tv", items.filter((item) => item.mediaType === "tv").map((item) => item.tmdbId)),
+  };
+  const decorated = items.map((item) => {
+    const localId = local[item.mediaType === "tv" ? "tv" : "movie"].get(item.tmdbId) ?? null;
+    return { ...item, inLibrary: localId != null, localId };
   });
+  return [...decorated.filter((item) => item.inLibrary), ...decorated.filter((item) => !item.inLibrary)];
 }
 
 /** A movie counts as "new" for this long after it appears, unless it was part of the library's first scan. */

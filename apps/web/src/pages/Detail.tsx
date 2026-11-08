@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
-import { WATCH_STATUSES, type CastMember, type MediaVersion, type MovieDetail, type SeriesDetail, type SimilarTitle, type WatchStatus } from "@kinora/shared";
+import { Link, Navigate, useParams } from "react-router-dom";
+import { WATCH_STATUSES, type CastMember, type ExternalTitleDetail, type MediaVersion, type MovieDetail, type SeriesDetail, type SimilarTitle, type Trailer, type WatchStatus } from "@kinora/shared";
 import { api } from "../api";
 import { useLocale } from "../i18n";
 import { codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel } from "../media";
@@ -180,6 +180,88 @@ export function SeriesPage() {
         <TrailerModal youtubeKey={show.trailer.key} name={show.trailer.name} closeLabel={t.close} openLabel={t.openYoutube} onClose={() => setTrailerOpen(false)} />
       ) : null}
     </article>
+  );
+}
+
+/** Detail page for a TMDB title that is not in the library: facts, cast and every trailer, fetched live. */
+export function ExternalTitlePage() {
+  const { kind, id } = useParams();
+  const { t, locale } = useLocale();
+  const [title, setTitle] = useState<ExternalTitleDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [playing, setPlaying] = useState<Trailer | null>(null);
+  useEffect(() => {
+    if (!kind || !id) return;
+    setTitle(null);
+    setError(null);
+    setPlaying(null);
+    api<ExternalTitleDetail>(`/api/tmdb/${kind}/${id}`).then(setTitle).catch((reason: Error) => setError(reason.message));
+  }, [kind, id]);
+  if (title?.localId) return <Navigate replace to={title.mediaType === "tv" ? `/series/${title.localId}` : `/movies/${title.localId}`} />;
+  if (error) return <p className="muted">{error === "tmdb_not_configured" ? t.externalNoTmdb : t.externalFailed}</p>;
+  if (!title) return <p className="muted">…</p>;
+  const facts = [formatRuntime(title.runtime), title.genres.join(", "), formatDate(title.releaseDate, locale)].filter(Boolean).join(" · ");
+  const main = title.videos[0] ?? null;
+  return (
+    <article>
+      <header className="dossier-hero" style={{ backgroundImage: title.backdropPath ? `url(${imageUrl(title.backdropPath, "w1280")})` : undefined }}>
+        <div className="billboard-fade" />
+      </header>
+      <div className="dossier-grid">
+        <Poster src={title.posterPath} alt="" />
+        <div>
+          <p className="edition">{title.mediaType === "tv" ? `${t.seriesBadge} · ${t.absent}` : t.absent}</p>
+          <h1>
+            {title.title} {title.year ? <span className="year">{title.year}</span> : null}
+          </h1>
+          {title.originalTitle && title.originalTitle !== title.title ? <p className="muted">{title.originalTitle}</p> : null}
+          {facts ? <p className="facts">{facts}</p> : null}
+          {title.tagline ? <p className="tagline">{title.tagline}</p> : null}
+          {title.overview ? <p className="overview">{title.overview}</p> : null}
+          <div className="actions">
+            {main ? <button className="play" type="button" onClick={() => setPlaying(main)}>{t.trailer}</button> : null}
+            {title.imdbId ? <a className="text-button" href={`https://www.imdb.com/title/${title.imdbId}`} target="_blank" rel="noreferrer">{t.imdb}</a> : null}
+            <a className="text-button" href={`https://www.themoviedb.org/${title.mediaType}/${title.tmdbId}`} target="_blank" rel="noreferrer">{t.tmdbLink}</a>
+          </div>
+        </div>
+        <aside>
+          {title.rating ? (
+            <p className="score">
+              {title.rating.toFixed(1)} <small className="muted">{t.rating}</small>
+            </p>
+          ) : null}
+          <People label={t.direction} names={title.directors} />
+          <People label={t.writers} names={title.writers} />
+          <People label={t.creators} names={title.creators} />
+        </aside>
+      </div>
+      <Videos videos={title.videos} title={t.videos} types={{ Trailer: t.trailer, Teaser: t.videoTeaser, Clip: t.videoClip, Featurette: t.videoFeaturette, "Behind the Scenes": t.videoBehind }} onPlay={setPlaying} />
+      <Stills stills={title.stills} />
+      <Cast cast={title.cast} title={t.cast} />
+      <Similar items={title.similar} title={t.similar} absent={t.absent} />
+      {playing ? <TrailerModal youtubeKey={playing.key} name={playing.name} closeLabel={t.close} openLabel={t.openYoutube} onClose={() => setPlaying(null)} /> : null}
+    </article>
+  );
+}
+
+function Videos(props: { videos: Trailer[]; title: string; types: Record<string, string>; onPlay: (video: Trailer) => void }) {
+  if (props.videos.length === 0) return null;
+  return (
+    <section className="section">
+      <h2>{props.title}</h2>
+      <ScrollRail className="rail video-rail">
+        {props.videos.map((video) => (
+          <button className="video-card" type="button" key={video.key} onClick={() => props.onPlay(video)}>
+            <span className="video-thumb">
+              <img className="still" src={`https://i.ytimg.com/vi/${video.key}/hqdefault.jpg`} alt="" loading="lazy" decoding="async" />
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+            </span>
+            <span>{video.name}</span>
+            <small>{[props.types[video.type] ?? video.type, video.language?.toUpperCase()].filter(Boolean).join(" · ")}</small>
+          </button>
+        ))}
+      </ScrollRail>
+    </section>
   );
 }
 
@@ -434,7 +516,9 @@ function Similar(props: { items: SimilarTitle[]; title: string; absent: string; 
               <small>{item.inLibrary ? item.year : props.absent}</small>
             </>
           );
-          if (!item.inLibrary || !item.localId) return <div className="poster-card dim" key={item.tmdbId}>{body}</div>;
+          if (!item.inLibrary || !item.localId) {
+            return <Link className="poster-card dim" to={`/discover/${item.mediaType}/${item.tmdbId}`} key={item.tmdbId}>{body}</Link>;
+          }
           const to = item.mediaType === "tv" ? `/series/${item.localId}` : `/movies/${item.localId}`;
           return <Link className="poster-card" to={to} key={item.tmdbId}>{body}</Link>;
         })}

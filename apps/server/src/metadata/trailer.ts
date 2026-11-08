@@ -43,3 +43,23 @@ export function pickTrailer(videos: TrailerCandidate[]): ChosenTrailer | null {
     official: winner.official,
   };
 }
+
+const VIDEO_TYPES = ["Trailer", "Teaser", "Clip", "Featurette", "Behind the Scenes"];
+
+/** Every YouTube trailer, teaser and clip worth showing, trailers first, for titles outside the library. */
+export function rankVideos(videos: TrailerCandidate[], limit = 16): ChosenTrailer[] {
+  const seen = new Set<string>();
+  return videos
+    .filter((video) => video.site === "YouTube" && video.key && VIDEO_TYPES.includes(video.type))
+    .sort((a, b) => {
+      const byType = VIDEO_TYPES.indexOf(a.type) - VIDEO_TYPES.indexOf(b.type);
+      if (byType !== 0) return byType;
+      if (a.official !== b.official) return a.official ? -1 : 1;
+      const byLanguage = languageRank(a.language) - languageRank(b.language);
+      if (byLanguage !== 0) return byLanguage;
+      return (b.publishedAt ?? "").localeCompare(a.publishedAt ?? "");
+    })
+    .filter((video) => (seen.has(video.key) ? false : (seen.add(video.key), true)))
+    .slice(0, limit)
+    .map((video) => ({ key: video.key, name: video.name, type: video.type, language: video.language, official: video.official }));
+}

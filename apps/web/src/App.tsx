@@ -6,7 +6,7 @@ import { prefetch } from "./cache";
 import { AudioProvider } from "./audio";
 import { LocaleProvider, useLocale } from "./i18n";
 import { HomePage, MovieListPage, MusicPage, SearchPage, SeriesListPage } from "./pages/Browse";
-import { MoviePage, SeriesPage } from "./pages/Detail";
+import { ExternalTitlePage, MoviePage, SeriesPage } from "./pages/Detail";
 import { PersonPage } from "./pages/Person";
 import { AlbumPage, ArtistPage, IdentifyPage } from "./pages/Listen";
 import { PlayerPage } from "./pages/Player";
@@ -146,6 +146,7 @@ function Shell(props: { ffprobe: boolean }) {
           <Route path="/series" element={<SeriesListPage />} />
           <Route path="/series/:id" element={<SeriesPage />} />
           <Route path="/people/:id" element={<PersonPage />} />
+          <Route path="/discover/:kind/:id" element={<ExternalTitlePage />} />
           <Route path="/music" element={<MusicPage />} />
           <Route path="/music/albums/:id" element={<AlbumPage />} />
           <Route path="/music/artists/:id" element={<ArtistPage />} />
