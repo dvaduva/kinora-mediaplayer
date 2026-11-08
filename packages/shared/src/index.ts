@@ -201,6 +201,12 @@ export interface TrackSummary {
   artistName: string | null;
 }
 
+/** A YouTube link for a track: an official music video, or the track's own upload. */
+export interface TrackClip {
+  key: string;
+  kind: "video" | "audio";
+}
+
 export interface AlbumDetail extends AlbumSummary {
   tracks: TrackSummary[];
 }

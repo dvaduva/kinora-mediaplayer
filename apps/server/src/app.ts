@@ -29,10 +29,11 @@ import {
   setMovieWatchStatus,
 } from "./catalog.js";
 import { db } from "./db/index.js";
-import { mediaFiles } from "./db/schema.js";
+import { albums, mediaFiles, tracks } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { cachedImageFile, downloadTmdbImage, isTmdbImagePath, tmdbCdnUrl } from "./metadata/images.js";
 import { searchReleases } from "./metadata/musicbrainz.js";
+import { albumClips } from "./metadata/clips.js";
 import { fetchPerson, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
 import { canCopyAudio, canCopyVideo, contentTypeFor } from "./playback/plan.js";
@@ -298,6 +299,18 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   });
   app.get("/api/albums", async () => listAlbums());
   app.get("/api/albums/:id", async (request, reply) => albumDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.get("/api/albums/:id/clips", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const album = db.select().from(albums).where(eq(albums.id, id)).get();
+    if (!album) return reply.code(404).send({ error: "not_found" });
+    const local = db.select().from(tracks).where(eq(tracks.albumId, id)).all();
+    try {
+      return { clips: await albumClips(id, album.mbid, local) };
+    } catch (error) {
+      request.log.warn(error);
+      return reply.code(502).send({ error: "musicbrainz_failed" });
+    }
+  });
   app.get("/api/artists", async () => listArtists());
   app.get("/api/artists/:id", async (request, reply) => artistDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/search", async (request) => searchLibrary(String((request.query as { q?: string }).q ?? "")));

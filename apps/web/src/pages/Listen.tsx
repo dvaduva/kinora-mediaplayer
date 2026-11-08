@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { AlbumDetail, ArtistDetail, IdentifyItem, MusicCandidate, TmdbCandidate } from "@kinora/shared";
+import type { AlbumDetail, ArtistDetail, TrackClip, IdentifyItem, MusicCandidate, TmdbCandidate } from "@kinora/shared";
 import { api } from "../api";
 import { useCached } from "../cache";
 import { useLocale } from "../i18n";
@@ -13,9 +13,21 @@ export function AlbumPage() {
   const { t } = useLocale();
   const audio = useAudio();
   const [album, setAlbum] = useState<AlbumDetail | null>(null);
+  const [clips, setClips] = useState<Record<string, TrackClip>>({});
   useEffect(() => {
     if (!id) return;
+    setClips({});
     api<AlbumDetail>(`/api/albums/${id}`).then(setAlbum).catch(() => setAlbum(null));
+    // Clips come from MusicBrainz and can take a few seconds the first time; the list works without them.
+    let live = true;
+    api<{ clips: Record<string, TrackClip> }>(`/api/albums/${id}/clips`)
+      .then((result) => {
+        if (live) setClips(result.clips);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
   }, [id]);
   if (!album) return <p className="muted">{t.albums}</p>;
   return (
@@ -26,18 +38,30 @@ export function AlbumPage() {
         <h1>{album.title} {album.year ? <span className="year">{album.year}</span> : null}</h1>
         {!album.matched ? <p className="muted">{t.unmatched}</p> : null}
         <ol className="track-list">
-          {album.tracks.map((track) => (
-            <li key={track.id}>
-              <span className="muted">{track.trackNumber ?? ""}</span>
-              <button
-                type="button"
-                onClick={() => audio.play({ fileId: track.fileId, title: track.title, artist: album.artistName, cover: album.coverPath })}
-              >
-                {track.title}
-              </button>
-              <span className="muted">{formatClock(track.duration)}</span>
-            </li>
-          ))}
+          {album.tracks.map((track) => {
+            const clip = clips[track.id] ?? null;
+            return (
+              <li key={track.id}>
+                <span className="muted">{track.trackNumber ?? ""}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const queue = album.tracks.map((entry) => ({
+                      fileId: entry.fileId,
+                      title: entry.title,
+                      artist: album.artistName,
+                      cover: album.coverPath,
+                      clip: clips[entry.id] ?? null,
+                    }));
+                    audio.play({ fileId: track.fileId, title: track.title, artist: album.artistName, cover: album.coverPath, clip }, queue);
+                  }}
+                >
+                  {track.title}
+                </button>
+                <span className="muted">{formatClock(track.duration)}</span>
+              </li>
+            );
+          })}
         </ol>
       </div>
     </article>

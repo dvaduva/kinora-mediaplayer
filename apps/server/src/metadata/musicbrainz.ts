@@ -15,7 +15,7 @@ interface ReleaseHit {
   "artist-credit"?: { name?: string }[];
 }
 
-async function mbGet(url: string) {
+export async function mbGet(url: string) {
   await wait();
   const response = await fetch(url, { headers: { "User-Agent": USER_AGENT, accept: "application/json" } });
   if (!response.ok) throw new Error(`musicbrainz_${response.status}`);
