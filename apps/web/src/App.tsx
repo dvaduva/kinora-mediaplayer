@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { BrowserRouter, Link, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BrowserRouter, Link, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { AppSetup } from "@kinora/shared";
 import { api, setUnauthorized } from "./api";
 import { prefetch } from "./cache";
@@ -11,7 +11,7 @@ import { PersonPage } from "./pages/Person";
 import { AlbumPage, ArtistPage, IdentifyPage } from "./pages/Listen";
 import { PlayerPage } from "./pages/Player";
 import { SettingsPage } from "./pages/Settings";
-import { Mark } from "./ui";
+import { Icon, Mark } from "./ui";
 
 export function App() {
   const [setup, setSetup] = useState<AppSetup | null>(null);
@@ -102,41 +102,168 @@ function warm(to: keyof typeof MENU_DATA) {
   return { onPointerEnter: go, onFocus: go };
 }
 
+const NARROW = "(max-width: 980px)";
+const MENU_KEY = "kinora.menuOpen";
+/** Live search: wait this long after the last keystroke, and for at least this many characters. */
+const SEARCH_DELAY = 300;
+const SEARCH_MIN = 2;
+
+/** Sidebar visibility: remembered on wide screens, closed by default on narrow ones (where it overlays the page). */
+function useMenu() {
+  const [open, setOpen] = useState(() => {
+    if (window.matchMedia(NARROW).matches) return false;
+    try {
+      return localStorage.getItem(MENU_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("menu-collapsed", !open);
+    if (window.matchMedia(NARROW).matches) return;
+    try {
+      localStorage.setItem(MENU_KEY, open ? "1" : "0");
+    } catch {
+      // Storage unavailable: the choice just lasts for this visit.
+    }
+  }, [open]);
+  return [open, setOpen] as const;
+}
+
 function Shell(props: { ffprobe: boolean }) {
   const { t, toggle } = useLocale();
   const navigate = useNavigate();
+  const location = useLocation();
   const [query, setQuery] = useState("");
+  const [menuOpen, setMenuOpen] = useMenu();
+  const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     // Once the shell has painted, load every menu page so the first click renders from memory.
     const timer = window.setTimeout(() => prefetch(...Object.values(MENU_DATA).flat()), 400);
     return () => window.clearTimeout(timer);
   }, []);
+  // Search as you type: `typed` marks edits made in the field, `sent` is the last query this shell put in the URL.
+  const typed = useRef(false);
+  const sent = useRef<string | null>(null);
+  const onSearch = useRef(false);
+  onSearch.current = location.pathname === "/search";
+  const runSearch = (value: string) => {
+    sent.current = value;
+    // Typing refines one results page instead of stacking history entries; the first search keeps Back to the previous page.
+    navigate(value ? `/search?q=${encodeURIComponent(value)}` : "/search", { replace: onSearch.current });
+  };
+  useEffect(() => {
+    if (!typed.current) return;
+    const value = query.trim();
+    if (value === sent.current || (value.length < SEARCH_MIN && !(value === "" && onSearch.current))) return;
+    const timer = window.setTimeout(() => {
+      if (value !== sent.current) runSearch(value);
+    }, SEARCH_DELAY);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+  useEffect(() => {
+    // On narrow screens the menu covers the page, so close it after each navigation.
+    if (window.matchMedia(NARROW).matches) setMenuOpen(false);
+    if (location.pathname !== "/search") return;
+    const fromUrl = new URLSearchParams(location.search).get("q") ?? "";
+    // Leave the field alone when the URL only echoes what is being typed, so keystrokes in flight are kept.
+    if (fromUrl === sent.current) return;
+    typed.current = false;
+    sent.current = fromUrl;
+    setQuery(fromUrl);
+  }, [location.pathname, location.search, setMenuOpen]);
+  const editQuery = (value: string) => {
+    typed.current = true;
+    setQuery(value);
+  };
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <header className="topbar">
+        <button
+          className="bar-button"
+          type="button"
+          onClick={() => setMenuOpen((value) => !value)}
+          aria-label={t.menu}
+          aria-expanded={menuOpen}
+          title={t.menu}
+        >
+          <Icon name="menu" />
+        </button>
         <Link className="brand" to="/">
           <Mark />
           <strong>Kinora</strong>
         </Link>
-        <nav className="nav">
-          <NavLink to="/" end {...warm("/")}>{t.home}</NavLink>
-          <NavLink to="/movies" {...warm("/movies")}>{t.movies}</NavLink>
-          <NavLink to="/series" {...warm("/series")}>{t.series}</NavLink>
-          <NavLink to="/music" {...warm("/music")}>{t.music}</NavLink>
-          <NavLink to="/identify" {...warm("/identify")}>{t.identify}</NavLink>
-          <NavLink to="/settings">{t.settings}</NavLink>
-        </nav>
         <form
           className="search"
+          role="search"
           onSubmit={(event) => {
             event.preventDefault();
-            navigate(`/search?q=${encodeURIComponent(query)}`);
+            const value = query.trim();
+            if (value && (value !== sent.current || !onSearch.current)) runSearch(value);
           }}
         >
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search} aria-label={t.search} />
+          <Icon name="search" />
+          <input
+            ref={searchRef}
+            type="search"
+            value={query}
+            onChange={(event) => editQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") editQuery("");
+            }}
+            placeholder={t.search}
+            aria-label={t.search}
+          />
+          {query ? (
+            <button
+              className="search-clear"
+              type="button"
+              aria-label={t.clearSearch}
+              title={t.clearSearch}
+              onClick={() => {
+                editQuery("");
+                searchRef.current?.focus();
+              }}
+            >
+              <Icon name="close" />
+            </button>
+          ) : null}
         </form>
-        <button className="locale" type="button" onClick={toggle}>{t.language}</button>
+        <div className="topbar-actions">
+          <NavLink className="bar-button" to="/identify" aria-label={t.identify} title={t.identify} {...warm("/identify")}>
+            <Icon name="identify" />
+          </NavLink>
+          <NavLink className="bar-button" to="/settings" aria-label={t.settings} title={t.settings}>
+            <Icon name="settings" />
+          </NavLink>
+          <button className="bar-button locale" type="button" onClick={toggle} aria-label={t.language} title={t.language}>
+            <Icon name="language" />
+            <span>{t.language.slice(0, 2).toUpperCase()}</span>
+          </button>
+        </div>
+      </header>
+      <aside className="sidebar">
+        <nav className="nav">
+          <NavLink to="/" end title={t.home} {...warm("/")}>
+            <Icon name="home" />
+            <span>{t.home}</span>
+          </NavLink>
+          <NavLink to="/movies" title={t.movies} {...warm("/movies")}>
+            <Icon name="movies" />
+            <span>{t.movies}</span>
+          </NavLink>
+          <NavLink to="/series" title={t.series} {...warm("/series")}>
+            <Icon name="series" />
+            <span>{t.series}</span>
+          </NavLink>
+          <NavLink to="/music" title={t.music} {...warm("/music")}>
+            <Icon name="music" />
+            <span>{t.music}</span>
+          </NavLink>
+        </nav>
       </aside>
+      {menuOpen ? <div className="sidebar-scrim" onClick={() => setMenuOpen(false)} /> : null}
       <main className="main">
         {props.ffprobe ? null : <p className="banner">{t.ffprobeMissing}</p>}
         <Routes>
