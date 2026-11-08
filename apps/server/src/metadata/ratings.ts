@@ -76,12 +76,16 @@ export interface RottenTomatoesPage {
   audience: NonNullable<ExternalRatings["rottenTomatoes"]>["audience"];
   consensus: string | null;
   reviews: MovieReview[];
+  /** False when the page has no scorecard data at all (as opposed to a film that has no score yet). */
+  recognized: boolean;
 }
 
 /** Reads the scorecard, critics consensus and the audience reviews shown on a Rotten Tomatoes movie page. */
 export function parseRottenTomatoes(html: string, pageUrl: string): RottenTomatoesPage {
-  const critics = flatObjects(html, "criticsScore").find((item) => percent(item.scorePercent) != null) ?? null;
-  const audience = flatObjects(html, "audienceScore").find((item) => percent(item.scorePercent) != null) ?? null;
+  const criticsBlocks = flatObjects(html, "criticsScore");
+  const audienceBlocks = flatObjects(html, "audienceScore");
+  const critics = criticsBlocks.find((item) => percent(item.scorePercent) != null) ?? null;
+  const audience = audienceBlocks.find((item) => percent(item.scorePercent) != null) ?? null;
   const consensusMatch = /id="critics-consensus"[\s\S]*?<p>([\s\S]*?)<\/p>/.exec(html);
   const hero = record(jsonScript(html, "mediaHero")?.content);
   const props = Array.isArray(hero?.metadataProps) ? hero.metadataProps : [];
@@ -109,6 +113,7 @@ export function parseRottenTomatoes(html: string, pageUrl: string): RottenTomato
   const criticsScore = critics ? percent(critics.scorePercent) : null;
   const audienceScore = audience ? percent(audience.scorePercent) : null;
   return {
+    recognized: criticsBlocks.length > 0 || audienceBlocks.length > 0,
     title: text(hero?.title),
     year: yearProp ? Number(yearProp) : null,
     critics:
@@ -275,6 +280,10 @@ export async function fetchExternalRatings(input: RatingsInput): Promise<Ratings
   let rottenTomatoes: ExternalRatings["rottenTomatoes"];
   if (rt === undefined) {
     rottenTomatoes = previous?.rottenTomatoes ?? null;
+  } else if (rt && !rt.parsed.recognized) {
+    // The page exists but its layout is not one we can read; keep the last scores instead of blanking them.
+    console.warn(`[kinora] Rotten Tomatoes page ${rt.url} has no recognizable scorecard; the site layout may have changed.`);
+    rottenTomatoes = previous?.rottenTomatoes ?? { url: rt.url, critics: null, audience: null, consensus: null };
   } else if (rt) {
     rottenTomatoes = { url: rt.url, critics: rt.parsed.critics, audience: rt.parsed.audience, consensus: rt.parsed.consensus };
   } else if (omdb?.rtCritics != null) {
@@ -301,7 +310,9 @@ export async function fetchExternalRatings(input: RatingsInput): Promise<Ratings
       tmdb: input.tmdbId && input.tmdbRating ? { rating: input.tmdbRating, url: `https://www.themoviedb.org/movie/${input.tmdbId}` } : null,
       fetchedAt: Date.now(),
       omdbMissing: !key,
+      // A failed request keeps the previous verdict; only a fetched page can confirm or clear it.
+      rtUnreadable: rt === undefined ? previous?.rtUnreadable ?? false : Boolean(rt && !rt.parsed.recognized),
     },
-    rtReviews: rt ? rt.parsed.reviews : [],
+    rtReviews: rt && rt.parsed.recognized ? rt.parsed.reviews : [],
   };
 }

@@ -18,6 +18,7 @@ test("reads scores, consensus and audience reviews from a Rotten Tomatoes page",
   const parsed = parseRottenTomatoes(page, "https://www.rottentomatoes.com/m/the_weight_2026");
   assert.equal(parsed.title, "The Weight");
   assert.equal(parsed.year, 2026);
+  assert.equal(parsed.recognized, true);
   assert.deepEqual(parsed.critics, { score: 94, certified: true, rotten: false, count: 147 });
   assert.deepEqual(parsed.audience, { score: 38, rotten: true, count: "250+ Verified Ratings" });
   assert.equal(parsed.consensus, "The Weight is a gripping thriller.");
@@ -27,11 +28,18 @@ test("reads scores, consensus and audience reviews from a Rotten Tomatoes page",
   assert.equal(parsed.reviews[0]!.url, "https://www.rottentomatoes.com/m/the_weight_2026/reviews/all-audience");
 });
 
-test("a page without scores yields nulls", () => {
+test("a film without scores yet is still a recognized page", () => {
   const parsed = parseRottenTomatoes(`<script>{"criticsScore":{"scorePercent":"","sentiment":""}}</script>`, "https://www.rottentomatoes.com/m/x");
   assert.equal(parsed.critics, null);
   assert.equal(parsed.audience, null);
   assert.equal(parsed.consensus, null);
+  assert.equal(parsed.recognized, true);
+});
+
+test("a page with no scorecard at all is flagged as unrecognized", () => {
+  const parsed = parseRottenTomatoes(`<html><body><h1>The Weight</h1><p>94% critics</p></body></html>`, "https://www.rottentomatoes.com/m/x");
+  assert.equal(parsed.recognized, false);
+  assert.equal(parsed.critics, null);
 });
 
 test("slug guesses follow Rotten Tomatoes naming", () => {

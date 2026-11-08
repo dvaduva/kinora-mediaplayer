@@ -217,6 +217,11 @@ export interface ExternalRatings {
   fetchedAt: number | null;
   /** True when no OMDb key is configured, so IMDb and Metacritic scores cannot be looked up. */
   omdbMissing: boolean;
+  /**
+   * True when the Rotten Tomatoes page was found but holds no scorecard Kinora recognizes,
+   * which usually means the site changed its layout. The last good scores are kept.
+   */
+  rtUnreadable: boolean;
 }
 
 export type ReviewSource = "own" | "rottentomatoes" | "tmdb";

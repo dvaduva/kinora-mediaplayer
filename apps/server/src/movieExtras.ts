@@ -173,7 +173,7 @@ function storedRatings(movie: MovieRow) {
 
 /** The TMDB score and OMDb setting come from the current row and settings, not from the cached lookup. */
 function present(movie: MovieRow, stored: StoredRatings | null): ExternalRatings {
-  const base: ExternalRatings = stored?.ratings ?? { imdb: null, rottenTomatoes: null, metacritic: null, tmdb: null, fetchedAt: null, omdbMissing: true };
+  const base: ExternalRatings = stored?.ratings ?? { imdb: null, rottenTomatoes: null, metacritic: null, tmdb: null, fetchedAt: null, omdbMissing: true, rtUnreadable: false };
   return {
     ...base,
     tmdb: movie.tmdbId && movie.rating ? { rating: movie.rating, url: `https://www.themoviedb.org/movie/${movie.tmdbId}` } : null,

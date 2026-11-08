@@ -231,6 +231,12 @@ export function RatingsBar(props: { movie: MovieDetail; ratings: ExternalRatings
           {tmdbRating ? <strong>{Math.round(tmdbRating * 10)}%</strong> : null}
         </RatingChip>
       ) : null}
+      {ratings?.rtUnreadable ? (
+        <a className="rating-warning" href={rt?.url ?? "https://www.rottentomatoes.com/"} target="_blank" rel="noreferrer" title={t.rtUnreadableHelp}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9.5 17h-19z M12 10v4.5 M12 17.5h.01" /></svg>
+          {t.rtUnreadable}
+        </a>
+      ) : null}
       {props.loading && !ratings ? <span className="rating-chip skeleton-chip" aria-hidden="true" /> : null}
       <button className="icon-button" type="button" onClick={props.onRefresh} disabled={props.loading} title={t.ratingsRefresh} aria-label={t.ratingsRefresh}>
         <svg viewBox="0 0 24 24" aria-hidden="true" className={props.loading ? "spin" : undefined}><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4.5h-4.5" /></svg>
