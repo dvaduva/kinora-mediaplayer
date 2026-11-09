@@ -347,7 +347,8 @@ export function PlayerPage() {
       className="player"
       onMouseMove={showChrome}
       onClick={(event) => {
-        if ((event.target as HTMLElement).closest(".player-chrome")) return;
+        const target = event.target as HTMLElement;
+        if (target.closest(".player-back, .player-subs, .player-cc, .player-bar")) return;
         if (subsOpen) {
           setSubsOpen(false);
           return;
@@ -376,9 +377,13 @@ export function PlayerPage() {
       ) : null}
       <div className={chromeVisible || waiting || subsOpen ? "player-chrome is-visible" : "player-chrome"}>
         <div className="player-top">
-          <button type="button" className="player-back" onClick={leave}>
+          <Focusable
+            className="player-back"
+            focusKey="player-back"
+            onEnterPress={() => leave()}
+          >
             ← {t.back}
-          </button>
+          </Focusable>
           <div className="player-meta">
             <h1>{view.title}</h1>
             {view.subtitle ? <p>{view.subtitle}</p> : null}
