@@ -699,12 +699,37 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
 
   registerLiveTv(app);
 
-  const dist = path.join(repoRoot, "apps", "web", "dist");
-  if (fs.existsSync(dist)) {
-    await app.register(fastifyStatic, { root: dist });
+  const webDist = path.join(repoRoot, "apps", "web", "dist");
+  const tvDist = path.join(repoRoot, "apps", "tv", "dist");
+  const hasWeb = fs.existsSync(webDist);
+  const hasTv = fs.existsSync(tvDist);
+
+  if (hasTv) {
+    await app.register(fastifyStatic, {
+      root: tvDist,
+      prefix: "/tv/",
+      decorateReply: !hasWeb,
+    });
+  }
+  if (hasWeb) {
+    await app.register(fastifyStatic, {
+      root: webDist,
+      decorateReply: true,
+    });
+  }
+  if (hasTv) {
+    app.get("/tv", async (_request, reply) => reply.redirect("/tv/"));
+  }
+  if (hasWeb || hasTv) {
     app.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith("/api")) return reply.code(404).send({ error: "not_found" });
-      return reply.sendFile("index.html");
+      const pathname = request.url.split("?")[0] ?? "";
+      if (pathname === "/tv" || pathname.startsWith("/tv/")) {
+        if (!hasTv) return reply.code(404).send({ error: "not_found" });
+        return reply.sendFile("index.html", tvDist);
+      }
+      if (!hasWeb) return reply.code(404).send({ error: "not_found" });
+      return reply.sendFile("index.html", webDist);
     });
   }
 

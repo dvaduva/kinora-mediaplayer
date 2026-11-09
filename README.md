@@ -100,6 +100,58 @@ Fiecare conversie se păstrează în `data/cache/transcode`, ca a doua vizionare
   - Bucățile citite rămân în `data/cache/subtitles/chunks`.
 - Subtitrările de tip imagine (PGS, VobSub) nu pot fi afișate.
 
+## Interfața TV
+
+Kinora include o interfață dedicată televizoarelor (D-pad / 10-foot) în `apps/tv`.
+
+### Din browser (dezvoltare)
+
+```bash
+pnpm dev
+```
+
+- TV UI: <http://localhost:5174/tv/>
+- Desktop UI: <http://localhost:5173>
+- API: <http://127.0.0.1:3001>
+
+Pe un televizor sau cu tastatura ca telecomandă: săgeți pentru navigare, Enter pentru selectare, Backspace/Escape pentru înapoi. În player: Enter/Space pauză, ←/→ seek ±10s.
+
+### Din rețeaua locală (producție)
+
+1. În **Setări** (interfața web), setează o cheie de acces și leagă serverul de `0.0.0.0` (sau IP-ul PC-ului), apoi repornește.
+2. Construiește ambele interfețe și pornește serverul:
+
+```bash
+pnpm build
+pnpm start
+```
+
+3. Pe televizor sau telefon deschide `http://<ip-pc>:3001/tv/`.
+
+Aceeași origine ca API-ul permite redarea directă a fișierelor (cookie de sesiune). Shell-urile Tizen/webOS din `apps/tv/tizen` și `apps/tv/webos` sunt ambalaje subțiri care cer adresa serverului și deschid `/tv/`.
+
+#### Sideload pe Samsung Tizen
+
+1. Activează Developer Mode pe TV și notează IP-ul.
+2. În Tizen Studio, importă `apps/tv/tizen` și conectează televizorul.
+3. Rulează / instalează pachetul pe dispozitiv.
+4. La prima deschidere introdu `http://<ip-pc>:3001`.
+
+#### Sideload pe LG webOS
+
+1. Activează Developer Mode și instalează [webOS CLI](https://webostv.developer.lge.com/).
+2. Empachetează folderul `apps/tv/webos` (`ares-package apps/tv/webos`).
+3. Instalează IPK-ul pe TV (`ares-install`).
+4. La prima deschidere introdu adresa Kinora.
+
+### Checklist rapid (tastatură ca telecomandă)
+
+- [ ] Deschide `/tv/`, autentifică-te dacă e nevoie de cheie
+- [ ] Navighează Acasă → Filme / Seriale cu săgețile
+- [ ] Deschide un titlu, apasă Redă
+- [ ] Pauză cu Enter, seek cu săgeți, ieșire cu Escape
+- [ ] Progresul apare la „Continuă vizionarea” după ce te întorci
+
 ## Structura proiectului
 
 ```
@@ -108,6 +160,7 @@ apps/server     API Fastify, scanare, metadate, streaming (TypeScript, tsx)
   src/db/       schema Drizzle și rularea migrațiilor
   src/playback/ plan de redare, HLS, subtitrări, cache
 apps/web        interfața React (Vite)
+apps/tv         interfața TV (Vite) + shell-uri Tizen/webOS
 packages/shared tipurile comune ale API-ului
 data/           baza SQLite și cache-urile (nu intră în git)
 ```

@@ -8,8 +8,9 @@ test("accepts requests from the page the server itself serves", () => {
   assert.equal(isAllowedOrigin("http://192.168.1.20:3001", "192.168.1.20:3001", DEV_ORIGINS), true);
 });
 
-test("accepts the Vite dev server behind its proxy", () => {
+test("accepts the Vite dev servers behind their proxies", () => {
   assert.equal(isAllowedOrigin("http://localhost:5173", "127.0.0.1:3001", DEV_ORIGINS), true);
+  assert.equal(isAllowedOrigin("http://127.0.0.1:5174", "127.0.0.1:3001", DEV_ORIGINS), true);
 });
 
 test("rejects other web sites", () => {

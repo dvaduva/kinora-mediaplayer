@@ -2,8 +2,15 @@ export function isLocalHost(host: string) {
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
-/** Origins of the Vite dev server, which proxies /api to this process. */
-export const DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://[::1]:5173"];
+/** Origins of the Vite dev servers, which proxy /api to this process. */
+export const DEV_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://[::1]:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+  "http://[::1]:5174",
+];
 
 /** Extra trusted origins, comma separated (e.g. a reverse proxy on another port). */
 export function configuredOrigins(value = process.env.KINORA_ALLOWED_ORIGINS) {

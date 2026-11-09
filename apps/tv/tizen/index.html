@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kinora</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #0b0d12;
+        color: #f4f1ea;
+      }
+      .card {
+        width: min(36rem, 92vw);
+        padding: 2rem;
+        border-radius: 1rem;
+        background: #141821;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      h1 {
+        margin: 0 0 0.75rem;
+        font-weight: 600;
+      }
+      p {
+        color: #9aa3b5;
+        line-height: 1.5;
+      }
+      label {
+        display: grid;
+        gap: 0.4rem;
+        margin: 1.25rem 0;
+      }
+      input {
+        font: inherit;
+        padding: 0.9rem 1rem;
+        border-radius: 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: #0b0d12;
+        color: inherit;
+      }
+      button {
+        font: inherit;
+        font-weight: 600;
+        border: 0;
+        border-radius: 999px;
+        padding: 0.95rem 1.25rem;
+        background: #d2ae62;
+        color: #1a1408;
+        cursor: pointer;
+        width: 100%;
+      }
+      .error {
+        color: #e36d6d;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Kinora</h1>
+      <p>Introdu adresa serverului Kinora din rețeaua locală. Aplicația deschide interfața TV găzduită pe server.</p>
+      <form id="form">
+        <label>
+          Adresa serverului
+          <input id="host" placeholder="http://192.168.1.20:3001" autocomplete="off" spellcheck="false" />
+        </label>
+        <p id="error" class="error" hidden></p>
+        <button type="submit">Deschide Kinora TV</button>
+      </form>
+    </div>
+    <script>
+      var KEY = "kinora.tizen.host";
+      var input = document.getElementById("host");
+      var error = document.getElementById("error");
+      var saved = localStorage.getItem(KEY) || "";
+      input.value = saved;
+
+      function normalize(value) {
+        var trimmed = String(value || "").trim().replace(/\/+$/, "");
+        if (!trimmed) return "";
+        if (!/^https?:\/\//i.test(trimmed)) trimmed = "http://" + trimmed;
+        return trimmed;
+      }
+
+      function openHost(value) {
+        var base = normalize(value);
+        if (!base) {
+          error.hidden = false;
+          error.textContent = "Introdu o adresă validă.";
+          return;
+        }
+        localStorage.setItem(KEY, base);
+        location.replace(base + "/tv/");
+      }
+
+      if (saved) openHost(saved);
+
+      document.getElementById("form").addEventListener("submit", function (event) {
+        event.preventDefault();
+        openHost(input.value);
+      });
+    </script>
+  </body>
+</html>
