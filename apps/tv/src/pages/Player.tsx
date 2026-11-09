@@ -1,18 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
-import { transcodePlaybackReady } from "@kinora/shared";
+import { SUBTITLE_DELAY_LIMIT, transcodePlaybackReady } from "@kinora/shared";
 import { api, getConnection } from "../api";
 import { Focusable } from "../components/Focusable";
 import { useLocale } from "../i18n";
-import { formatClock, hlsUrl, streamUrl } from "../media";
+import { formatClock, hlsUrl, streamUrl, subtitleLabel, subtitleUrl } from "../media";
+import { formatDelay, setSubtitleDelay, shiftCues } from "../subtitleTiming";
 
 const SEEK_STEP = 10;
+const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
 
 export function PlayerPage() {
   const { fileId } = useParams();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [view, setView] = useState<PlaybackView | null>(null);
@@ -26,23 +28,35 @@ export function PlayerPage() {
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [chromeVisible, setChromeVisible] = useState(true);
+  const [subsOpen, setSubsOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [delay, setDelay] = useState(0);
   const resumed = useRef(false);
   const hideTimer = useRef(0);
+  const subtitleDirty = useRef(false);
+  const delayRef = useRef(0);
+  delayRef.current = delay;
 
   if (play.id !== fileId) setPlay({ id: fileId, started: false, status: null });
 
   useEffect(() => {
     if (!fileId) return;
     resumed.current = false;
+    subtitleDirty.current = false;
+    setSubsOpen(false);
     api<PlaybackView>(`/api/playback/${fileId}`)
       .then((data) => {
         setView(data);
+        setSelected(data.selectedSubtitleId);
+        setDelay(data.subtitleDelay);
         setError(null);
       })
       .catch((reason: Error) => setError(reason.message));
   }, [fileId]);
 
   const preparing = Boolean(view && view.plan.available && view.plan.mode !== "direct");
+  const selectedTrack = view?.subtitles.find((track) => track.id === selected && track.textBased && track.available) ?? null;
+  const showExternalTrack = Boolean(selectedTrack && selectedTrack.origin !== "embedded");
 
   useEffect(() => {
     if (!fileId || !view || view.fileId !== fileId || !preparing || play.started || play.status?.state === "error") return;
@@ -86,6 +100,8 @@ export function PlayerPage() {
           fileId,
           position: media.currentTime,
           duration: reportedDuration,
+          subtitleChoice: subtitleDirty.current ? selected ?? "off" : view.selectedSubtitleId,
+          subtitleDelay: delayRef.current,
         }),
       }).catch(() => undefined);
     };
@@ -116,7 +132,7 @@ export function PlayerPage() {
       window.clearInterval(timer);
       window.clearInterval(clock);
     };
-  }, [view, fileId, play.started]);
+  }, [view, fileId, play.started, selected]);
 
   useEffect(() => {
     if (!fileId || !view || view.fileId !== fileId || view.plan.mode !== "direct") return;
@@ -186,11 +202,31 @@ export function PlayerPage() {
     };
   }, [play.started, fileId, view]);
 
-  function showChrome() {
+  useEffect(() => {
+    const media = videoRef.current;
+    if (!media) return;
+    for (const track of Array.from(media.textTracks)) {
+      track.mode = selected && track.id === selected ? "showing" : "disabled";
+    }
+  }, [selected, showExternalTrack, play.started]);
+
+  useEffect(() => {
+    const media = videoRef.current;
+    if (!media) return;
+    setSubtitleDelay(media, delay);
+    const elements = Array.from(media.querySelectorAll("track"));
+    const onLoad = (event: Event) => shiftCues((event.currentTarget as HTMLTrackElement).track, delayRef.current);
+    for (const element of elements) element.addEventListener("load", onLoad);
+    return () => {
+      for (const element of elements) element.removeEventListener("load", onLoad);
+    };
+  }, [delay, selected, showExternalTrack, play.started]);
+
+  const showChrome = useCallback(() => {
     setChromeVisible(true);
     window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => setChromeVisible(false), 4000);
-  }
+    if (!subsOpen) hideTimer.current = window.setTimeout(() => setChromeVisible(false), 4000);
+  }, [subsOpen]);
 
   function togglePlay() {
     const media = videoRef.current;
@@ -207,6 +243,14 @@ export function PlayerPage() {
     showChrome();
   }
 
+  function changeDelay(step: number | null) {
+    setDelay((current) => {
+      if (step === null) return 0;
+      const next = Math.round((current + step) * 10) / 10;
+      return Math.max(-SUBTITLE_DELAY_LIMIT, Math.min(SUBTITLE_DELAY_LIMIT, next));
+    });
+  }
+
   function leave() {
     const media = videoRef.current;
     if (media && view && fileId) {
@@ -214,7 +258,13 @@ export function PlayerPage() {
       if (reportedDuration && Number.isFinite(reportedDuration)) {
         void api("/api/playback/progress", {
           method: "POST",
-          body: JSON.stringify({ fileId, position: media.currentTime, duration: reportedDuration }),
+          body: JSON.stringify({
+            fileId,
+            position: media.currentTime,
+            duration: reportedDuration,
+            subtitleChoice: subtitleDirty.current ? selected ?? "off" : view.selectedSubtitleId,
+            subtitleDelay: delayRef.current,
+          }),
         }).catch(() => undefined);
       }
     }
@@ -226,7 +276,18 @@ export function PlayerPage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" || event.key === "Backspace") {
         event.preventDefault();
+        if (subsOpen) {
+          setSubsOpen(false);
+          return;
+        }
         leave();
+        return;
+      }
+      if (subsOpen) return;
+      if (event.key === "c" || event.key === "C") {
+        event.preventDefault();
+        setSubsOpen(true);
+        showChrome();
         return;
       }
       if (event.key === "Enter" || event.key === " " || event.key === "MediaPlayPause" || event.key === "k") {
@@ -249,9 +310,8 @@ export function PlayerPage() {
       window.removeEventListener("keydown", onKey);
       window.clearTimeout(hideTimer.current);
     };
-    // leave/toggle/seek close over latest view/fileId via refs in practice; deps kept minimal for key binding lifetime
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, fileId]);
+  }, [view, fileId, subsOpen, showChrome]);
 
   if (error) {
     return (
@@ -280,41 +340,127 @@ export function PlayerPage() {
 
   const waiting = preparing && !play.started;
   const progress = duration > 0 ? position / duration : 0;
+  const textTracks = view.subtitles.filter((track) => track.textBased);
 
   return (
-    <div className="player" onMouseMove={showChrome}>
-      <video ref={videoRef} className="player-video" playsInline autoPlay />
+    <div
+      className="player"
+      onMouseMove={showChrome}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest(".player-chrome")) return;
+        if (subsOpen) {
+          setSubsOpen(false);
+          return;
+        }
+        togglePlay();
+      }}
+    >
+      <video ref={videoRef} className="player-video" playsInline autoPlay crossOrigin="anonymous">
+        {showExternalTrack && selectedTrack ? (
+          <track
+            key={selectedTrack.id}
+            id={selectedTrack.id}
+            kind="subtitles"
+            src={subtitleUrl(fileId, selectedTrack.id)}
+            srcLang={selectedTrack.language ?? undefined}
+            label={subtitleLabel(selectedTrack, locale)}
+            default
+          />
+        ) : null}
+      </video>
       {waiting ? (
         <div className="player-wait">
           <p>{t.preparing}</p>
           {play.status?.progress != null ? <p className="hint">{Math.round(play.status.progress * 100)}%</p> : null}
         </div>
       ) : null}
-      <div className={chromeVisible || paused || waiting ? "player-chrome is-visible" : "player-chrome"}>
-        <button type="button" className="player-back" onClick={leave}>
-          ← {t.back}
-        </button>
-        <div className="player-meta">
-          <h1>{view.title}</h1>
-          {view.subtitle ? <p>{view.subtitle}</p> : null}
-        </div>
-        <div className="player-controls">
-          <Focusable className="btn" focusKey="player-seek-back" onEnterPress={() => seekBy(-SEEK_STEP)}>
-            −10s
-          </Focusable>
-          <Focusable className="btn primary" focusKey="player-toggle" focusOnMount onEnterPress={togglePlay}>
-            {paused ? t.play : t.pause}
-          </Focusable>
-          <Focusable className="btn" focusKey="player-seek-fwd" onEnterPress={() => seekBy(SEEK_STEP)}>
-            +10s
-          </Focusable>
-        </div>
-        <div className="player-bar">
-          <span>{formatClock(position)}</span>
-          <div className="player-track">
-            <i style={{ width: `${Math.max(0, Math.min(100, progress * 100))}%` }} />
+      <div className={chromeVisible || waiting || subsOpen ? "player-chrome is-visible" : "player-chrome"}>
+        <div className="player-top">
+          <button type="button" className="player-back" onClick={leave}>
+            ← {t.back}
+          </button>
+          <div className="player-meta">
+            <h1>{view.title}</h1>
+            {view.subtitle ? <p>{view.subtitle}</p> : null}
+            {paused ? <p className="player-paused-label">{t.pause}</p> : null}
           </div>
-          <span>{formatClock(duration)}</span>
+        </div>
+        <div className="player-bottom">
+          {subsOpen ? (
+            <div className="player-subs" role="dialog" aria-label={t.subtitles}>
+              <p className="player-subs-title">{t.subtitles}</p>
+              <div className="player-subs-list">
+                <Focusable
+                  className={!selected ? "subs-option is-active" : "subs-option"}
+                  focusKey="sub-off"
+                  focusOnMount={!selected}
+                  onEnterPress={() => {
+                    subtitleDirty.current = true;
+                    setSelected(null);
+                  }}
+                >
+                  {t.subtitleOff}
+                </Focusable>
+                {textTracks.map((track) => (
+                  <Focusable
+                    key={track.id}
+                    className={selected === track.id ? "subs-option is-active" : "subs-option"}
+                    focusKey={`sub-${track.id}`}
+                    focusOnMount={selected === track.id}
+                    onEnterPress={() => {
+                      if (!track.available || track.origin === "embedded") return;
+                      subtitleDirty.current = true;
+                      setSelected(track.id);
+                    }}
+                  >
+                    {subtitleLabel(track, locale)}
+                    {!track.available || track.origin === "embedded" ? " *" : ""}
+                  </Focusable>
+                ))}
+              </div>
+              {selectedTrack && selectedTrack.origin !== "embedded" ? (
+                <div className="player-subs-delay">
+                  <p className="player-subs-title">{t.subtitleDelay}</p>
+                  <div className="player-subs-delay-row">
+                    {DELAY_STEPS.slice(0, 2).map((step) => (
+                      <Focusable key={step} className="chip" focusKey={`delay-${step}`} onEnterPress={() => changeDelay(step)}>
+                        {formatDelay(step, locale)}
+                      </Focusable>
+                    ))}
+                    <output>{formatDelay(delay, locale)}</output>
+                    {DELAY_STEPS.slice(2).map((step) => (
+                      <Focusable key={step} className="chip" focusKey={`delay-${step}`} onEnterPress={() => changeDelay(step)}>
+                        {formatDelay(step, locale)}
+                      </Focusable>
+                    ))}
+                    <Focusable className="chip" focusKey="delay-reset" onEnterPress={() => changeDelay(null)}>
+                      {t.reset}
+                    </Focusable>
+                  </div>
+                  <p className="hint">{t.subtitleDelayHelp}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="player-bar-row">
+            <Focusable
+              className={`player-cc${selected ? " is-on" : ""}`}
+              focusKey="player-cc"
+              onEnterPress={() => {
+                setSubsOpen((open) => !open);
+                showChrome();
+              }}
+            >
+              CC
+            </Focusable>
+            <div className="player-bar">
+              <span>{formatClock(position)}</span>
+              <div className="player-track">
+                <i style={{ width: `${Math.max(0, Math.min(100, progress * 100))}%` }} />
+              </div>
+              <span>{formatClock(duration)}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

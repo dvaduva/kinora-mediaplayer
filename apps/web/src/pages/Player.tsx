@@ -11,7 +11,7 @@ import { cueStyleSheet, formatDelay, setSubtitleDelay, shiftCues } from "../subt
 import { Icon } from "../ui";
 
 const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
-type SubPanel = "subs" | "delay" | null;
+type SubPanel = "subs" | null;
 
 export function PlayerPage() {
   const { fileId } = useParams();
@@ -259,10 +259,6 @@ export function PlayerPage() {
     setPanel(null);
   }, [fileId]);
 
-  useEffect(() => {
-    if (!hasCaption && panel === "delay") setPanel(null);
-  }, [hasCaption, panel]);
-
   if (error) return <p className="danger">{error}</p>;
   if (!view) {
     return (
@@ -282,7 +278,7 @@ export function PlayerPage() {
   const percent = waited == null ? "" : `${Math.round(waited * 100)}%`;
   const convertedClock = play.status && play.status.seconds > 0 ? formatClock(play.status.seconds) : null;
   const selectedLabel = caption ? subtitleLabel(caption, locale) : t.off;
-  const togglePanel = (next: Exclude<SubPanel, null>) => setPanel((current) => (current === next ? null : next));
+  const togglePanel = () => setPanel((current) => (current === "subs" ? null : "subs"));
 
   return (
     <article className="player-stage">
@@ -338,7 +334,6 @@ export function PlayerPage() {
                       onClick={() => {
                         subtitleDirty.current = true;
                         setSelected(null);
-                        setPanel(null);
                       }}
                     >
                       {t.off}
@@ -354,7 +349,6 @@ export function PlayerPage() {
                         onClick={() => {
                           subtitleDirty.current = true;
                           setSelected(track.id);
-                          setPanel(null);
                         }}
                       >
                         {subtitleLabel(track, locale)}
@@ -364,28 +358,28 @@ export function PlayerPage() {
                   {embeddedState === "loading" ? <p className="muted">{t.loadingSubtitles}</p> : null}
                   {embeddedState === "error" ? <p className="danger">{t.subtitlesFailed}</p> : null}
                   {selected ? <p className="muted player-pop-current">{selectedLabel}</p> : null}
-                </div>
-              ) : null}
-              {panel === "delay" && hasCaption ? (
-                <div className="player-pop" role="dialog" aria-label={t.subtitleDelay}>
-                  <p className="player-pop-title">{t.subtitleDelay}</p>
-                  <div className="sub-delay-controls">
-                    {DELAY_STEPS.slice(0, 2).map((step) => (
-                      <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
-                        {formatDelay(step, locale)}
-                      </button>
-                    ))}
-                    <output aria-live="polite">{formatDelay(delay, locale)}</output>
-                    {DELAY_STEPS.slice(2).map((step) => (
-                      <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
-                        {formatDelay(step, locale)}
-                      </button>
-                    ))}
-                    <button className="text-button small" type="button" onClick={() => changeDelay(null)} disabled={delay === 0}>
-                      {t.reset}
-                    </button>
-                  </div>
-                  <p className="muted">{t.subtitleDelayHelp}</p>
+                  {hasCaption ? (
+                    <div className="sub-delay-panel">
+                      <p className="player-pop-title">{t.subtitleDelay}</p>
+                      <div className="sub-delay-controls">
+                        {DELAY_STEPS.slice(0, 2).map((step) => (
+                          <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                            {formatDelay(step, locale)}
+                          </button>
+                        ))}
+                        <output aria-live="polite">{formatDelay(delay, locale)}</output>
+                        {DELAY_STEPS.slice(2).map((step) => (
+                          <button key={step} className="delay-step" type="button" onClick={() => changeDelay(step)}>
+                            {formatDelay(step, locale)}
+                          </button>
+                        ))}
+                        <button className="text-button small" type="button" onClick={() => changeDelay(null)} disabled={delay === 0}>
+                          {t.reset}
+                        </button>
+                      </div>
+                      <p className="muted">{t.subtitleDelayHelp}</p>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div className="player-tool-buttons">
@@ -396,22 +390,10 @@ export function PlayerPage() {
                   title={t.subtitles}
                   aria-expanded={panel === "subs"}
                   aria-pressed={Boolean(selected)}
-                  onClick={() => togglePanel("subs")}
+                  onClick={() => togglePanel()}
                 >
                   <Icon name="captions" />
                 </button>
-                {hasCaption ? (
-                  <button
-                    type="button"
-                    className="player-tool delay"
-                    aria-label={t.subtitleDelay}
-                    title={t.subtitleDelay}
-                    aria-expanded={panel === "delay"}
-                    onClick={() => togglePanel("delay")}
-                  >
-                    {formatDelay(delay, locale)}
-                  </button>
-                ) : null}
               </div>
             </div>
           </div>

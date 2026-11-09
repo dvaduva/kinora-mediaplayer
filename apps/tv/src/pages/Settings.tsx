@@ -45,6 +45,16 @@ export function SettingsPage(props: Props) {
           <Focusable className="btn primary" focusKey="settings-locale" focusOnMount onEnterPress={toggle}>
             {locale === "ro" ? "Română → English" : "English → Română"}
           </Focusable>
+        </div>
+      </section>
+
+      <section className="settings-block">
+        <h2>{t.identify}</h2>
+        <p className="hint">{t.openWeb}</p>
+        <div className="hero-actions">
+          <Focusable className="btn" focusKey="settings-identify" onEnterPress={() => navigate("/identify")}>
+            {t.identify}
+          </Focusable>
           <Focusable className="btn" focusKey="settings-back" onEnterPress={() => navigate(-1)}>
             {t.back}
           </Focusable>

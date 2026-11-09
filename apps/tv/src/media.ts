@@ -1,5 +1,7 @@
+import { LANGUAGE_NAMES, type SubtitleTrack } from "@kinora/shared";
 import { getConnection } from "./api";
 import { apiUrl } from "./connection";
+import type { Locale } from "./i18n";
 
 export function imageUrl(src: string | null, size = "w342") {
   if (!src) return null;
@@ -33,4 +35,29 @@ export function formatRuntime(minutes: number | null) {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return hours > 0 ? `${hours} h ${rest} min` : `${rest} min`;
+}
+
+export function subtitleLabel(track: SubtitleTrack, locale: Locale) {
+  const language = track.language ? (LANGUAGE_NAMES[track.language]?.[locale] ?? track.language) : locale === "ro" ? "Necunoscută" : "Unknown";
+  const notes = [
+    language,
+    track.hearingImpaired ? "SDH" : null,
+    track.forced ? (locale === "ro" ? "forțată" : "forced") : null,
+    track.origin === "embedded" ? (locale === "ro" ? "în fișier" : "embedded") : locale === "ro" ? "externă" : "external",
+  ];
+  const reason = !track.available
+    ? track.unavailableReason === "bitmap"
+      ? locale === "ro"
+        ? "imagine, după transcodare"
+        : "image, after transcode"
+      : locale === "ro"
+        ? "necesită ffmpeg"
+        : "needs ffmpeg"
+    : null;
+  return [...notes, reason].filter(Boolean).join(", ");
+}
+
+export function subtitleUrl(fileId: string, subtitleId: string) {
+  const { baseUrl } = getConnection();
+  return apiUrl(baseUrl, `/api/subtitles/${fileId}/${subtitleId}`);
 }

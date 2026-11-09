@@ -11,7 +11,6 @@ const NAV = [
   { to: "/music", labelKey: "music", key: "nav-music" },
   { to: "/live", labelKey: "live", key: "nav-live" },
   { to: "/search", labelKey: "search", key: "nav-search" },
-  { to: "/identify", labelKey: "identify", key: "nav-identify" },
   { to: "/settings", labelKey: "settings", key: "nav-settings" },
 ] as const;
 

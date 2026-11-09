@@ -566,8 +566,14 @@ code {
   pointer-events: auto;
 }
 
+.player-top {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
 .player-back {
-  align-self: flex-start;
+  justify-self: start;
   border: 0;
   background: rgba(0, 0, 0, 0.45);
   color: var(--text);
@@ -587,10 +593,103 @@ code {
   color: var(--muted);
 }
 
-.player-controls {
-  display: flex;
-  justify-content: center;
+.player-paused-label {
+  margin: 0.45rem 0 0;
+  color: var(--accent);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.player-bottom {
+  display: grid;
   gap: 0.85rem;
+}
+
+.player-bar-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.player-cc {
+  min-width: 2.6rem;
+  height: 2.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.45);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.player-cc.is-on,
+.player-cc.is-focused {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.player-subs {
+  justify-self: start;
+  width: min(28rem, 100%);
+  padding: 1rem;
+  border-radius: 0.9rem;
+  background: rgba(11, 13, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.player-subs-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.player-subs-list {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.subs-option {
+  padding: 0.7rem 0.85rem;
+  border-radius: 0.65rem;
+  background: transparent;
+}
+
+.subs-option.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.subs-option.is-focused {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.player-subs-delay {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.player-subs-delay-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.player-subs-delay-row output {
+  min-width: 4.5rem;
+  text-align: center;
+  font-weight: 600;
 }
 
 .player-bar {

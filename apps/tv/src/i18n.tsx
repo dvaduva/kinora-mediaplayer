@@ -53,6 +53,11 @@ const copy = {
     channels: "Canale",
     preparing: "Se pregătește redarea…",
     playbackFailed: "Redarea a eșuat",
+    subtitles: "Subtitrare",
+    subtitleOff: "Oprită",
+    subtitleDelay: "Decalaj subtitrare",
+    subtitleDelayHelp: "Plus o arată mai târziu, minus mai devreme.",
+    reset: "Resetează",
   },
   en: {
     home: "Home",
@@ -104,6 +109,11 @@ const copy = {
     channels: "Channels",
     preparing: "Preparing playback…",
     playbackFailed: "Playback failed",
+    subtitles: "Subtitles",
+    subtitleOff: "Off",
+    subtitleDelay: "Subtitle delay",
+    subtitleDelayHelp: "Plus shows them later, minus earlier.",
+    reset: "Reset",
   },
 } as const;
 
