@@ -7,6 +7,7 @@ type Props = {
   title: string;
   meta?: string | null;
   src: string | null;
+  badge?: string | null;
   focusKey?: string;
   focusOnMount?: boolean;
   progress?: number | null;
@@ -33,6 +34,7 @@ export function PosterCard(props: Props) {
       <div className="poster-copy">
         <strong>{props.title}</strong>
         {props.meta ? <span>{props.meta}</span> : null}
+        {props.badge ? <small className="poster-badge">{props.badge}</small> : null}
       </div>
     </Focusable>
   );

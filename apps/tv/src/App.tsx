@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import type { AppSetup, HomeView } from "@kinora/shared";
 import { api, createSession, setConnection, setUnauthorized } from "./api";
+import { AudioProvider } from "./audio";
 import { Shell } from "./components/Shell";
 import { loadConnection, saveConnection } from "./connection";
 import { LocaleProvider } from "./i18n";
@@ -67,26 +68,28 @@ export function App() {
         <ConnectPage onConnected={() => setConnected(true)} />
       ) : (
         <BrowserRouter basename="/tv">
-          <Routes>
-            <Route path="/play/:fileId" element={<PlayerPage />} />
-            <Route path="/live/:channelId" element={<LivePlayerPage />} />
-            <Route element={<Shell />}>
-              <Route index element={<HomePage />} />
-              <Route path="movies" element={<MoviesPage />} />
-              <Route path="movies/:id" element={<MovieDetailPage />} />
-              <Route path="series" element={<SeriesPage />} />
-              <Route path="series/:id" element={<SeriesDetailPage />} />
-              <Route path="people/:id" element={<PersonPage />} />
-              <Route path="music" element={<MusicPage />} />
-              <Route path="music/albums/:id" element={<AlbumDetailPage />} />
-              <Route path="music/artists/:id" element={<ArtistDetailPage />} />
-              <Route path="live" element={<LivePage />} />
-              <Route path="search" element={<SearchPage />} />
-              <Route path="identify" element={<IdentifyPage />} />
-              <Route path="settings" element={<SettingsPage onDisconnect={() => setConnected(false)} />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Route>
-          </Routes>
+          <AudioProvider>
+            <Routes>
+              <Route path="/play/:fileId" element={<PlayerPage />} />
+              <Route path="/live/:channelId" element={<LivePlayerPage />} />
+              <Route element={<Shell />}>
+                <Route index element={<HomePage />} />
+                <Route path="movies" element={<MoviesPage />} />
+                <Route path="movies/:id" element={<MovieDetailPage />} />
+                <Route path="series" element={<SeriesPage />} />
+                <Route path="series/:id" element={<SeriesDetailPage />} />
+                <Route path="people/:id" element={<PersonPage />} />
+                <Route path="music" element={<MusicPage />} />
+                <Route path="music/albums/:id" element={<AlbumDetailPage />} />
+                <Route path="music/artists/:id" element={<ArtistDetailPage />} />
+                <Route path="live" element={<LivePage />} />
+                <Route path="search" element={<SearchPage />} />
+                <Route path="identify" element={<IdentifyPage />} />
+                <Route path="settings" element={<SettingsPage onDisconnect={() => setConnected(false)} />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Route>
+            </Routes>
+          </AudioProvider>
         </BrowserRouter>
       )}
     </LocaleProvider>

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@kinora/media-ui": "workspace:*",
     "@kinora/shared": "workspace:*",
     "hls.js": "^1.7.4",
     "react": "^19.1.1",

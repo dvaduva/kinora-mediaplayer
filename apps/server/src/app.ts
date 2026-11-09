@@ -100,6 +100,12 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   await app.register(cors, { origin: trusted, credentials: true });
   await app.register(cookie);
 
+  // YouTube embeds need a Referer; same-origin / no-referrer policies trigger error 153.
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    return payload;
+  });
+
   app.addHook("onRequest", async (request, reply) => {
     if (!isAllowedHost(request.headers.host, bindHost)) return reply.code(421).send({ error: "bad_host" });
     if (!request.url.startsWith("/api")) return;
