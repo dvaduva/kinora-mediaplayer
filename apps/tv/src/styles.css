@@ -244,6 +244,10 @@ code {
   max-width: 48rem;
 }
 
+.hero-copy {
+  padding: 2rem;
+}
+
 .detail-copy h1 {
   margin: 0 0 0.35rem;
   font-family: "Fraunces", Georgia, serif;
