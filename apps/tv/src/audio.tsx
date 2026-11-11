@@ -1,19 +1,11 @@
-import type { TrackClip } from "@kinora/shared";
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
-import { api, getConnection } from "./api";
 import { Focusable } from "./components/Focusable";
 import { useLocale } from "./i18n";
-import { imageUrl, streamUrl } from "@kinora/client";
+import { imageUrl, useAudioEngine, type AudioClips, type NowPlaying } from "@kinora/client";
 import { MiniSpectrum, Visualizer } from "@kinora/media-ui";
 
-export type NowPlaying = {
-  fileId: string;
-  title: string;
-  artist: string;
-  cover: string | null;
-  clip?: TrackClip | null;
-};
+export type { NowPlaying } from "@kinora/client";
 
 type AudioApi = {
   play: (track: NowPlaying, queue?: NowPlaying[]) => void;
@@ -21,7 +13,7 @@ type AudioApi = {
   toggle: () => void;
   previous: () => void;
   next: () => void;
-  attachClips: (byFileId: Record<string, TrackClip | null | undefined>) => void;
+  attachClips: (byFileId: AudioClips) => void;
   current: NowPlaying | null;
   playing: boolean;
   active: boolean;
@@ -29,205 +21,23 @@ type AudioApi = {
 
 const AudioCtx = createContext<AudioApi | null>(null);
 
-async function resolveSrc(fileId: string) {
-  const { baseUrl, token } = getConnection();
-  const url = streamUrl(fileId);
-  // Same-origin uses the session cookie; cross-origin needs a Bearer-fetched blob.
-  if (!baseUrl || !token) return url;
-  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!response.ok) throw new Error("stream_failed");
-  return URL.createObjectURL(await response.blob());
-}
-
 export function AudioProvider({ children }: { children: ReactNode }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const currentRef = useRef<NowPlaying | null>(null);
-  const queueRef = useRef<{ tracks: NowPlaying[]; index: number }>({ tracks: [], index: -1 });
-  const objectUrlRef = useRef<string | null>(null);
-  const graphRef = useRef<AudioContext | null>(null);
-  const [current, setCurrent] = useState<NowPlaying | null>(null);
-  const [active, setActive] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [visual, setVisual] = useState(false);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [position, setPosition] = useState({ index: -1, total: 0 });
+  const engine = useAudioEngine({ optimistic: true, fetchCrossOrigin: true });
+  const { audioRef, current, position, active, playing, visual, setVisual, analyser, audioProps } = engine;
+  const { play, pause, toggle, previous, next, attachClips } = engine;
   const location = useLocation();
   const { t } = useLocale();
 
   // Video / live players take over the screen — pause music so both don't fight.
   useEffect(() => {
     if (!location.pathname.startsWith("/play/") && !location.pathname.startsWith("/live/")) return;
-    audioRef.current?.pause();
+    pause();
     setVisual(false);
-  }, [location.pathname]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const advance = () => {
-      if (!stepRef.current(1)) setActive(false);
-    };
-    audio.addEventListener("ended", advance);
-    audio.addEventListener("error", advance);
-    return () => {
-      audio.removeEventListener("ended", advance);
-      audio.removeEventListener("error", advance);
-    };
-  }, []);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const send = () => {
-      const track = currentRef.current;
-      if (!track || !audio.duration) return;
-      void api("/api/playback/progress", {
-        method: "POST",
-        body: JSON.stringify({
-          fileId: track.fileId,
-          position: audio.currentTime,
-          duration: audio.duration,
-          subtitleChoice: null,
-        }),
-      }).catch(() => undefined);
-    };
-    audio.addEventListener("pause", send);
-    audio.addEventListener("ended", send);
-    const progress = window.setInterval(send, 5000);
-    return () => {
-      audio.removeEventListener("pause", send);
-      audio.removeEventListener("ended", send);
-      window.clearInterval(progress);
-    };
-  }, []);
-
-  function clearObjectUrl() {
-    if (!objectUrlRef.current) return;
-    URL.revokeObjectURL(objectUrlRef.current);
-    objectUrlRef.current = null;
-  }
-
-  // Must run inside a user gesture, or the AudioContext stays suspended and the track is silent.
-  function ensureGraph() {
-    if (graphRef.current) {
-      void graphRef.current.resume();
-      return;
-    }
-    const audio = audioRef.current;
-    if (!audio) return;
-    try {
-      const context = new window.AudioContext();
-      const source = context.createMediaElementSource(audio);
-      const node = context.createAnalyser();
-      node.fftSize = 1024;
-      node.smoothingTimeConstant = 0.78;
-      source.connect(node);
-      node.connect(context.destination);
-      graphRef.current = context;
-      setAnalyser(node);
-    } catch {
-      // No Web Audio: music still plays, just without visuals.
-    }
-  }
-
-  async function start(track: NowPlaying) {
-    currentRef.current = track;
-    setCurrent(track);
-    setActive(true);
-    // Optimistic: ClipLoop mounts while "playing" so muted YouTube autoplay is not paused onReady.
-    setPlaying(true);
-    setVisual(true);
-    setPosition({ index: queueRef.current.index, total: queueRef.current.tracks.length });
-    const audio = audioRef.current;
-    if (!audio) return;
-    clearObjectUrl();
-    try {
-      const src = await resolveSrc(track.fileId);
-      if (src.startsWith("blob:")) objectUrlRef.current = src;
-      if (currentRef.current?.fileId !== track.fileId) return;
-      ensureGraph();
-      audio.src = src;
-      await audio.play();
-    } catch {
-      setPlaying(false);
-      stepRef.current(1);
-    }
-  }
-
-  function play(track: NowPlaying, queue?: NowPlaying[]) {
-    const tracks = queue && queue.length > 0 ? queue : [track];
-    const index = tracks.findIndex((entry) => entry.fileId === track.fileId);
-    queueRef.current = index >= 0 ? { tracks, index } : { tracks: [track], index: 0 };
-    void start(track);
-  }
-
-  function step(delta: number) {
-    const queue = queueRef.current;
-    const next = queue.tracks[queue.index + delta];
-    if (!next) return false;
-    queue.index += delta;
-    void start(next);
-    return true;
-  }
-
-  const stepRef = useRef(step);
-  stepRef.current = step;
-
-  function previous() {
-    const audio = audioRef.current;
-    if (audio && (audio.currentTime > 3 || !step(-1))) audio.currentTime = 0;
-  }
-
-  function pause() {
-    audioRef.current?.pause();
-  }
-
-  function toggle() {
-    const audio = audioRef.current;
-    if (!audio || !currentRef.current) return;
-    if (audio.paused) {
-      ensureGraph();
-      void audio.play().catch(() => undefined);
-    } else audio.pause();
-  }
-
-  function attachClips(byFileId: Record<string, TrackClip | null | undefined>) {
-    const queue = queueRef.current;
-    queue.tracks = queue.tracks.map((track) => (track.fileId in byFileId ? { ...track, clip: byFileId[track.fileId] ?? null } : track));
-    const playingTrack = currentRef.current;
-    if (playingTrack && playingTrack.fileId in byFileId) {
-      const next = { ...playingTrack, clip: byFileId[playingTrack.fileId] ?? null };
-      currentRef.current = next;
-      setCurrent(next);
-    }
-  }
-
-  const playRef = useRef(play);
-  playRef.current = play;
-  const pauseRef = useRef(pause);
-  pauseRef.current = pause;
-  const toggleRef = useRef(toggle);
-  toggleRef.current = toggle;
-  const previousRef = useRef(previous);
-  previousRef.current = previous;
-  const attachClipsRef = useRef(attachClips);
-  attachClipsRef.current = attachClips;
+  }, [location.pathname, pause, setVisual]);
 
   const apiValue = useMemo<AudioApi>(
-    () => ({
-      play: (track, queue) => playRef.current(track, queue),
-      pause: () => pauseRef.current(),
-      toggle: () => toggleRef.current(),
-      previous: () => previousRef.current(),
-      next: () => {
-        void stepRef.current(1);
-      },
-      attachClips: (byFileId) => attachClipsRef.current(byFileId),
-      current,
-      playing,
-      active,
-    }),
-    [current, playing, active],
+    () => ({ play, pause, toggle, previous, next, attachClips, current, playing, active }),
+    [play, pause, toggle, previous, next, attachClips, current, playing, active],
   );
 
   const cover = current?.cover ? imageUrl(current.cover, "w500") : null;
@@ -236,15 +46,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   return (
     <AudioCtx.Provider value={apiValue}>
       {children}
-      <audio
-        ref={audioRef}
-        onPlay={() => {
-          ensureGraph();
-          setPlaying(true);
-        }}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-      />
+      <audio ref={audioRef} {...audioProps} />
       {active && current ? (
         <>
           <div className={`now-bar${visual ? " is-hidden" : ""}`}>
@@ -263,13 +65,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               <Focusable className="btn primary now-btn" focusKey="now-toggle" onEnterPress={toggle}>
                 {playing ? t.pause : t.play}
               </Focusable>
-              <Focusable
-                className="btn now-btn"
-                focusKey="now-next"
-                onEnterPress={() => {
-                  void step(1);
-                }}
-              >
+              <Focusable className="btn now-btn" focusKey="now-next" onEnterPress={next}>
                 ›
               </Focusable>
             </div>
@@ -310,13 +106,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
                   <Focusable className="btn primary" focusKey="visual-toggle" focusOnMount onEnterPress={toggle}>
                     {playing ? t.pause : t.play}
                   </Focusable>
-                  <Focusable
-                    className="btn"
-                    focusKey="visual-next"
-                    onEnterPress={() => {
-                      void step(1);
-                    }}
-                  >
+                  <Focusable className="btn" focusKey="visual-next" onEnterPress={next}>
                     {t.nextTrack}
                   </Focusable>
                 </>

@@ -1,5 +1,7 @@
 export { api, apiUrl, configureApi, createSession, getApiConfig, setUnauthorized } from "./api";
 export type { ApiConfig } from "./api";
+export { useAudioEngine } from "./audio";
+export type { AudioClips, AudioEngineOptions, AudioPosition, NowPlaying } from "./audio";
 export { hlsUrl, imageUrl, streamUrl, subtitleUrl } from "./urls";
 export { codecLabel, formatBytes, formatClock, formatDate, formatRuntime, resolutionLabel, subtitleLabel } from "./format";
 export type { ClockOptions, Locale } from "./format";

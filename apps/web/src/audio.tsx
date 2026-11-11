@@ -1,162 +1,26 @@
-import type { TrackClip } from "@kinora/shared";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, imageUrl, streamUrl } from "@kinora/client";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { imageUrl, useAudioEngine, type AudioClips, type NowPlaying } from "@kinora/client";
 import { useLocale } from "./i18n";
 import { MiniSpectrum, Visualizer } from "@kinora/media-ui";
-
-interface NowPlaying {
-  fileId: string;
-  title: string;
-  artist: string;
-  cover: string | null;
-  clip?: TrackClip | null;
-}
 
 const AudioContext = createContext<{
   /** Plays `track`; with `queue` (e.g. the whole album), carries on through the tracks after it. */
   play: (track: NowPlaying, queue?: NowPlaying[]) => void;
   pause: () => void;
   /** Attaches YouTube clips that arrived after playback started (keyed by file id). */
-  attachClips: (byFileId: Record<string, TrackClip | null | undefined>) => void;
+  attachClips: (byFileId: AudioClips) => void;
 } | null>(null);
 
 export function AudioProvider({ children }: { children: ReactNode }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const currentRef = useRef<NowPlaying | null>(null);
-  const queueRef = useRef<{ tracks: NowPlaying[]; index: number }>({ tracks: [], index: -1 });
-  const [current, setCurrent] = useState<NowPlaying | null>(null);
-  const [position, setPosition] = useState({ index: -1, total: 0 });
-  const [active, setActive] = useState(false);
-  const [visual, setVisual] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const graphRef = useRef<AudioContext | null>(null);
-  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const engine = useAudioEngine();
+  const { audioRef, current, position, active, playing, visual, setVisual, analyser, previous, step, audioProps } = engine;
+  const { play, pause, attachClips } = engine;
+  const value = useMemo(() => ({ play, pause, attachClips }), [play, pause, attachClips]);
   const { t } = useLocale();
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    // On the end of a track, or a file that will not play, move on through the queue.
-    const advance = () => {
-      if (!stepRef.current(1)) setActive(false);
-    };
-    audio.addEventListener("ended", advance);
-    audio.addEventListener("error", advance);
-    return () => {
-      audio.removeEventListener("ended", advance);
-      audio.removeEventListener("error", advance);
-    };
-  }, []);
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    const send = () => {
-      const track = currentRef.current;
-      if (!track || !audio.duration) return;
-      void api("/api/playback/progress", {
-        method: "POST",
-        body: JSON.stringify({
-          fileId: track.fileId,
-          position: audio.currentTime,
-          duration: audio.duration,
-          subtitleChoice: null,
-        }),
-      }).catch(() => undefined);
-    };
-    audio.addEventListener("pause", send);
-    audio.addEventListener("ended", send);
-    const timer = window.setInterval(send, 5000);
-    return () => {
-      audio.removeEventListener("pause", send);
-      audio.removeEventListener("ended", send);
-      window.clearInterval(timer);
-    };
-  }, []);
-  // Routes the <audio> element through an analyser so visuals follow the music.
-  // Must run inside a user gesture, or the AudioContext stays suspended and the track is silent.
-  function ensureGraph() {
-    if (graphRef.current) {
-      void graphRef.current.resume();
-      return;
-    }
-    const audio = audioRef.current;
-    if (!audio) return;
-    try {
-      const context = new window.AudioContext();
-      const source = context.createMediaElementSource(audio);
-      const node = context.createAnalyser();
-      node.fftSize = 1024;
-      node.smoothingTimeConstant = 0.78;
-      source.connect(node);
-      node.connect(context.destination);
-      graphRef.current = context;
-      setAnalyser(node);
-    } catch {
-      // No Web Audio: music still plays, just without visuals.
-    }
-  }
-  function start(track: NowPlaying) {
-    currentRef.current = track;
-    setCurrent(track);
-    setActive(true);
-    setPosition({ index: queueRef.current.index, total: queueRef.current.tracks.length });
-    const audio = audioRef.current;
-    if (!audio) return;
-    ensureGraph();
-    audio.src = streamUrl(track.fileId);
-    void audio.play().catch(() => undefined);
-  }
-  function play(track: NowPlaying, queue?: NowPlaying[]) {
-    const tracks = queue && queue.length > 0 ? queue : [track];
-    const index = tracks.findIndex((entry) => entry.fileId === track.fileId);
-    queueRef.current = index >= 0 ? { tracks, index } : { tracks: [track], index: 0 };
-    start(track);
-  }
-  /** Moves `delta` tracks through the queue; false when there is nothing there. */
-  function step(delta: number) {
-    const queue = queueRef.current;
-    const next = queue.tracks[queue.index + delta];
-    if (!next) return false;
-    queue.index += delta;
-    start(next);
-    return true;
-  }
-  // The "ended" listener is registered once, so it reaches step through a ref.
-  const stepRef = useRef(step);
-  stepRef.current = step;
-  function previous() {
-    const audio = audioRef.current;
-    // Like most players: a few seconds in, "previous" restarts the current track.
-    if (audio && (audio.currentTime > 3 || !step(-1))) audio.currentTime = 0;
-  }
-  function pause() {
-    audioRef.current?.pause();
-  }
-  function attachClips(byFileId: Record<string, TrackClip | null | undefined>) {
-    const queue = queueRef.current;
-    let touched = false;
-    queue.tracks = queue.tracks.map((track) => {
-      if (!(track.fileId in byFileId)) return track;
-      const clip = byFileId[track.fileId] ?? null;
-      if (track.clip?.key === clip?.key && track.clip?.kind === clip?.kind) return track;
-      touched = true;
-      return { ...track, clip };
-    });
-    const playing = currentRef.current;
-    if (playing && playing.fileId in byFileId) {
-      const clip = byFileId[playing.fileId] ?? null;
-      if (playing.clip?.key !== clip?.key || playing.clip?.kind !== clip?.kind) {
-        const next = { ...playing, clip };
-        currentRef.current = next;
-        setCurrent(next);
-        touched = true;
-      }
-    }
-    if (touched) setPosition({ index: queue.index, total: queue.tracks.length });
-  }
   // Only real music videos make a good loop; plain uploads are usually a still image.
   const clipKey = current?.clip?.kind === "video" ? current.clip.key : null;
   return (
-    <AudioContext.Provider value={{ play, pause, attachClips }}>
+    <AudioContext.Provider value={value}>
       {children}
       <div className="now" hidden={!active}>
         {current?.cover ? <img src={imageUrl(current.cover) ?? ""} alt="" /> : <div className="face" />}
@@ -179,16 +43,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         {analyser ? (
           <MiniSpectrum analyser={visual ? null : analyser} onClick={() => setVisual(true)} label={clipKey ? t.visualizeClip : t.visualize} />
         ) : null}
-        <audio
-          ref={audioRef}
-          controls
-          onPlay={() => {
-            ensureGraph();
-            setPlaying(true);
-          }}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-        />
+        <audio ref={audioRef} controls {...audioProps} />
       </div>
       {visual && active && current ? (
         <Visualizer
