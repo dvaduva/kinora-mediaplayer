@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { GuideChannelOption, IptvPreset, IptvSource, IptvSourceInput, LiveChannel } from "@kinora/shared";
 import { IPTV_PRESETS } from "@kinora/shared";
-import { api } from "@kinora/client";
+import { api, ChannelLogo } from "@kinora/client";
 import type { Copy, Locale } from "../../i18n";
-import { ChannelLogo } from "../../liveTv";
 import { errorText, Status } from "./common";
 
 const MATCH_PAGE = 40;

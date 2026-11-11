@@ -3,10 +3,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import type { ChannelNow, ChannelProgram, LiveChannel, LivePlayback, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
-import { api, formatClock, imageUrl } from "@kinora/client";
+import { api, ChannelLogo, clockTime, formatClock, imageUrl, liveSeconds as liveSecondsAt, programProgress, programSeconds, programTitle, serverNow, syncClock, useNow } from "@kinora/client";
 import { useAudio } from "../audio";
 import { useLocale } from "../i18n";
-import { ChannelLogo, clockTime, FavoriteButton, programProgress, programTitle, serverNow, syncClock, useNow } from "../liveTv";
+import { FavoriteButton } from "../liveTv";
 import { Icon } from "../ui";
 import { LiveMusicVisual, MiniGuide, useMediaAnalyser } from "./LiveExtras";
 import { FillerScreen } from "./LiveFiller";
@@ -21,13 +21,9 @@ const WATCHING_MS = 30_000;
 /** An IPTV stream sits this far behind the newest segment, as hls.js keeps three segments of margin. */
 const EDGE_MARGIN = 12;
 
-function programSeconds(program: ChannelProgram | null) {
-  return program ? (program.end - program.start) / 1000 : 0;
-}
-
 /** Seconds into the program that are airing right now. */
 function liveSeconds(program: ChannelProgram | null) {
-  return program ? Math.min(programSeconds(program), Math.max(0, (serverNow() - program.start) / 1000)) : 0;
+  return liveSecondsAt(program, serverNow());
 }
 
 /** Start and end of what an IPTV stream still holds (its rolling window), in media time. */

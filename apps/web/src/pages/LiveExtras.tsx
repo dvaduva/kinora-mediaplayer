@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
-import { api } from "@kinora/client";
+import { api, byChannel, ChannelLogo, clockTime, currentAndNext, effectiveFilter, filterChannels, programProgress, programTitle, serverNow, syncClock, useChannelFilter, useNow } from "@kinora/client";
 import type { Copy, Locale } from "../i18n";
-import { CategoryBar, ChannelLogo, clockTime, currentAndNext, effectiveFilter, filterChannels, programProgress, programTitle, serverNow, syncClock, useChannelFilter, useNow } from "../liveTv";
+import { CategoryBar, LIVE_FILTER_KEY } from "../liveTv";
 import { Icon } from "../ui";
 import { bands, bass, fitCanvas, useFrames } from "@kinora/media-ui";
 
@@ -124,7 +124,7 @@ export function MiniGuide(props: { currentId: string | undefined; t: Copy; local
   const now = useNow(15_000);
   const [guide, setGuide] = useState<LiveGuide | null>(null);
   const [failed, setFailed] = useState(false);
-  const [filterChoice, setFilter] = useChannelFilter();
+  const [filterChoice, setFilter] = useChannelFilter(LIVE_FILTER_KEY);
   const list = useRef<HTMLUListElement>(null);
   const onClose = useRef(props.onClose);
   onClose.current = props.onClose;
@@ -161,15 +161,7 @@ export function MiniGuide(props: { currentId: string | undefined; t: Copy; local
   const channels = guide?.channels ?? [];
   const filter = effectiveFilter(filterChoice, channels);
   const shown = filterChannels(channels, filter);
-  const programs = useMemo(() => {
-    const map = new Map<string, ChannelProgram[]>();
-    for (const program of guide?.programs ?? []) {
-      const entry = map.get(program.channelId);
-      if (entry) entry.push(program);
-      else map.set(program.channelId, [program]);
-    }
-    return map;
-  }, [guide]);
+  const programs = useMemo(() => byChannel(guide?.programs ?? []), [guide]);
 
   // Start on the channel being watched.
   useEffect(() => {

@@ -2,11 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useNavigate, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import {
-  CATEGORY_MOVIES,
-  CATEGORY_MUSIC,
-  CATEGORY_SERIES,
-  channelColor,
-  channelInitials,
   transcodePlaybackReady,
   type ChannelProgram,
   type LiveChannel,
@@ -14,160 +9,53 @@ import {
   type LivePlayback,
   type TranscodeStatus,
 } from "@kinora/shared";
-import { apiUrl } from "@kinora/client";
+import {
+  apiUrl,
+  byChannel,
+  categoryLabel,
+  channelCategories,
+  ChannelLogo as SharedChannelLogo,
+  clockTime,
+  currentAndNext,
+  dayLabel,
+  effectiveFilter,
+  filterChannels,
+  guideDays,
+  isFiller,
+  liveSeconds,
+  nextMidnight,
+  programProgress,
+  programSeconds,
+  programTitle,
+  readGuideTab,
+  sameFilter,
+  saveGuideTab,
+  useChannelFilter,
+  type ChannelFilter,
+  type GuideTab,
+} from "@kinora/client";
 import { api, getConnection } from "../api";
 import { Focusable } from "../components/Focusable";
 import { ScrollRail } from "../components/ScrollRail";
 import { useLocale, type Copy, type Locale } from "../i18n";
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
 /** Grid scale: pixels per minute; ~3 hours fit a desktop-width TV browser. */
 const PPM = 7;
 const CHANNEL_COLUMN = 220;
 const FILTER_KEY = "kinora.tv.liveFilter";
 const TAB_KEY = "kinora.tv.liveTab";
 
-type ChannelFilter = { kind: "favorites" } | { kind: "all" } | { kind: "category"; value: string };
-type Tab = "guide" | "whatson";
-
-function readFilter(): ChannelFilter {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(FILTER_KEY) ?? "null");
-    if (parsed && typeof parsed === "object" && "kind" in parsed) {
-      const value = parsed as ChannelFilter;
-      if (value.kind === "favorites" || value.kind === "all") return { kind: value.kind };
-      if (value.kind === "category" && typeof value.value === "string") return value;
-    }
-  } catch {
-    // Storage may be blocked.
-  }
-  return { kind: "all" };
-}
-
-function saveFilter(filter: ChannelFilter) {
-  try {
-    window.localStorage.setItem(FILTER_KEY, JSON.stringify(filter));
-  } catch {
-    // Not remembered.
-  }
-}
-
-function categoryLabel(category: string, t: Copy) {
-  if (category === CATEGORY_MOVIES) return t.liveCategoryMovies;
-  if (category === CATEGORY_SERIES) return t.liveCategorySeries;
-  if (category === CATEGORY_MUSIC) return t.liveCategoryMusic;
-  return category;
-}
-
-function isFiller(program: Pick<ChannelProgram, "itemType"> | null | undefined) {
-  return program?.itemType === "filler";
-}
-
-function programTitle(program: Pick<ChannelProgram, "itemType" | "title">, t: Copy) {
-  return isFiller(program) ? t.liveFillerTitle : program.title;
-}
-
-function currentAndNext(list: ChannelProgram[], now: number) {
-  const current = list.find((program) => program.start <= now && now < program.end) ?? null;
-  const next = list.find((program) => program.start >= (current?.end ?? now) && !isFiller(program)) ?? null;
-  return { current, next };
-}
-
-function programProgress(program: { start: number; end: number }, now: number) {
-  if (program.end <= program.start) return 0;
-  return Math.max(0, Math.min(1, (now - program.start) / (program.end - program.start)));
-}
-
-function byChannel(programs: ChannelProgram[]) {
-  const map = new Map<string, ChannelProgram[]>();
-  for (const program of programs) {
-    const list = map.get(program.channelId);
-    if (list) list.push(program);
-    else map.set(program.channelId, [program]);
-  }
-  return map;
-}
-
-function filterChannels(channels: LiveChannel[], filter: ChannelFilter) {
-  if (filter.kind === "favorites") return channels.filter((channel) => channel.favorite);
-  if (filter.kind === "category") return channels.filter((channel) => channel.category === filter.value);
-  return channels;
-}
-
-function channelCategories(channels: LiveChannel[], t: Copy) {
-  const values = [...new Set(channels.flatMap((channel) => (channel.category ? [channel.category] : [])))];
-  return values.sort((a, b) => categoryLabel(a, t).localeCompare(categoryLabel(b, t)));
-}
+type Tab = GuideTab;
 
 function resolveUrl(path: string) {
   if (path.startsWith("http")) return path;
   return apiUrl(path);
 }
 
+/** Logos are stored as server paths; the TV app talks to a configured server, so they are resolved against it. */
 function ChannelLogo(props: { channel: Pick<LiveChannel, "name" | "logoUrl">; className?: string }) {
-  const { channel } = props;
-  const className = `channel-logo${props.className ? ` ${props.className}` : ""}`;
-  if (channel.logoUrl) {
-    return (
-      <span className={`${className} has-image`}>
-        <img src={resolveUrl(channel.logoUrl)} alt="" decoding="async" />
-      </span>
-    );
-  }
-  return (
-    <span className={className} style={{ background: channelColor(channel.name) }} aria-hidden="true">
-      {channelInitials(channel.name)}
-    </span>
-  );
-}
-
-function clockTime(ms: number, locale: Locale) {
-  return new Intl.DateTimeFormat(locale === "ro" ? "ro-RO" : "en-GB", { hour: "2-digit", minute: "2-digit" }).format(ms);
-}
-
-function dayLabel(ms: number, locale: Locale) {
-  return new Intl.DateTimeFormat(locale === "ro" ? "ro-RO" : "en-GB", { weekday: "short", day: "numeric", month: "short" }).format(ms);
-}
-
-function startOfDay(ms: number) {
-  const date = new Date(ms);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-function nextMidnight(day: number) {
-  const date = new Date(day);
-  date.setDate(date.getDate() + 1);
-  return date.getTime();
-}
-
-function guideDays(now: number) {
-  const days: number[] = [];
-  const first = startOfDay(now);
-  for (let index = 0; index < 4; index += 1) {
-    const date = new Date(first);
-    date.setDate(date.getDate() + index);
-    if (date.getTime() < now + 72 * HOUR) days.push(date.getTime());
-  }
-  return days;
-}
-
-function readTab(): Tab {
-  try {
-    return window.localStorage.getItem(TAB_KEY) === "whatson" ? "whatson" : "guide";
-  } catch {
-    return "guide";
-  }
-}
-
-function liveSeconds(program: ChannelProgram | null, now: number) {
-  if (!program) return 0;
-  return Math.min((program.end - program.start) / 1000, Math.max(0, (now - program.start) / 1000));
-}
-
-function programSeconds(program: ChannelProgram | null) {
-  return program ? (program.end - program.start) / 1000 : 0;
+  return <SharedChannelLogo {...props} resolveSrc={resolveUrl} />;
 }
 
 export function LivePage() {
@@ -176,22 +64,14 @@ export function LivePage() {
   const [guide, setGuide] = useState<LiveGuide | null>(null);
   const [stale, setStale] = useState<LiveGuide | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilterState] = useState<ChannelFilter>(readFilter);
-  const [tab, setTabState] = useState<Tab>(readTab);
+  const [filter, setFilter] = useChannelFilter(FILTER_KEY);
+  const [tab, setTabState] = useState<Tab>(() => readGuideTab(TAB_KEY));
   const [dayIndex, setDayIndex] = useState(0);
   const [now, setNow] = useState(Date.now());
 
-  const setFilter = (next: ChannelFilter) => {
-    setFilterState(next);
-    saveFilter(next);
-  };
   const setTab = (next: Tab) => {
     setTabState(next);
-    try {
-      window.localStorage.setItem(TAB_KEY, next);
-    } catch {
-      // Only remembered when storage works.
-    }
+    saveGuideTab(TAB_KEY, next);
   };
 
   useEffect(() => {
@@ -224,8 +104,7 @@ export function LivePage() {
   const loaded = guide && guide.from === from && guide.to === to ? guide : null;
   const display = loaded ?? (stale && stale.from === from && stale.to === to ? stale : null);
   const channels = useMemo(() => (display ? display.channels.filter((channel) => channel.enabled && !channel.empty) : []), [display]);
-  const effective =
-    filter.kind === "category" && !channels.some((channel) => channel.category === filter.value) ? ({ kind: "all" } as ChannelFilter) : filter;
+  const effective = effectiveFilter(filter, channels);
   const visible = filterChannels(channels, effective);
   const programs = useMemo(() => (display ? byChannel(display.programs) : new Map<string, ChannelProgram[]>()), [display]);
   const categories = channelCategories(channels, t);
@@ -234,8 +113,7 @@ export function LivePage() {
     { filter: { kind: "all" }, label: t.liveAll },
     ...categories.map((value) => ({ filter: { kind: "category" as const, value }, label: categoryLabel(value, t) })),
   ];
-  const isActive = (other: ChannelFilter) =>
-    other.kind === effective.kind && (other.kind !== "category" || (effective.kind === "category" && effective.value === other.value));
+  const isActive = (other: ChannelFilter) => sameFilter(other, effective);
   const shown = display ? { ...display, channels: visible } : null;
 
   if (error && !display) return <p className="state-message">{t.liveGuideFailed}</p>;

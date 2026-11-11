@@ -1,26 +1,31 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
-import { api, imageUrl } from "@kinora/client";
-import { useLocale, type Copy, type Locale } from "../i18n";
 import {
-  CategoryBar,
+  api,
+  byChannel,
   ChannelLogo,
   clockTime,
   currentAndNext,
   dayLabel,
   effectiveFilter,
-  FavoriteButton,
   filterChannels,
+  guideDays,
+  imageUrl,
   isFiller,
+  nextMidnight,
   programProgress,
   programTitle,
+  readGuideTab,
+  saveGuideTab,
   serverNow,
-  startOfDay,
   syncClock,
   useChannelFilter,
   useNow,
-} from "../liveTv";
+  type GuideTab,
+} from "@kinora/client";
+import { useLocale, type Copy, type Locale } from "../i18n";
+import { CategoryBar, FavoriteButton, LIVE_FILTER_KEY } from "../liveTv";
 import { Icon } from "../ui";
 
 const MINUTE = 60_000;
@@ -40,24 +45,6 @@ function useNarrow() {
     return () => query.removeEventListener("change", change);
   }, []);
   return narrow;
-}
-
-/** Midnight of each day the 72-hour program reaches, today first. */
-function guideDays(now: number) {
-  const days: number[] = [];
-  const first = startOfDay(now);
-  for (let index = 0; index < 4; index += 1) {
-    const date = new Date(first);
-    date.setDate(date.getDate() + index);
-    if (date.getTime() < now + 72 * HOUR) days.push(date.getTime());
-  }
-  return days;
-}
-
-function nextMidnight(day: number) {
-  const date = new Date(day);
-  date.setDate(date.getDate() + 1);
-  return date.getTime();
 }
 
 function useGuide(from: number, to: number) {
@@ -82,33 +69,15 @@ function useGuide(from: number, to: number) {
   return { guide: guide && guide.from === from && guide.to === to ? guide : null, stale: guide, failed };
 }
 
-function byChannel(programs: ChannelProgram[]) {
-  const map = new Map<string, ChannelProgram[]>();
-  for (const program of programs) {
-    const list = map.get(program.channelId);
-    if (list) list.push(program);
-    else map.set(program.channelId, [program]);
-  }
-  return map;
-}
-
-type Tab = "guide" | "whatson";
+type Tab = GuideTab;
 const TAB_KEY = "kinora.liveTab";
-
-function readTab(): Tab {
-  try {
-    return window.localStorage.getItem(TAB_KEY) === "whatson" ? "whatson" : "guide";
-  } catch {
-    return "guide";
-  }
-}
 
 export function LiveTvPage() {
   const { t, locale } = useLocale();
   const narrow = useNarrow();
   const now = useNow(30_000);
   const days = guideDays(now);
-  const [tab, setTabState] = useState<Tab>(readTab);
+  const [tab, setTabState] = useState<Tab>(() => readGuideTab(TAB_KEY));
   const [dayIndex, setDayIndex] = useState(0);
   // What's On and the phone list are about now, so they always load today.
   const day = narrow || tab === "whatson" ? days[0]! : (days[dayIndex] ?? days[0]!);
@@ -116,17 +85,13 @@ export function LiveTvPage() {
   const to = nextMidnight(day);
   const { guide, stale, failed } = useGuide(from, to);
   const [selected, setSelected] = useState<ChannelProgram | null>(null);
-  const [filterChoice, setFilter] = useChannelFilter();
+  const [filterChoice, setFilter] = useChannelFilter(LIVE_FILTER_KEY);
   /** Stars toggled here, ahead of the next guide refresh. */
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
 
   const setTab = (next: Tab) => {
     setTabState(next);
-    try {
-      window.localStorage.setItem(TAB_KEY, next);
-    } catch {
-      // Only remembered when storage works.
-    }
+    saveGuideTab(TAB_KEY, next);
   };
 
   const loaded = guide ?? stale;
