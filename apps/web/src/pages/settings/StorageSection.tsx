@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../../api";
+import { api, formatBytes } from "@kinora/client";
 import { useLocale } from "../../i18n";
-import { formatBytes } from "../../media";
 import { SaveRow, SectionHead, useReportDirty, useSave, type SectionProps } from "./common";
 
 const GB = 1024 ** 3;

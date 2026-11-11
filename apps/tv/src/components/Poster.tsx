@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { Focusable } from "./Focusable";
-import { imageUrl } from "../media";
+import { imageUrl } from "@kinora/client";
 
 type Props = {
   to: string;

@@ -6,7 +6,7 @@ import { useAudio } from "../audio";
 import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { useLocale } from "../i18n";
-import { formatClock, imageUrl } from "../media";
+import { formatClock, imageUrl } from "@kinora/client";
 
 function firstTrackTitle(tracks: { title: string }[]) {
   return tracks[0]?.title?.trim() || "";
@@ -269,7 +269,7 @@ export function AlbumDetailPage() {
                 {track.title}
                 {clip?.kind === "video" ? <small className="track-clip-badge">{t.videoClip}</small> : null}
               </span>
-              <em>{formatClock(track.duration)}</em>
+              <em>{formatClock(track.duration, { hours: true, fallback: "0:00" })}</em>
             </Focusable>
           );
         })}

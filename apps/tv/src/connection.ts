@@ -40,8 +40,3 @@ export function normalizeBaseUrl(value: string) {
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
   return `http://${trimmed}`;
 }
-
-export function apiUrl(baseUrl: string, path: string) {
-  const prefix = baseUrl || "";
-  return `${prefix}${path.startsWith("/") ? path : `/${path}`}`;
-}

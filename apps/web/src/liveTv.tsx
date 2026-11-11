@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CATEGORY_MOVIES, CATEGORY_MUSIC, CATEGORY_SERIES, channelColor, channelInitials, type ChannelProgram, type LiveChannel } from "@kinora/shared";
-import { api } from "./api";
+import { api } from "@kinora/client";
 import type { Copy, Locale } from "./i18n";
 import { Icon, ScrollRail } from "./ui";
 

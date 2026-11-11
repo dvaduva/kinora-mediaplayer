@@ -6,7 +6,7 @@ import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { Rail } from "../components/Rail";
 import { useLocale } from "../i18n";
-import { imageUrl } from "../media";
+import { imageUrl } from "@kinora/client";
 
 export function HomePage() {
   const { t } = useLocale();

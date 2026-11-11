@@ -14,10 +14,10 @@ import {
   type LivePlayback,
   type TranscodeStatus,
 } from "@kinora/shared";
+import { apiUrl } from "@kinora/client";
 import { api, getConnection } from "../api";
 import { Focusable } from "../components/Focusable";
 import { ScrollRail } from "../components/ScrollRail";
-import { apiUrl } from "../connection";
 import { useLocale, type Copy, type Locale } from "../i18n";
 
 const MINUTE = 60_000;
@@ -102,7 +102,7 @@ function channelCategories(channels: LiveChannel[], t: Copy) {
 
 function resolveUrl(path: string) {
   if (path.startsWith("http")) return path;
-  return apiUrl(getConnection().baseUrl, path);
+  return apiUrl(path);
 }
 
 function ChannelLogo(props: { channel: Pick<LiveChannel, "name" | "logoUrl">; className?: string }) {

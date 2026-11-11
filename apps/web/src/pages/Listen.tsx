@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { AlbumDetail, ArtistDetail, TrackClip, IdentifyItem, MusicCandidate, TmdbCandidate } from "@kinora/shared";
-import { api } from "../api";
+import { api, formatClock, imageUrl } from "@kinora/client";
 import { useCached } from "../cache";
 import { useLocale } from "../i18n";
-import { formatClock, imageUrl } from "../media";
 import { PosterLink, SkeletonBlocks } from "../ui";
 import { useAudio } from "../audio";
 

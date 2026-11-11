@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
-import { api } from "../api";
+import { api } from "@kinora/client";
 import type { Copy, Locale } from "../i18n";
 import { CategoryBar, ChannelLogo, clockTime, currentAndNext, effectiveFilter, filterChannels, programProgress, programTitle, serverNow, syncClock, useChannelFilter, useNow } from "../liveTv";
 import { Icon } from "../ui";
-import { bands, bass, fitCanvas, useFrames } from "../visualizer";
+import { bands, bass, fitCanvas, useFrames } from "@kinora/media-ui";
 
 const BRASS = "210,174,98";
 

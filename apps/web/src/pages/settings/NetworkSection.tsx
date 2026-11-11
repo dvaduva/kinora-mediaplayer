@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../../api";
+import { api } from "@kinora/client";
 import { useLocale } from "../../i18n";
 import { SaveRow, SectionHead, Status, useReportDirty, useSave, type SectionProps } from "./common";
 

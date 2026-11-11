@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChannelProgram, LiveFiller } from "@kinora/shared";
-import { hideCaptions, loadYoutubeApi, type YTPlayer } from "../clipLoop";
+import { hideCaptions, loadYoutubeApi, type YTPlayer } from "@kinora/media-ui";
 import type { Copy, Locale } from "../i18n";
 import { clockTime, useNow } from "../liveTv";
-import { formatClock, imageUrl } from "../media";
+import { formatClock, imageUrl } from "@kinora/client";
 
 const PLAYING = 1;
 const ENDED = 0;

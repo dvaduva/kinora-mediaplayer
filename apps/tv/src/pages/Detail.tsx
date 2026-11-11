@@ -6,7 +6,7 @@ import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { Rail } from "../components/Rail";
 import { useLocale } from "../i18n";
-import { codecLabel, formatBytes, formatRuntime, imageUrl, resolutionLabel } from "../media";
+import { codecLabel, formatBytes, formatRuntime, imageUrl, resolutionLabel, type Locale } from "@kinora/client";
 
 export function MovieDetailPage() {
   const { id } = useParams();
@@ -380,7 +380,7 @@ function SimilarRail(props: { title: string; items: SimilarTitle[] }) {
   );
 }
 
-function versionFacts(version: MediaVersion | null, locale: "ro" | "en") {
+function versionFacts(version: MediaVersion | null, locale: Locale) {
   if (!version) return null;
   return [
     resolutionLabel(version.width, version.height),

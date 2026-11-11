@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { PersonDetail } from "@kinora/shared";
-import { api } from "../api";
+import { api, formatDate, imageUrl } from "@kinora/client";
 import { useLocale } from "../i18n";
-import { formatDate, imageUrl } from "../media";
 import { PosterLink } from "../ui";
 
 const LONG_BIOGRAPHY = 700;

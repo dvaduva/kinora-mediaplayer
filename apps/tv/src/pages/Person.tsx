@@ -5,18 +5,7 @@ import { api } from "../api";
 import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { useLocale } from "../i18n";
-import { imageUrl } from "../media";
-
-function formatDate(value: string | null, locale: "ro" | "en") {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale === "ro" ? "ro-RO" : "en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(date);
-}
+import { formatDate, imageUrl } from "@kinora/client";
 
 function ageAt(birthday: string | null, until: string | null) {
   if (!birthday) return null;

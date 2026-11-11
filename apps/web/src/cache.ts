@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { api } from "@kinora/client";
 
 /**
  * Stale-while-revalidate for GET endpoints: a page shows the last response it saw immediately,

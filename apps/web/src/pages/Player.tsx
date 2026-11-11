@@ -3,11 +3,9 @@ import { Link, useParams } from "react-router-dom";
 import Hls from "hls.js";
 import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
 import { SUBTITLE_DELAY_LIMIT, transcodePlaybackReady } from "@kinora/shared";
-import { api } from "../api";
+import { api, codecLabel, cueStyleSheet, formatClock, formatDelay, hlsUrl, setSubtitleDelay, shiftCues, streamUrl, subtitleLabel, subtitleUrl } from "@kinora/client";
 import { embeddedTextTrack, useEmbeddedSubtitles } from "../embeddedSubtitles";
 import { useLocale } from "../i18n";
-import { codecLabel, formatClock, subtitleLabel } from "../media";
-import { cueStyleSheet, formatDelay, setSubtitleDelay, shiftCues } from "../subtitleTiming";
 import { Icon } from "../ui";
 
 const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
@@ -143,7 +141,7 @@ export function PlayerPage() {
     if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
     const media = mediaRef.current;
     if (!(media instanceof HTMLVideoElement)) return;
-    const src = `/api/stream/${fileId}/index.m3u8`;
+    const src = hlsUrl(fileId);
     const start = view.resumeSeconds > 5 ? view.resumeSeconds : 0;
     if (!Hls.isSupported()) {
       if (media.canPlayType("application/vnd.apple.mpegurl")) {
@@ -290,7 +288,7 @@ export function PlayerPage() {
       </header>
       {view.plan.available ? (
         view.kind === "track" ? (
-          <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={`/api/stream/${view.fileId}`} controls autoPlay />
+          <audio ref={mediaRef as RefObject<HTMLAudioElement>} src={streamUrl(view.fileId)} controls autoPlay />
         ) : (
           <div className="player-frame">
             {preparing && !play.started && play.status?.state !== "error" ? (
@@ -310,14 +308,14 @@ export function PlayerPage() {
               <video
                 className="player-video"
                 ref={videoRef}
-                src={preparing ? undefined : `/api/stream/${view.fileId}`}
+                src={preparing ? undefined : streamUrl(view.fileId)}
                 controls
                 autoPlay={!preparing}
                 playsInline
                 crossOrigin="anonymous"
               >
                 {showCaption && caption ? (
-                  <track key={caption.id} id={caption.id} kind="subtitles" src={`/api/subtitles/${view.fileId}/${caption.id}`} srcLang={caption.language ?? undefined} label={subtitleLabel(caption, locale)} default />
+                  <track key={caption.id} id={caption.id} kind="subtitles" src={subtitleUrl(view.fileId, caption.id)} srcLang={caption.language ?? undefined} label={subtitleLabel(caption, locale)} default />
                 ) : null}
               </video>
             ) : null}

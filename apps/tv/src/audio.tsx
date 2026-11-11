@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 import { api, getConnection } from "./api";
 import { Focusable } from "./components/Focusable";
 import { useLocale } from "./i18n";
-import { imageUrl, streamUrl } from "./media";
+import { imageUrl, streamUrl } from "@kinora/client";
 import { MiniSpectrum, Visualizer } from "@kinora/media-ui";
 
 export type NowPlaying = {

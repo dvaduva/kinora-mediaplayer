@@ -11,9 +11,8 @@ import type {
   OwnReview,
   TmdbCandidate,
 } from "@kinora/shared";
-import { api } from "./api";
+import { api, formatDate, imageUrl, type Locale } from "@kinora/client";
 import { useLocale } from "./i18n";
-import { formatDate, imageUrl } from "./media";
 import { ScrollRail } from "./ui";
 
 // ---------- Stars ----------
@@ -269,7 +268,7 @@ function SourceMark(props: { source: MovieReview["source"] }) {
   return null;
 }
 
-function reviewDate(value: string | null, locale: "ro" | "en") {
+function reviewDate(value: string | null, locale: Locale) {
   if (!value) return null;
   // RT sends display dates ("Mar 31, 2026"); TMDB sends ISO timestamps.
   return /^\d{4}-\d{2}-\d{2}/.test(value) ? formatDate(value, locale) : value;

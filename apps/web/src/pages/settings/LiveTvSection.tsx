@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { ChannelAlign, ChannelFiller, ChannelInput, ChannelOptions, ChannelOrder, ChannelSource, ChannelSourceType, LiveChannel, LiveTvSettings } from "@kinora/shared";
 import { CHANNEL_SOURCE_TYPES, deriveCategory } from "@kinora/shared";
-import { api } from "../../api";
+import { api } from "@kinora/client";
 import { useLocale, type Copy } from "../../i18n";
 import { categoryLabel, ChannelLogo } from "../../liveTv";
 import { Icon } from "../../ui";

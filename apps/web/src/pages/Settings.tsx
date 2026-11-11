@@ -1,7 +1,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import { Link, Navigate, useBlocker, useParams } from "react-router-dom";
 import type { AppSettings } from "@kinora/shared";
-import { api } from "../api";
+import { api } from "@kinora/client";
 import { useLocale, type Copy } from "../i18n";
 import { Dialog } from "../movieExtras";
 import { Icon } from "../ui";

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SubtitleChunk, SubtitleTrack } from "@kinora/shared";
-import { api } from "./api";
-import { shiftCues, subtitleDelay } from "./subtitleTiming";
+import { api, shiftCues, subtitleDelay } from "@kinora/client";
 
 /** Must match CHUNK_SECONDS on the server. */
 const CHUNK_SECONDS = 60;

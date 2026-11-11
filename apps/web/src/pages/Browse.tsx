@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { WATCH_STATUSES, type AlbumSummary, type ArtistSummary, type HomeView, type MovieSummary, type SearchHit, type SeriesSummary, type WatchStatus } from "@kinora/shared";
-import { api } from "../api";
+import { api, formatDate, formatRuntime, imageUrl } from "@kinora/client";
 import { useCached } from "../cache";
 import { useLocale, type Copy, type Locale } from "../i18n";
-import { formatDate, formatRuntime } from "../media";
 import { PosterLink, ScrollRail, SkeletonGrid, statusLabel } from "../ui";
 
 export function HomePage() {
@@ -23,7 +22,7 @@ export function HomePage() {
   return (
     <>
       {home.featured ? (
-        <section className="billboard" style={{ backgroundImage: home.featured.backdropPath ? `url(${posterPath(home.featured.backdropPath, "w1280")})` : undefined }}>
+        <section className="billboard" style={{ backgroundImage: home.featured.backdropPath ? `url(${imageUrl(home.featured.backdropPath, "w1280")})` : undefined }}>
           <div className="billboard-fade" />
           <div className="billboard-copy">
             <h1>
@@ -61,10 +60,6 @@ export function HomePage() {
       <PosterRow title={t.recentAlbums} items={home.albums.map((album) => ({ id: album.id, to: `/music/albums/${album.id}`, title: album.title, meta: album.artistName, src: album.coverPath }))} />
     </>
   );
-}
-
-function posterPath(src: string, size: string) {
-  return src.startsWith("cover:") ? `/api/covers/${encodeURIComponent(src.slice(6))}` : `/api/images?size=${size}&path=${encodeURIComponent(src)}`;
 }
 
 function PosterRow(props: { title: string; items: { id: string; to: string; title: string; meta?: string | null; src: string | null; badge?: string | null; status?: WatchStatus }[] }) {

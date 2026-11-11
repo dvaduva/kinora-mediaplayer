@@ -6,8 +6,7 @@ import { SUBTITLE_DELAY_LIMIT, transcodePlaybackReady } from "@kinora/shared";
 import { api, getConnection } from "../api";
 import { Focusable } from "../components/Focusable";
 import { useLocale } from "../i18n";
-import { formatClock, hlsUrl, streamUrl, subtitleLabel, subtitleUrl } from "../media";
-import { formatDelay, setSubtitleDelay, shiftCues } from "../subtitleTiming";
+import { formatClock, formatDelay, hlsUrl, setSubtitleDelay, shiftCues, streamUrl, subtitleLabel, subtitleUrl } from "@kinora/client";
 
 const SEEK_STEP = 10;
 const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
@@ -459,11 +458,11 @@ export function PlayerPage() {
               CC
             </Focusable>
             <div className="player-bar">
-              <span>{formatClock(position)}</span>
+              <span>{formatClock(position, { hours: true, fallback: "0:00" })}</span>
               <div className="player-track">
                 <i style={{ width: `${Math.max(0, Math.min(100, progress * 100))}%` }} />
               </div>
-              <span>{formatClock(duration)}</span>
+              <span>{formatClock(duration, { hours: true, fallback: "0:00" })}</span>
             </div>
           </div>
         </div>

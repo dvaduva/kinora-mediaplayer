@@ -1,9 +1,8 @@
 import type { TrackClip } from "@kinora/shared";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api } from "./api";
-import { imageUrl } from "./media";
+import { api, imageUrl, streamUrl } from "@kinora/client";
 import { useLocale } from "./i18n";
-import { MiniSpectrum, Visualizer } from "./visualizer";
+import { MiniSpectrum, Visualizer } from "@kinora/media-ui";
 
 interface NowPlaying {
   fileId: string;
@@ -103,7 +102,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
     ensureGraph();
-    audio.src = `/api/stream/${track.fileId}`;
+    audio.src = streamUrl(track.fileId);
     void audio.play().catch(() => undefined);
   }
   function play(track: NowPlaying, queue?: NowPlaying[]) {

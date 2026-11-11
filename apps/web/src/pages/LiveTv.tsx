@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { ChannelProgram, LiveChannel, LiveGuide } from "@kinora/shared";
-import { api } from "../api";
+import { api, imageUrl } from "@kinora/client";
 import { useLocale, type Copy, type Locale } from "../i18n";
 import {
   CategoryBar,
@@ -21,7 +21,6 @@ import {
   useChannelFilter,
   useNow,
 } from "../liveTv";
-import { imageUrl } from "../media";
 import { Icon } from "../ui";
 
 const MINUTE = 60_000;

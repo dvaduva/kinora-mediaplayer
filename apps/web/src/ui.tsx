@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom";
 import type { WatchStatus } from "@kinora/shared";
 import { useLocale, type Copy } from "./i18n";
-import { imageUrl } from "./media";
+import { imageUrl } from "@kinora/client";
 
 /** Horizontal rail without a scrollbar, paged with [ ‹ ] … [ › ] buttons. */
 export function ScrollRail(props: { className: string; children: ReactNode }) {

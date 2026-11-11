@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createBrowserRouter, Link, NavLink, Route, RouterProvider, Routes, useLocation, useNavigate } from "react-router-dom";
 import type { AppSetup } from "@kinora/shared";
-import { api, setUnauthorized } from "./api";
+import { api, setUnauthorized } from "@kinora/client";
 import { prefetch } from "./cache";
 import { AudioProvider } from "./audio";
 import { LocaleProvider, useLocale } from "./i18n";

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { DirectoryListing, LibraryType, LibraryView } from "@kinora/shared";
-import { api } from "../../api";
+import { api } from "@kinora/client";
 import { useLocale, type Copy } from "../../i18n";
 import { Icon } from "../../ui";
 import { errorText, SectionHead, Status, useReportDirty, type SectionProps } from "./common";

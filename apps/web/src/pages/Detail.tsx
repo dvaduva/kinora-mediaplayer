@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { WATCH_STATUSES, type CastMember, type ExternalTitleDetail, type MediaVersion, type MovieDetail, type SeriesDetail, type SimilarTitle, type Trailer, type WatchStatus } from "@kinora/shared";
-import { api } from "../api";
+import { api, codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel, type Locale } from "@kinora/client";
 import { useLocale } from "../i18n";
-import { codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel } from "../media";
 import { Poster, ScrollRail, statusLabel } from "../ui";
 import { EditMovieDialog, RatingsBar, ReviewDialog, ReviewsSection, Stars, useExternalRatings, useMovieReviews } from "../movieExtras";
 
@@ -334,7 +333,7 @@ function DossierHero(props: {
   onVersion: (id: string) => void;
   versionsLabel: string;
   fileLabel: string;
-  locale: "ro" | "en";
+  locale: Locale;
   unmatched: string | null;
   ratingLabel: string;
   status?: ReactNode;

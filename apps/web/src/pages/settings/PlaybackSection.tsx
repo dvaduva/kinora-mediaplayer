@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { SUBTITLE_SIZES } from "@kinora/shared";
-import { api } from "../../api";
+import { api } from "@kinora/client";
 import { useLocale } from "../../i18n";
 import { SaveRow, SectionHead, useReportDirty, useSave, type SectionProps } from "./common";
 
