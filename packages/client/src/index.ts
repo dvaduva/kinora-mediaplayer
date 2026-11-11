@@ -5,6 +5,10 @@ export type { AudioClips, AudioEngineOptions, AudioPosition, NowPlaying } from "
 export { hlsUrl, imageUrl, streamUrl, subtitleUrl } from "./urls";
 export { codecLabel, formatBytes, formatClock, formatDate, formatRuntime, resolutionLabel, subtitleLabel } from "./format";
 export type { ClockOptions, Locale } from "./format";
+export { baseCopy } from "./copy";
+export type { BaseCopy } from "./copy";
+export { createLocale } from "./i18n";
+export type { LocaleValue } from "./i18n";
 export {
   attachHls,
   createHls,
