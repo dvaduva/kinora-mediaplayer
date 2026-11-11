@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import Hls from "hls.js";
+import Hls, { type HlsConfig } from "hls.js";
 import type { ChannelNow, ChannelProgram, LiveChannel, LivePlayback, TranscodeStatus } from "@kinora/shared";
 import { transcodePlaybackReady } from "@kinora/shared";
-import { api, ChannelLogo, clockTime, formatClock, imageUrl, liveSeconds as liveSecondsAt, programProgress, programSeconds, programTitle, serverNow, syncClock, useNow } from "@kinora/client";
+import { api, ChannelLogo, clockTime, createHls, LIVE_EDGE_HLS_CONFIG, RESUME_HLS_CONFIG, formatClock, imageUrl, liveSeconds as liveSecondsAt, programProgress, programSeconds, programTitle, serverNow, syncClock, useNow } from "@kinora/client";
 import { useAudio } from "../audio";
 import { useLocale } from "../i18n";
 import { FavoriteButton } from "../liveTv";
@@ -170,20 +170,16 @@ export function LivePlayerPage() {
         tune(channelId);
       } else setError(copy.current.playbackFailed);
     };
-    const attachHls = (config: Partial<Hls["config"]>) => {
-      hls = new Hls({ enableWorker: false, lowLatencyMode: false, maxLiveSyncPlaybackRate: 1, ...config });
-      hlsRef.current = hls;
-      hls.loadSource(session.src);
-      hls.attachMedia(media);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => void media.play().catch(() => undefined));
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal && !cancelled) onFatal();
+    const attachHls = (config: Partial<HlsConfig>) => {
+      hls = createHls(media, session.src, config, () => {
+        if (!cancelled) onFatal();
       });
+      hlsRef.current = hls;
     };
     /** IPTV: plays at the live edge of the relay's rolling window. */
     const beginLive = () => {
       if (cancelled) return;
-      if (Hls.isSupported()) attachHls({ backBufferLength: 300, liveSyncDurationCount: 3 });
+      if (Hls.isSupported()) attachHls(LIVE_EDGE_HLS_CONFIG);
       else if (media.canPlayType("application/vnd.apple.mpegurl")) {
         media.addEventListener("loadedmetadata", onMeta, { once: true });
         media.src = session.src;
@@ -207,7 +203,7 @@ export function LivePlayerPage() {
         media.addEventListener("loadedmetadata", onMeta, { once: true });
         media.src = session.src;
       } else {
-        attachHls({ startPosition: target, backBufferLength: Number.POSITIVE_INFINITY, liveSyncDurationCount: 1_000_000 });
+        attachHls({ startPosition: target, ...RESUME_HLS_CONFIG });
       }
       setStarted(true);
     };

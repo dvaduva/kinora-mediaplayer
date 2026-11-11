@@ -1,9 +1,26 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useParams } from "react-router-dom";
-import Hls from "hls.js";
 import type { PlaybackView, TranscodeStatus } from "@kinora/shared";
-import { SUBTITLE_DELAY_LIMIT, transcodePlaybackReady } from "@kinora/shared";
-import { api, codecLabel, cueStyleSheet, formatClock, formatDelay, hlsUrl, setSubtitleDelay, shiftCues, streamUrl, subtitleLabel, subtitleUrl } from "@kinora/client";
+import { SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
+import {
+  attachHls,
+  codecLabel,
+  cueStyleSheet,
+  formatClock,
+  formatDelay,
+  hlsUrl,
+  reportPlaybackProgress,
+  resumeStart,
+  seekToResume,
+  setSubtitleDelay,
+  shiftCues,
+  streamUrl,
+  subtitleLabel,
+  subtitleUrl,
+  usePlaybackView,
+  useTranscodeStart,
+  watchPlaybackProgress,
+} from "@kinora/client";
 import { embeddedTextTrack, useEmbeddedSubtitles } from "../embeddedSubtitles";
 import { useLocale } from "../i18n";
 import { Icon } from "../ui";
@@ -14,16 +31,7 @@ type SubPanel = "subs" | null;
 export function PlayerPage() {
   const { fileId } = useParams();
   const { t, locale } = useLocale();
-  const [view, setView] = useState<PlaybackView | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  // `from` is where the conversion stood at the first status, so the bar starts empty and fills toward the start point.
-  const [play, setPlay] = useState<{ id: string | undefined; started: boolean; status: TranscodeStatus | null; from: number | null }>({
-    id: undefined,
-    started: false,
-    status: null,
-    from: null,
-  });
   const [captions, setCaptions] = useState(false);
   const [delay, setDelay] = useState(0);
   const [panel, setPanel] = useState<SubPanel>(null);
@@ -40,57 +48,22 @@ export function PlayerPage() {
   const subtitleDirty = useRef(false);
   const copyRef = useRef(t);
   copyRef.current = t;
-  if (play.id !== fileId) setPlay({ id: fileId, started: false, status: null, from: null });
+  const { view, error, setError } = usePlaybackView(fileId, (data) => {
+    setSelected(data.selectedSubtitleId);
+    setDelay(data.subtitleDelay);
+  });
+  // `from` is where the conversion stood at the first status, so the bar starts empty and fills toward the start point.
+  const { preparing, setStatus, ...play } = useTranscodeStart(fileId, view, setError);
 
   useEffect(() => {
     if (!fileId) return;
     resumed.current = false;
     subtitleDirty.current = false;
     setCaptions(false);
-    api<PlaybackView>(`/api/playback/${fileId}`)
-      .then((data) => {
-        setView(data);
-        setSelected(data.selectedSubtitleId);
-        setDelay(data.subtitleDelay);
-        setError(null);
-      })
-      .catch((reason: Error) => setError(reason.message));
   }, [fileId]);
 
   const selectedTrack = view && view.fileId === fileId ? (view.subtitles.find((track) => track.id === selected && track.textBased) ?? null) : null;
   const embeddedState = useEmbeddedSubtitles(video, fileId, selectedTrack, selectedTrack ? subtitleLabel(selectedTrack, locale) : "");
-
-  const preparing = Boolean(view && view.plan.available && view.plan.mode !== "direct");
-
-  useEffect(() => {
-    if (!fileId || !view || view.fileId !== fileId || !preparing || play.started || play.status?.state === "error") return;
-    let cancel = false;
-    const tick = () => {
-      api<TranscodeStatus>(`/api/stream/${fileId}/status`)
-        .then((data) => {
-          if (cancel) return;
-          setPlay((current) =>
-            current.id !== fileId
-              ? current
-              : {
-                  id: fileId,
-                  status: data,
-                  from: current.from ?? data.seconds,
-                  started: current.started || transcodePlaybackReady(data, view.resumeSeconds),
-                },
-          );
-        })
-        .catch((reason: Error) => {
-          if (!cancel) setError(reason.message);
-        });
-    };
-    tick();
-    const timer = window.setInterval(tick, 500);
-    return () => {
-      cancel = true;
-      window.clearInterval(timer);
-    };
-  }, [fileId, view, preparing, play.started, play.status?.state]);
 
   useEffect(() => {
     const media = mediaRef.current;
@@ -106,34 +79,17 @@ export function PlayerPage() {
     const resume = () => {
       if (resumed.current || view.plan.mode !== "direct") return;
       resumed.current = true;
-      if (view.resumeSeconds > 5 && (!media.duration || view.resumeSeconds < media.duration - 5)) {
-        media.currentTime = view.resumeSeconds;
-      }
+      seekToResume(media, view.resumeSeconds);
       apply();
     };
-    const send = () => {
-      const reportedDuration = view.plan.mode === "direct" ? media.duration : (view.duration ?? media.duration);
-      if (!fileId || !reportedDuration || !Number.isFinite(reportedDuration) || !Number.isFinite(media.currentTime)) return;
-      void api("/api/playback/progress", {
-        method: "POST",
-        body: JSON.stringify({
-          fileId,
-          position: media.currentTime,
-          duration: reportedDuration,
-          subtitleChoice: subtitleDirty.current ? selected ?? "off" : view.selectedSubtitleId,
-          subtitleDelay: delayRef.current,
-        }),
-      }).catch(() => undefined);
-    };
     media.addEventListener("loadedmetadata", resume);
-    media.addEventListener("pause", send);
-    const timer = window.setInterval(send, 5000);
+    const stopProgress = watchPlaybackProgress(media, () =>
+      reportPlaybackProgress(fileId, media, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current }),
+    );
     apply();
     return () => {
-      send();
+      stopProgress();
       media.removeEventListener("loadedmetadata", resume);
-      media.removeEventListener("pause", send);
-      window.clearInterval(timer);
     };
   }, [view, selected, fileId, play.started, captions, embeddedState]);
 
@@ -141,62 +97,20 @@ export function PlayerPage() {
     if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
     const media = mediaRef.current;
     if (!(media instanceof HTMLVideoElement)) return;
-    const src = hlsUrl(fileId);
-    const start = view.resumeSeconds > 5 ? view.resumeSeconds : 0;
-    if (!Hls.isSupported()) {
-      if (media.canPlayType("application/vnd.apple.mpegurl")) {
-        media.src = src;
-        return;
-      }
-      setError(copyRef.current.playbackFailed);
-      return;
-    }
-    const hls = new Hls({
-      enableWorker: false,
-      startPosition: start,
-      lowLatencyMode: false,
-      maxLiveSyncPlaybackRate: 1,
-      backBufferLength: Number.POSITIVE_INFINITY,
-      // EVENT playlists are live. A long sync window stays on the resume point instead of the transcode edge.
-      liveSyncDurationCount: 1_000_000,
-    });
-    hls.loadSource(src);
-    hls.attachMedia(media);
-    let corrections = 0;
-    const onSeeking = () => {
-      if (corrections >= 3 || media.currentTime <= start + 8) return;
-      corrections += 1;
-      media.currentTime = start;
-    };
-    const onPlaying = () => {
-      corrections = 3;
-      setCaptions(true);
-    };
-    const onParsed = () => {
-      void media.play().catch(() => undefined);
-    };
-    media.addEventListener("seeking", onSeeking);
-    media.addEventListener("playing", onPlaying);
-    hls.on(Hls.Events.MANIFEST_PARSED, onParsed);
-    hls.on(Hls.Events.ERROR, (_event, data) => {
-      if (!data.fatal) return;
-      setPlay((current) => ({
-        ...current,
-        status: {
+    return attachHls(media, hlsUrl(fileId), {
+      start: resumeStart(view.resumeSeconds),
+      onUnsupported: () => setError(copyRef.current.playbackFailed),
+      onPlaying: () => setCaptions(true),
+      onFatal: () =>
+        setStatus({
           state: "error",
           seconds: 0,
           duration: view.duration,
           progress: null,
           playlist: true,
           error: copyRef.current.playbackFailed,
-        },
-      }));
+        }),
     });
-    return () => {
-      media.removeEventListener("seeking", onSeeking);
-      media.removeEventListener("playing", onPlaying);
-      hls.destroy();
-    };
   }, [play.started, fileId, view]);
 
   // Cues of a <track> arrive after it loads, those of embedded subtitles chunk by chunk (shifted by the loader).

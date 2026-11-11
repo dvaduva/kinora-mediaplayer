@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import Hls from "hls.js";
+import Hls, { type HlsConfig } from "hls.js";
 import {
   transcodePlaybackReady,
   type ChannelProgram,
@@ -16,25 +16,28 @@ import {
   channelCategories,
   ChannelLogo as SharedChannelLogo,
   clockTime,
+  createHls,
   currentAndNext,
   dayLabel,
   effectiveFilter,
   filterChannels,
   guideDays,
   isFiller,
+  LIVE_EDGE_HLS_CONFIG,
   liveSeconds,
   nextMidnight,
   programProgress,
   programSeconds,
   programTitle,
   readGuideTab,
+  RESUME_HLS_CONFIG,
   sameFilter,
   saveGuideTab,
   useChannelFilter,
   type ChannelFilter,
   type GuideTab,
 } from "@kinora/client";
-import { api, getConnection } from "../api";
+import { api } from "../api";
 import { Focusable } from "../components/Focusable";
 import { ScrollRail } from "../components/ScrollRail";
 import { useLocale, type Copy, type Locale } from "../i18n";
@@ -439,7 +442,6 @@ export function LivePlayerPage() {
     let timer = 0;
     let corrections = 0;
     let target = 0;
-    const token = getConnection().token;
     const src = resolveUrl(session.src);
     const statusUrl = session.statusUrl ? resolveUrl(session.statusUrl) : null;
     const program = session.program;
@@ -462,26 +464,16 @@ export function LivePlayerPage() {
         tune(channelId);
       } else setError(copy.current.playbackFailed);
     };
-    const xhrSetup = token
-      ? (xhr: XMLHttpRequest) => {
-          xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-        }
-      : undefined;
-
-    const attachHls = (config: Partial<Hls["config"]>) => {
-      hls = new Hls({ enableWorker: false, lowLatencyMode: false, maxLiveSyncPlaybackRate: 1, xhrSetup, ...config });
-      hlsRef.current = hls;
-      hls.loadSource(src);
-      hls.attachMedia(media);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => void media.play().catch(() => undefined));
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal && !cancelled) onFatal();
+    const attachHls = (config: Partial<HlsConfig>) => {
+      hls = createHls(media, src, config, () => {
+        if (!cancelled) onFatal();
       });
+      hlsRef.current = hls;
     };
 
     const beginLive = () => {
       if (cancelled) return;
-      if (Hls.isSupported()) attachHls({ backBufferLength: 300, liveSyncDurationCount: 3 });
+      if (Hls.isSupported()) attachHls(LIVE_EDGE_HLS_CONFIG);
       else if (media.canPlayType("application/vnd.apple.mpegurl")) {
         media.addEventListener("loadedmetadata", onMeta, { once: true });
         media.src = src;
@@ -505,7 +497,7 @@ export function LivePlayerPage() {
         media.addEventListener("loadedmetadata", onMeta, { once: true });
         media.src = src;
       } else {
-        attachHls({ startPosition: target, backBufferLength: Number.POSITIVE_INFINITY, liveSyncDurationCount: 1_000_000 });
+        attachHls({ startPosition: target, ...RESUME_HLS_CONFIG });
       }
       setStarted(true);
     };

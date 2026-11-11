@@ -151,6 +151,9 @@ importers:
       '@kinora/shared':
         specifier: workspace:*
         version: link:../shared
+      hls.js:
+        specifier: ^1.7.4
+        version: 1.7.4
       react:
         specifier: ^19.0.0
         version: 19.3.1
