@@ -4,14 +4,13 @@ import { SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import { Focusable } from "../components/Focusable";
 import { useLocale } from "../i18n";
 import { remoteAction } from "../remote";
+import { playerBackend, type PlayerAdapter } from "../player";
 import {
-  attachHls,
   formatClock,
   formatDelay,
   hlsUrl,
   reportPlaybackProgress,
   resumeStart,
-  seekToResume,
   setSubtitleDelay,
   shiftCues,
   streamUrl,
@@ -19,7 +18,6 @@ import {
   subtitleUrl,
   usePlaybackView,
   useTranscodeStart,
-  watchPlaybackProgress,
 } from "@kinora/client";
 
 const SEEK_STEP = 10;
@@ -30,6 +28,7 @@ export function PlayerPage() {
   const { t, locale } = useLocale();
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const playerRef = useRef<PlayerAdapter | null>(null);
   const [paused, setPaused] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -48,6 +47,24 @@ export function PlayerPage() {
     setDelay(data.subtitleDelay);
   });
   const { preparing, ...play } = useTranscodeStart(fileId, view, setError);
+  const setErrorRef = useRef(setError);
+  setErrorRef.current = setError;
+  const hasView = view != null;
+
+  // One adapter for the page's <video> (rendered once a view is loaded); the effects below hand it a file or an HLS stream.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const player = playerBackend.create(video, {
+      onFatal: () => setErrorRef.current("playback_failed"),
+      onUnsupported: () => setErrorRef.current("playback_failed"),
+    });
+    playerRef.current = player;
+    return () => {
+      player.destroy();
+      playerRef.current = null;
+    };
+  }, [hasView]);
 
   useEffect(() => {
     if (!fileId) return;
@@ -60,55 +77,51 @@ export function PlayerPage() {
   const showExternalTrack = Boolean(selectedTrack && selectedTrack.origin !== "embedded");
 
   useEffect(() => {
-    const media = videoRef.current;
-    if (!media || !view || view.fileId !== fileId) return;
+    const player = playerRef.current;
+    if (!player || !view || view.fileId !== fileId) return;
 
     const onMeta = () => {
       if (resumed.current || view.plan.mode !== "direct") return;
       resumed.current = true;
-      seekToResume(media, view.resumeSeconds);
-      void media.play().catch(() => undefined);
+      const resume = view.resumeSeconds;
+      if (resume > 5 && (!player.duration || resume < player.duration - 5)) player.seek(resume);
+      player.play();
     };
+    const report = () => reportPlaybackProgress(fileId, player, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current });
 
-    media.addEventListener("loadedmetadata", onMeta);
-    const stopProgress = watchPlaybackProgress(media, () =>
-      reportPlaybackProgress(fileId, media, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current }),
-    );
-    media.addEventListener("play", () => setPaused(false));
-    media.addEventListener("pause", () => setPaused(true));
+    const off = [
+      player.on("loadedmetadata", onMeta),
+      player.on("pause", report),
+      player.on("play", () => setPaused(false)),
+      player.on("pause", () => setPaused(true)),
+    ];
+    const progress = window.setInterval(report, 5000);
     const clock = window.setInterval(() => {
-      setPosition(media.currentTime || 0);
-      setDuration(media.duration || view.duration || 0);
+      setPosition(player.currentTime);
+      setDuration(player.duration || view.duration || 0);
     }, 500);
 
     return () => {
-      stopProgress();
-      media.removeEventListener("loadedmetadata", onMeta);
+      report();
+      for (const unsubscribe of off) unsubscribe();
+      window.clearInterval(progress);
       window.clearInterval(clock);
     };
-  }, [view, fileId, play.started, selected]);
+  }, [view, fileId, play.started, selected, hasView]);
 
   useEffect(() => {
-    if (!fileId || !view || view.fileId !== fileId || view.plan.mode !== "direct") return;
-    const media = videoRef.current;
-    if (!media) return;
-    media.src = streamUrl(fileId);
-    return () => {
-      media.removeAttribute("src");
-      media.load();
-    };
-  }, [fileId, view]);
+    const player = playerRef.current;
+    if (!player || !fileId || !view || view.fileId !== fileId || view.plan.mode !== "direct") return;
+    player.load({ kind: "file", url: streamUrl(fileId) });
+    return () => player.unload();
+  }, [fileId, view, hasView]);
 
   useEffect(() => {
-    if (!play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
-    const media = videoRef.current;
-    if (!media) return;
-    return attachHls(media, hlsUrl(fileId), {
-      start: resumeStart(view.resumeSeconds),
-      onUnsupported: () => setError("playback_failed"),
-      onFatal: () => setError("playback_failed"),
-    });
-  }, [play.started, fileId, view]);
+    const player = playerRef.current;
+    if (!player || !play.started || !fileId || !view || view.fileId !== fileId || view.plan.mode === "direct") return;
+    player.load({ kind: "hls", url: hlsUrl(fileId), start: resumeStart(view.resumeSeconds) });
+    return () => player.unload();
+  }, [play.started, fileId, view, hasView]);
 
   useEffect(() => {
     const media = videoRef.current;
@@ -137,25 +150,25 @@ export function PlayerPage() {
   }, [subsOpen]);
 
   function togglePlay() {
-    const media = videoRef.current;
-    if (!media) return;
-    if (media.paused) void media.play().catch(() => undefined);
-    else media.pause();
+    const player = playerRef.current;
+    if (!player) return;
+    if (player.paused) player.play();
+    else player.pause();
     showChrome();
   }
 
   function setPlaying(playing: boolean) {
-    const media = videoRef.current;
-    if (!media) return;
-    if (playing) void media.play().catch(() => undefined);
-    else media.pause();
+    const player = playerRef.current;
+    if (!player) return;
+    if (playing) player.play();
+    else player.pause();
     showChrome();
   }
 
   function seekBy(delta: number) {
-    const media = videoRef.current;
-    if (!media || !Number.isFinite(media.duration)) return;
-    media.currentTime = Math.max(0, Math.min(media.duration - 1, media.currentTime + delta));
+    const player = playerRef.current;
+    if (!player || !Number.isFinite(player.duration)) return;
+    player.seek(Math.max(0, Math.min(player.duration - 1, player.currentTime + delta)));
     showChrome();
   }
 
@@ -168,9 +181,9 @@ export function PlayerPage() {
   }
 
   function leave() {
-    const media = videoRef.current;
-    if (media && view && fileId) {
-      reportPlaybackProgress(fileId, media, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current });
+    const player = playerRef.current;
+    if (player && view && fileId) {
+      reportPlaybackProgress(fileId, player, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current });
     }
     navigate(-1);
   }

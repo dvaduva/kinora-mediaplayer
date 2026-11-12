@@ -6,6 +6,7 @@ import { AudioProvider } from "./audio";
 import { Shell } from "./components/Shell";
 import { loadConnection, saveConnection } from "./connection";
 import { inShell, notifyShell, readShellLaunch } from "./host";
+import { playerBackend } from "./player";
 import { registerRemoteKeys } from "./remote";
 import { LocaleProvider } from "./i18n";
 import { ConnectPage } from "./pages/Connect";
@@ -21,6 +22,21 @@ import { SearchPage } from "./pages/Search";
 import { SeriesPage } from "./pages/Series";
 import { SettingsPage } from "./pages/Settings";
 import { ensureSpatial } from "./spatial";
+
+/**
+ * A paired TV (device token, `kd_…`) tells the server what it decodes on every start, so a firmware
+ * update or a new player adapter changes the playback decisions without pairing again.
+ */
+function reportCapabilities(token: string | null | undefined) {
+  if (!token || !token.startsWith("kd_")) return;
+  let capabilities: unknown;
+  try {
+    capabilities = playerBackend.capabilities();
+  } catch {
+    return;
+  }
+  void api("/api/devices/me/capabilities", { method: "PUT", body: JSON.stringify(capabilities) }).catch(() => undefined);
+}
 
 export function App() {
   const [ready, setReady] = useState(false);
@@ -56,6 +72,7 @@ export function App() {
       saveConnection(saved);
       setConnected(true);
       notifyShell("ready");
+      reportCapabilities(saved.token);
     } catch (reason) {
       if (reason instanceof Error && reason.message === "unauthorized") notifyShell("unauthorized");
       setConnected(false);

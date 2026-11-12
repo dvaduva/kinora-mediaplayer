@@ -163,6 +163,8 @@ export const mediaFiles = sqliteTable("media_files", {
   width: integer("width"),
   height: integer("height"),
   audioJson: text("audio_json").notNull().default("[]"),
+  /** VideoInfo (profile, level, bit depth, HDR, bitrate); null until a scan has probed the file for it. */
+  videoInfoJson: text("video_info_json"),
   missing: integer("missing", { mode: "boolean" }).notNull().default(false),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [

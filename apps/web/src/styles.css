@@ -1788,3 +1788,7 @@ a.rating-chip:hover strong { color: var(--brass); }
 .device-rename { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
 .device-rename .field { flex: 1 1 240px; }
 .device-rename .play { padding: 10px 22px; }
+
+.device-playback { display: grid; gap: 8px; margin-top: 4px; }
+.device-caps { display: flex; flex-wrap: wrap; gap: 12px; }
+.device-caps .field { flex: 1 1 180px; }

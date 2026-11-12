@@ -26,9 +26,23 @@ export interface TranscodeRequest {
    * session instead of stopping it, and becomes a regular session once a player asks for it.
    */
   background?: boolean;
+  /**
+   * How a device's profile changes the output (AC-3 5.1, a resolution or bitrate cap, other copied streams).
+   * Empty for the browser's output; a different variant is a different session and cache directory.
+   */
+  variant?: string;
+  output?: HlsEncoding;
 }
 
-export interface HlsCodecs {
+/** Encoding choices beyond the browser defaults (stereo AAC, at most 1080p, quality-based rate). */
+export interface HlsEncoding {
+  audio?: { codec: "aac" | "ac3"; channels: 2 | 6 };
+  maxHeight?: number | null;
+  /** Bits per second for the whole stream. */
+  maxBitrate?: number | null;
+}
+
+export interface HlsCodecs extends HlsEncoding {
   copyVideo: boolean;
   copyAudio: boolean;
   /** ffmpeg H.264 encoder; libx264 by default, or e.g. h264_nvenc / h264_qsv / h264_amf. */
@@ -42,18 +56,29 @@ export function videoEncoder(value = process.env.KINORA_VIDEO_ENCODER) {
   return /^[\w-]+$/.test(encoder) ? encoder : "libx264";
 }
 
-export function videoEncodeArgs(encoder: string) {
+/** Audio bitrate of the encoded sound, which a bitrate cap leaves out of the video's share. */
+function audioBitrate(audio: HlsEncoding["audio"]) {
+  return audio?.codec === "ac3" ? 640_000 : 192_000;
+}
+
+export function videoEncodeArgs(encoder: string, encoding: HlsEncoding = {}) {
+  const cap = encoding.maxBitrate ? Math.max(500_000, encoding.maxBitrate - audioBitrate(encoding.audio)) : null;
+  const kbps = (bits: number) => `${Math.round(bits / 1000)}k`;
   const quality =
     encoder === "libx264"
-      ? ["-preset", "veryfast", "-crf", "21", "-profile:v", "high"]
-      : ["-b:v", "8M", "-maxrate", "10M", "-bufsize", "16M"];
+      ? ["-preset", "veryfast", "-crf", "21", "-profile:v", "high", ...(cap ? ["-maxrate", kbps(cap), "-bufsize", kbps(cap * 2)] : [])]
+      : cap && cap < 10_000_000
+        ? ["-b:v", kbps(cap * 0.8), "-maxrate", kbps(cap), "-bufsize", kbps(cap * 2)]
+        : ["-b:v", "8M", "-maxrate", "10M", "-bufsize", "16M"];
+  // A device capped below 1080p gets a second scale to its height; the width follows the aspect ratio.
+  const height = encoding.maxHeight && encoding.maxHeight < 1080 ? `,scale=-2:'min(${encoding.maxHeight},ih)'` : "";
   return [
     "-c:v",
     encoder,
     ...quality,
     // Browsers decode 8-bit 4:2:0 H.264 everywhere; keep at most 1080p so a CPU encoder stays ahead of playback.
     "-vf",
-    "scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p",
+    `scale='min(1920,iw)':-2:flags=bicubic${height},format=yuv420p`,
     // Keyframes on segment boundaries keep every segment independently playable.
     "-force_key_frames",
     `expr:gte(t,n_forced*${SEGMENT_SECONDS})`,
@@ -78,20 +103,24 @@ const background = new Set<string>();
 export const transcodeRoot = path.join(dataDir, "cache", "transcode");
 let cacheLimitBytes = gigabytes(DEFAULT_CACHE_GB);
 
-type SessionInput = Pick<TranscodeRequest, "fileId" | "size" | "mtime" | "start">;
+type SessionInput = Pick<TranscodeRequest, "fileId" | "size" | "mtime" | "start" | "variant">;
 
 function startOf(input: { start?: number }) {
   return input.start && input.start > 0 ? Math.floor(input.start) : 0;
 }
 
-/** Sessions are per file and start point; the whole-file session keeps the bare file id. */
-export function sessionKey(fileId: string, start = 0) {
-  return start > 0 ? `${fileId}@${Math.floor(start)}` : fileId;
+/** Sessions are per file, output variant and start point; the browser's whole-file session keeps the bare file id. */
+export function sessionKey(fileId: string, start = 0, variant = "") {
+  return `${fileId}${variant ? `~${variant}` : ""}${start > 0 ? `@${Math.floor(start)}` : ""}`;
+}
+
+function ownKey(input: { fileId: string; start?: number; variant?: string }) {
+  return sessionKey(input.fileId, startOf(input), input.variant);
 }
 
 export function transcodeLocation(input: SessionInput) {
   const start = startOf(input);
-  const key = `${input.fileId}-${input.size}-${input.mtime}${start > 0 ? `-at${start}` : ""}`;
+  const key = `${input.fileId}-${input.size}-${input.mtime}${input.variant ? `-${input.variant}` : ""}${start > 0 ? `-at${start}` : ""}`;
   const dir = path.join(transcodeRoot, key);
   return { key, dir };
 }
@@ -185,8 +214,12 @@ export function hlsArgs(source: string, directory: string, codecs: HlsCodecs, re
     copyAudio ? "0:a:0?" : "0:a:0",
     "-sn",
     "-dn",
-    ...(copyVideo ? ["-c:v", "copy"] : videoEncodeArgs(codecs.videoEncoder ?? "libx264")),
-    ...(copyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "192k"]),
+    ...(copyVideo ? ["-c:v", "copy"] : videoEncodeArgs(codecs.videoEncoder ?? "libx264", codecs)),
+    ...(copyAudio
+      ? ["-c:a", "copy"]
+      : codecs.audio?.codec === "ac3"
+        ? ["-c:a", "ac3", "-ac", "6", "-ar", "48000", "-b:a", "640k"]
+        : ["-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "192k"]),
     "-f",
     "hls",
     "-hls_time",
@@ -320,8 +353,8 @@ function readyStatus(duration: number | null): TranscodeStatus {
 }
 
 /** Another session a player opened; conversions prepared in the background do not count. */
-export function hasOtherTranscode(fileId: string, start = 0) {
-  const own = sessionKey(fileId, start);
+export function hasOtherTranscode(fileId: string, start = 0, variant = "") {
+  const own = sessionKey(fileId, start, variant);
   for (const other of sessions.keys()) {
     if (other !== own && !background.has(other)) return true;
   }
@@ -367,8 +400,9 @@ export function sessionStarts(fileId: string) {
   return starts;
 }
 
-export function lookupTranscode(fileId: string, probePlaylist = true, start = 0): { status: TranscodeStatus; dir: string } | null {
-  const input = sessions.get(sessionKey(fileId, start));
+/** The open session of a file; without a variant, the browser's one, or else any open variant of the file. */
+export function lookupTranscode(fileId: string, probePlaylist = true, start = 0, variant?: string): { status: TranscodeStatus; dir: string } | null {
+  const input = sessions.get(sessionKey(fileId, start, variant)) ?? (variant == null ? anySession(fileId, start) : undefined);
   if (!input) return null;
   const { key, dir } = transcodeLocation(input);
   if (fs.existsSync(path.join(dir, "done"))) return { status: readyStatus(input.duration), dir };
@@ -379,6 +413,11 @@ export function lookupTranscode(fileId: string, probePlaylist = true, start = 0)
   }
   if (job?.state === "error") return { status: statusFor("error", job.seconds, input.duration, false, job.error), dir };
   return null;
+}
+
+function anySession(fileId: string, start: number) {
+  for (const input of sessions.values()) if (input.fileId === fileId && startOf(input) === start) return input;
+  return undefined;
 }
 
 /** A player's conversion stops every other one; a background one stops only other background ones. */
@@ -414,7 +453,7 @@ function tail(text: string) {
 
 export async function ensureTranscode(input: TranscodeRequest, restartError = false): Promise<{ status: TranscodeStatus; dir: string }> {
   const base = startOf(input);
-  const own = sessionKey(input.fileId, base);
+  const own = ownKey(input);
   const opened = sessions.has(own);
   if (!input.background) background.delete(own);
   // Preparing a session a player already has open leaves it as it is.
@@ -489,7 +528,7 @@ export async function ensureTranscode(input: TranscodeRequest, restartError = fa
   const child = spawn(bins.ffmpeg, hlsArgs(
       input.sourcePath,
       dir,
-      { copyVideo: input.copyVideo, copyAudio: input.copyAudio, videoEncoder: videoEncoder() },
+      { copyVideo: input.copyVideo, copyAudio: input.copyAudio, videoEncoder: videoEncoder(), ...input.output },
       resume,
       input.subtitleStreams,
     ), {
@@ -558,7 +597,7 @@ export interface SubtitleRun {
  * where the playlist ended, so a run covers the time up to the next run's start.
  */
 export function transcodeSubtitleRuns(fileId: string, streamIndex: number): SubtitleRun[] {
-  const input = sessions.get(fileId);
+  const input = sessions.get(fileId) ?? anySession(fileId, 0);
   if (!input) return [];
   const { key, dir } = transcodeLocation(input);
   const prefix = `sub${streamIndex}_`;
@@ -596,8 +635,8 @@ export function discardTranscode(input: SessionInput) {
   const { key, dir } = transcodeLocation(input);
   const job = jobs.get(key);
   jobs.delete(key);
-  sessions.delete(sessionKey(input.fileId, startOf(input)));
-  background.delete(sessionKey(input.fileId, startOf(input)));
+  sessions.delete(ownKey(input));
+  background.delete(ownKey(input));
   job?.child?.kill();
   try {
     fs.rmSync(dir, { recursive: true, force: true });

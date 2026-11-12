@@ -1,4 +1,13 @@
-import type { PlaybackPlan } from "@kinora/shared";
+import {
+  audioFamily,
+  BROWSER_PROFILE,
+  videoFamily,
+  type CapabilityProfile,
+  type EffectiveProfile,
+  type HdrFormat,
+  type PlaybackLimit,
+  type PlaybackPlan,
+} from "@kinora/shared";
 
 export interface PlanInput {
   missing?: boolean;
@@ -7,31 +16,133 @@ export interface PlanInput {
   audioCodec: string | null;
   kind: "video" | "audio";
   ffmpeg?: boolean;
+  width?: number | null;
+  height?: number | null;
+  /** Bits per second of the whole file. */
+  bitrate?: number | null;
+  bitDepth?: number | null;
+  hdr?: HdrFormat[];
+  /** ffprobe's profile name and level of the video stream. */
+  videoProfile?: string | null;
+  videoLevel?: number | null;
+  audioChannels?: number | null;
+}
+
+/** How the HLS stream of a remux or transcode is made for one profile. */
+export interface HlsOutput {
+  copyVideo: boolean;
+  copyAudio: boolean;
+  /** The encoded sound when it is not copied: stereo AAC, or AC-3 5.1 for a device that decodes it. */
+  audio: { codec: "aac" | "ac3"; channels: 2 | 6 };
+  /** Encoded picture height cap below the default 1080p; null for the default. */
+  maxHeight: number | null;
+  /** Bits per second for the whole stream; null for no cap. */
+  maxBitrate: number | null;
 }
 
 const AUDIO_DIRECT = new Set(["mp3", "flac", "aac", "m4a", "mp4", "ogg", "opus", "wav", "oga", "aiff"]);
 
-function isH264(codec: string) {
-  return codec === "h264" || codec === "avc" || codec === "avc1";
-}
-
-function aacFamily(codec: string) {
-  return !codec || codec === "aac" || codec === "mp3" || codec === "mp4a" || codec.includes("aac");
-}
-
-/** Video that can go into HLS segments untouched. Everything else is encoded to H.264. */
+/** Video that the browser profile copies into HLS segments. Live TV relays use it too. */
 export function canCopyVideo(codec: string | null) {
-  return isH264((codec ?? "").toLowerCase());
+  return BROWSER_PROFILE.hls.video.includes(videoFamily(codec));
 }
 
-/** Audio that can go into HLS segments untouched. Everything else is encoded to AAC. */
+/** Audio that the browser profile copies into HLS segments (no audio counts as copyable). */
 export function canCopyAudio(codec: string | null) {
-  return aacFamily((codec ?? "").toLowerCase());
+  const family = audioFamily(codec);
+  return !family || BROWSER_PROFILE.hls.audio.includes(family);
 }
 
-export function playbackPlan(input: PlanInput): PlaybackPlan {
+function isForced(profile: CapabilityProfile | EffectiveProfile) {
+  return "forceTranscode" in profile && profile.forceTranscode === true;
+}
+
+/** The video stream itself (codec, profile, level, bit depth) is decoded by the device. */
+function videoDecoded(input: PlanInput, profile: CapabilityProfile, limits: Set<PlaybackLimit>) {
+  const family = videoFamily(input.videoCodec);
+  const support = profile.video.find((entry) => entry.codec === family);
+  if (!support) {
+    limits.add("video_codec");
+    return false;
+  }
+  let ok = true;
+  if (support.maxBitDepth != null && (input.bitDepth ?? 8) > support.maxBitDepth) {
+    limits.add("bit_depth");
+    ok = false;
+  }
+  if (support.profiles && input.videoProfile && !support.profiles.includes(input.videoProfile)) {
+    limits.add("video_profile");
+    ok = false;
+  }
+  if (support.maxLevel != null && input.videoLevel != null && input.videoLevel > support.maxLevel) {
+    limits.add("video_profile");
+    ok = false;
+  }
+  return ok;
+}
+
+/** HDR, picture size and bitrate fit the device; a file that breaks one is encoded, not copied. */
+function pictureFits(input: PlanInput, profile: CapabilityProfile, limits: Set<PlaybackLimit>) {
+  let ok = true;
+  const hdr = input.hdr ?? [];
+  if (profile.hdr && hdr.length > 0 && !hdr.some((format) => profile.hdr!.includes(format))) {
+    limits.add("hdr");
+    ok = false;
+  }
+  if ((profile.maxWidth != null && (input.width ?? 0) > profile.maxWidth) || (profile.maxHeight != null && (input.height ?? 0) > profile.maxHeight)) {
+    limits.add("resolution");
+    ok = false;
+  }
+  if (profile.maxBitrate != null && (input.bitrate ?? 0) > profile.maxBitrate) {
+    limits.add("bitrate");
+    ok = false;
+  }
+  return ok;
+}
+
+function audioDecoded(input: PlanInput, profile: CapabilityProfile, allowed: string[] | undefined, limits: Set<PlaybackLimit>) {
+  const family = audioFamily(input.audioCodec);
+  if (!family) return true;
+  const support = profile.audio.find((entry) => entry.codec === family);
+  if (!support || (allowed && !allowed.includes(family))) {
+    limits.add("audio_codec");
+    return false;
+  }
+  if (support.maxChannels != null && (input.audioChannels ?? 2) > support.maxChannels) {
+    limits.add("audio_channels");
+    return false;
+  }
+  return true;
+}
+
+function channelsFor(profile: CapabilityProfile, codec: string) {
+  const support = profile.audio.find((entry) => entry.codec === codec);
+  return support ? (support.maxChannels ?? 2) : 0;
+}
+
+/** What goes into the HLS segments for this profile; also used for Live TV, which streams HLS even when direct play would work. */
+export function hlsOutput(input: PlanInput, profile: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): HlsOutput {
+  const ignored = new Set<PlaybackLimit>();
+  const video = videoFamily(input.videoCodec);
+  const copyVideo =
+    !isForced(profile) &&
+    profile.hls.video.includes(video) &&
+    videoDecoded(input, profile, ignored) &&
+    pictureFits(input, profile, ignored);
+  const copyAudio = audioDecoded(input, profile, profile.hls.audio, ignored);
+  const surround = (input.audioChannels ?? 2) > 2 && profile.hls.audio.includes("ac3") && channelsFor(profile, "ac3") >= 6;
+  return {
+    copyVideo,
+    copyAudio,
+    audio: surround ? { codec: "ac3", channels: 6 } : { codec: "aac", channels: 2 },
+    maxHeight: profile.maxHeight != null && profile.maxHeight < 1080 ? profile.maxHeight : null,
+    maxBitrate: profile.maxBitrate,
+  };
+}
+
+export function playbackPlan(input: PlanInput, profile: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): PlaybackPlan {
   const container = (input.container ?? "").toLowerCase();
-  const video = (input.videoCodec ?? "").toLowerCase();
+  const video = videoFamily(input.videoCodec);
   const audio = (input.audioCodec ?? "").toLowerCase();
   const base = { container: container || null, videoCodec: input.videoCodec, audioCodec: input.audioCodec };
   const ffmpeg = input.ffmpeg === true;
@@ -48,18 +159,25 @@ export function playbackPlan(input: PlanInput): PlaybackPlan {
     };
   }
 
-  const directContainer = container === "mp4" || container === "m4v" || container === "mov" || container === "webm";
-  const webAudio = !audio || audio === "opus" || audio === "vorbis" || audio === "aac";
-  const direct =
-    directContainer &&
-    ((isH264(video) && (container === "webm" ? webAudio : aacFamily(audio))) ||
-      (video === "vp9" && container === "webm" && webAudio));
+  const limits = new Set<PlaybackLimit>();
+  const entry = profile.containers.find((item) => item.names.includes(container));
+  if (!entry) limits.add("container");
+  const decoded = video ? videoDecoded(input, profile, limits) : false;
+  const fits = pictureFits(input, profile, limits);
+  const sound = audioDecoded(input, profile, undefined, limits);
+  const family = audioFamily(input.audioCodec);
+  const inContainer =
+    entry != null && (!entry.video || entry.video.includes(video)) && (!family || !entry.audio || entry.audio.includes(family));
+  if (entry && !inContainer) limits.add("container");
+  if (isForced(profile)) limits.add("forced");
+  const direct = Boolean(video) && entry != null && inContainer && decoded && fits && sound && !isForced(profile);
   if (direct) return { mode: "direct", available: true, reasonCode: "ok", ...base };
 
-  if (!video) return { mode: "transcode", available: false, reasonCode: "transcode_required", ...base };
-  if (isH264(video) && aacFamily(audio)) return { mode: "remux", available: ffmpeg, reasonCode: "remux_required", ...base };
-  // H.264 with other audio converts only the sound; any other video (HEVC, VP9 outside WebM, MPEG-4, AV1) is encoded to H.264.
-  return { mode: "transcode", available: ffmpeg, reasonCode: "transcode_required", ...base };
+  const why = [...limits];
+  if (!video) return { mode: "transcode", available: false, reasonCode: "transcode_required", ...base, limits: why };
+  const output = hlsOutput(input, profile);
+  if (output.copyVideo && output.copyAudio) return { mode: "remux", available: ffmpeg, reasonCode: "remux_required", ...base, limits: why };
+  return { mode: "transcode", available: ffmpeg, reasonCode: "transcode_required", ...base, limits: why };
 }
 
 export function contentTypeFor(container: string | null, kind: "audio" | "video") {
@@ -69,6 +187,9 @@ export function contentTypeFor(container: string | null, kind: "audio" | "video"
     m4v: "video/mp4",
     mov: "video/quicktime",
     webm: kind === "audio" ? "audio/webm" : "video/webm",
+    mkv: "video/x-matroska",
+    ts: "video/mp2t",
+    m2ts: "video/mp2t",
     mp3: "audio/mpeg",
     flac: "audio/flac",
     m4a: "audio/mp4",

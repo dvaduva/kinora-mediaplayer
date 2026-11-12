@@ -52,6 +52,9 @@ test("device tokens cannot manage the server", () => {
   assert.equal(isDeviceForbidden("POST", "/api/movies/m1/match"), false);
   assert.equal(isDeviceForbidden("GET", "/api/libraries"), false);
   assert.equal(isDeviceForbidden("GET", "/api/devices/me"), false);
+  assert.equal(isDeviceForbidden("PUT", "/api/devices/me/capabilities"), false, "a TV reports what it decodes");
+  assert.equal(isDeviceForbidden("PUT", "/api/devices/me/overrides"), true, "but cannot change its own switches");
+  assert.equal(isDeviceForbidden("PUT", "/api/devices/d1/overrides"), true);
   assert.equal(isDeviceForbidden("GET", "/api/devices"), true);
   assert.equal(isDeviceForbidden("POST", "/api/devices/d1/revoke"), true);
   assert.equal(isDeviceForbidden("POST", "/api/pair/ABCDEF/approve"), true);

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import type { DevicePlatform, DeviceView } from "@kinora/shared";
+import { BITRATE_CAPS, RESOLUTION_CAPS, type DeviceOverrides, type DevicePlatform, type DeviceView, type PlaybackLimit, type PlaybackMode } from "@kinora/shared";
 import { api } from "@kinora/client";
 import { useLocale, type Copy } from "../../i18n";
 import { SectionHead, Status, errorText } from "./common";
@@ -103,6 +103,7 @@ function DeviceCard(props: { device: DeviceView; onChange: () => void }) {
         {" · "}
         {device.lastSeenAt != null ? `${t.deviceSeen} ${when(locale, device.lastSeenAt)}` : t.deviceNeverSeen}
       </p>
+      {revoked ? null : <DevicePlayback device={device} onChange={props.onChange} onError={setFailed} />}
       {failed ? <p className="danger" role="alert">{failed}</p> : null}
       <div className="library-card-foot">
         {revoked ? <Status tone="error">{t.deviceRevoked} {when(locale, device.revokedAt!)}</Status> : <Status tone="ok">{t.deviceActive}</Status>}
@@ -138,5 +139,85 @@ function DeviceCard(props: { device: DeviceView; onChange: () => void }) {
         )}
       </div>
     </article>
+  );
+}
+
+function modeLabel(t: Copy, mode: PlaybackMode, available: boolean) {
+  if (!available) return t.modeUnavailable;
+  return mode === "direct" ? t.modeDirect : mode === "remux" ? t.modeRemux : t.modeTranscode;
+}
+
+function limitLabel(t: Copy, limit: PlaybackLimit) {
+  return t[`limit_${limit}` as keyof Copy];
+}
+
+/** What the device decodes, how its last file played, and the switches that override its own report. */
+function DevicePlayback(props: { device: DeviceView; onChange: () => void; onError: (message: string | null) => void }) {
+  const { t, locale } = useLocale();
+  const { device } = props;
+  const caps = device.capabilities;
+  const last = device.lastPlayback;
+
+  function save(next: Partial<DeviceOverrides>) {
+    props.onError(null);
+    api(`/api/devices/${device.id}/overrides`, { method: "PUT", body: JSON.stringify({ ...device.overrides, ...next }) })
+      .then(props.onChange)
+      .catch((reason: unknown) => props.onError(errorText(t, reason)));
+  }
+
+  const summary = caps
+    ? [
+        caps.video.map((entry) => `${entry.codec.toUpperCase()}${entry.maxBitDepth && entry.maxBitDepth > 8 ? ` ${entry.maxBitDepth}-bit` : ""}`).join(", "),
+        caps.audio.map((entry) => entry.codec.toUpperCase()).join(", "),
+        caps.containers.map((entry) => entry.names[0]!.toUpperCase()).join(", "),
+        caps.hdr && caps.hdr.length > 0 ? caps.hdr.map((format) => (format === "dolby_vision" ? "Dolby Vision" : format.toUpperCase())).join(", ") : null,
+        caps.maxHeight ? `${caps.maxHeight}p` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+
+  return (
+    <div className="device-playback">
+      <p className="field-help">
+        {summary ? `${t.devicePlaysDirectly}: ${summary}` : t.deviceNoProfile}
+      </p>
+      <p className="field-help">
+        {t.deviceLastPlayback}:{" "}
+        {last
+          ? `${last.title} — ${modeLabel(t, last.mode, last.available)}${last.limits.length > 0 ? ` (${last.limits.map((limit) => limitLabel(t, limit)).join(", ")})` : ""}, ${new Intl.DateTimeFormat(locale === "ro" ? "ro-RO" : "en-GB", { timeStyle: "short" }).format(last.at)}`
+          : t.deviceNoPlayback}
+      </p>
+      <label className="radio">
+        <input type="checkbox" checked={device.overrides.forceTranscode} onChange={(event) => save({ forceTranscode: event.target.checked })} />
+        {t.deviceForceTranscode}
+      </label>
+      <div className="device-caps">
+        <label className="field">
+          {t.deviceMaxResolution}
+          <select
+            value={device.overrides.maxHeight ?? ""}
+            onChange={(event) => save({ maxHeight: event.target.value ? Number(event.target.value) : null })}
+          >
+            <option value="">{t.deviceOwnLimit}</option>
+            {RESOLUTION_CAPS.map((height) => (
+              <option key={height} value={height}>{height === 2160 ? "4K (2160p)" : `${height}p`}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          {t.deviceMaxBitrate}
+          <select
+            value={device.overrides.maxBitrate ?? ""}
+            onChange={(event) => save({ maxBitrate: event.target.value ? Number(event.target.value) : null })}
+          >
+            <option value="">{t.deviceOwnLimit}</option>
+            {BITRATE_CAPS.map((bits) => (
+              <option key={bits} value={bits}>{bits / 1_000_000} Mbit/s</option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </div>
   );
 }

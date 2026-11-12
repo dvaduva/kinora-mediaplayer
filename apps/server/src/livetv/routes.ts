@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { playlistForClient } from "../playback/transcode.js";
+import { profileFor } from "../devices/profile.js";
 import {
   ChannelError,
   channelLogoFile,
@@ -110,7 +111,11 @@ export function registerLiveTv(app: FastifyInstance) {
 
   app.post("/api/livetv/channels/:id/play", async (request, reply) => {
     const after = asRecord(request.body).after;
-    const result = playChannel((request.params as { id: string }).id, typeof after === "number" && Number.isFinite(after) ? after : undefined);
+    const result = playChannel(
+      (request.params as { id: string }).id,
+      typeof after === "number" && Number.isFinite(after) ? after : undefined,
+      profileFor(request.device),
+    );
     if (result === "not_found") return reply.code(404).send({ error: "not_found" });
     if (result === "empty") return reply.code(409).send({ error: "channel_empty" });
     reply.header("Cache-Control", "no-store");

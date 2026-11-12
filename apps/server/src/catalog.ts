@@ -25,7 +25,7 @@ import type {
   SubtitleTrack,
   Trailer,
 } from "@kinora/shared";
-import { parseLockedFields, WATCH_STATUSES } from "@kinora/shared";
+import { BROWSER_PROFILE, parseLockedFields, WATCH_STATUSES, type CapabilityProfile, type EffectiveProfile } from "@kinora/shared";
 import { db, parseJson } from "./db/index.js";
 import { isNonLatinName, transliterateName } from "./metadata/tmdb.js";
 import {
@@ -45,7 +45,8 @@ import {
 } from "./db/schema.js";
 import { getScanState } from "./scan.js";
 import { chooseSubtitle } from "./playback/choose.js";
-import { playbackPlan } from "./playback/plan.js";
+import { playbackPlan, type PlanInput } from "./playback/plan.js";
+import type { VideoInfo } from "./probe.js";
 import { isInsideRoot } from "./paths.js";
 import { tools } from "./process.js";
 import { getProfile, PROFILE_ID } from "./settings.js";
@@ -134,16 +135,31 @@ function filesForMovie(movieId: string) {
     .all();
 }
 
-function versionOf(file: typeof mediaFiles.$inferSelect): MediaVersion {
+/** What the playback plan needs to know about a stored file. */
+export function planInputFor(file: typeof mediaFiles.$inferSelect): PlanInput {
   const audio = parseJson<AudioStream[]>(file.audioJson, []);
-  const plan = playbackPlan({
+  const info = parseJson<Partial<VideoInfo> | null>(file.videoInfoJson, null);
+  return {
     missing: file.missing,
     kind: file.trackId ? "audio" : "video",
     container: file.container,
     videoCodec: file.videoCodec,
     audioCodec: audio[0]?.codec ?? null,
+    audioChannels: audio[0]?.channels ?? null,
     ffmpeg: tools.ffmpeg,
-  });
+    width: file.width,
+    height: file.height,
+    bitrate: info?.bitrate ?? null,
+    bitDepth: info?.bitDepth ?? null,
+    hdr: Array.isArray(info?.hdr) ? info.hdr : [],
+    videoProfile: info?.profile ?? null,
+    videoLevel: info?.level ?? null,
+  };
+}
+
+function versionOf(file: typeof mediaFiles.$inferSelect, client: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): MediaVersion {
+  const audio = parseJson<AudioStream[]>(file.audioJson, []);
+  const plan = playbackPlan(planInputFor(file), client);
   return {
     fileId: file.id,
     filename: path.basename(file.path),
@@ -336,11 +352,11 @@ export function setMovieWatchStatus(movieId: string, status: WatchStatus | null)
   return true;
 }
 
-export function movieDetail(id: string): MovieDetail | null {
+export function movieDetail(id: string, client: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): MovieDetail | null {
   const movie = db.select().from(movies).where(eq(movies.id, id)).get();
   const files = movie ? filesForMovie(id) : [];
   if (!movie || files.length === 0) return null;
-  const versions = files.map(versionOf).sort((a, b) => rank(b) - rank(a));
+  const versions = files.map((file) => versionOf(file, client)).sort((a, b) => rank(b) - rank(a));
   return {
     ...movieSummary(movie),
     edition: movie.edition,
@@ -702,10 +718,11 @@ export function identifyQueue(): IdentifyItem[] {
   return items;
 }
 
-export function playbackView(fileId: string): PlaybackView | null {
+/** `client` is the playing device's capability profile; the desktop browser's by default. */
+export function playbackView(fileId: string, client: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): PlaybackView | null {
   const file = db.select().from(mediaFiles).where(eq(mediaFiles.id, fileId)).get();
   if (!file || file.missing || !resolveMediaPath(file)) return null;
-  const version = versionOf(file);
+  const version = versionOf(file, client);
   const saved = db
     .select()
     .from(progress)

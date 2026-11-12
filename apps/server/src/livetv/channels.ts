@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomInt, randomUUID } from "node:crypto";
 import type { ChannelAlign, ChannelFiller, ChannelInput, ChannelNow, ChannelOrder, ChannelProgram, ChannelSource, EpgMatchKind, LibraryType, LiveChannel, LivePlayback, LiveTvSettings, ProgramItemType } from "@kinora/shared";
-import { isChannelAlign, isChannelSourceType } from "@kinora/shared";
+import { BROWSER_PROFILE, isChannelAlign, isChannelSourceType, type CapabilityProfile, type EffectiveProfile } from "@kinora/shared";
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, lt, lte, ne } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { channelPrograms, channels, channelSources, episodes, mediaFiles, movies, profileChannels, tracks } from "../db/schema.js";
@@ -621,7 +621,8 @@ export function channelNow(id: string): ChannelNow | null {
  * program airing at that time or later, so a client that finishes a program a moment early moves on.
  * A program whose file cannot be played is replaced on the spot and the channel moves to the next item.
  */
-export function playChannel(id: string, after?: number): LivePlayback | "not_found" | "empty" {
+/** `profile` is the watching device's; a file it plays directly is sent as is, like for the browser. */
+export function playChannel(id: string, after?: number, profile: CapabilityProfile | EffectiveProfile = BROWSER_PROFILE): LivePlayback | "not_found" | "empty" {
   const row = db.select().from(channels).where(eq(channels.id, id)).get();
   if (!row || !row.enabled) return "not_found";
   if (isIptv(row)) return playIptv(row);
@@ -633,7 +634,7 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
     const program = programAt(id, at);
     if (!program) return "empty";
     if (program.itemType === "filler") return playFiller(row, program, now);
-    const described = program.fileId ? describePlayback(program.fileId) : null;
+    const described = program.fileId ? describePlayback(program.fileId, profile) : null;
     if (!described || !described.view.plan.available) {
       scheduleChannel(id, { cutAt: program.start, now });
       continue;
@@ -657,7 +658,7 @@ export function playChannel(id: string, after?: number): LivePlayback | "not_fou
       if (earlier.length > 0) mediaStart = Math.max(...earlier);
     }
     const stream = mediaStart > 0 ? `/api/stream/${fileId}/at/${mediaStart}` : `/api/stream/${fileId}`;
-    void beginTranscode(fileId, true, mediaStart, described).catch(() => undefined);
+    void beginTranscode(fileId, true, mediaStart, described, false, profile).catch(() => undefined);
     return { ...base, mode: "hls", src: `${stream}/index.m3u8`, statusUrl: `${stream}/status`, mediaStart, filler: null };
   }
   return "empty";

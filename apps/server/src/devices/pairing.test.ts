@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizePairCode, PAIR_CODE_ALPHABET, type DeviceView } from "@kinora/shared";
+import { DEFAULT_DEVICE_OVERRIDES, normalizePairCode, PAIR_CODE_ALPHABET, type DeviceView } from "@kinora/shared";
 import { PairingStore, randomPairCode, type PairRequest } from "./pairing.js";
 
 const request: PairRequest = { name: "Samsung TV", platform: "tizen", capabilities: null };
@@ -9,7 +9,7 @@ function issuer() {
   const issued: PairRequest[] = [];
   const issue = (input: PairRequest) => {
     issued.push(input);
-    const device: DeviceView = { id: `d${issued.length}`, name: input.name, platform: input.platform, createdAt: 1, lastSeenAt: null, revokedAt: null };
+    const device: DeviceView = { id: `d${issued.length}`, name: input.name, platform: input.platform, createdAt: 1, lastSeenAt: null, revokedAt: null, capabilities: null, overrides: DEFAULT_DEVICE_OVERRIDES, lastPlayback: null };
     return { token: `kd_token${issued.length}`, device };
   };
   return { issued, issue };

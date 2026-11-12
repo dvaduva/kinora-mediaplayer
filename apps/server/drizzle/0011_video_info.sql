@@ -1,0 +1,1 @@
+ALTER TABLE `media_files` ADD `video_info_json` text;

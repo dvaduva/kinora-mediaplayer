@@ -71,6 +71,38 @@ test("encodes other video to 8-bit H.264 with keyframes on segment boundaries", 
   assert.equal(videoEncoder("x; rm -rf"), "libx264");
 });
 
+test("the browser's encoder arguments are unchanged by profiles", () => {
+  const args = hlsArgs("movie.mkv", "C:\\cache", { copyVideo: false, copyAudio: false });
+  assert.equal(args[args.indexOf("-vf") + 1], "scale='min(1920,iw)':-2:flags=bicubic,format=yuv420p");
+  assert.deepEqual(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 8), ["-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "192k"]);
+  assert.equal(args.includes("-maxrate"), false);
+});
+
+test("a TV profile gets AC-3 5.1, a lower resolution and a bitrate cap", () => {
+  const args = hlsArgs("movie.mkv", "C:\\cache", {
+    copyVideo: false,
+    copyAudio: false,
+    audio: { codec: "ac3", channels: 6 },
+    maxHeight: 720,
+    maxBitrate: 4_000_000,
+  });
+  assert.deepEqual(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 8), ["-c:a", "ac3", "-ac", "6", "-ar", "48000", "-b:a", "640k"]);
+  assert.equal(args[args.indexOf("-vf") + 1], "scale='min(1920,iw)':-2:flags=bicubic,scale=-2:'min(720,ih)',format=yuv420p");
+  assert.equal(args[args.indexOf("-maxrate") + 1], "3360k", "the cap leaves room for the 640k sound");
+  const nvenc = hlsArgs("movie.mkv", "C:\\cache", { copyVideo: false, copyAudio: true, videoEncoder: "h264_nvenc", maxBitrate: 4_000_000 });
+  assert.equal(nvenc[nvenc.indexOf("-maxrate") + 1], "3808k");
+});
+
+test("each output variant has its own session and cache directory", () => {
+  const browser = transcodeLocation({ fileId: "f1", size: 10, mtime: 20 });
+  const tv = transcodeLocation({ fileId: "f1", size: 10, mtime: 20, variant: "vc-aac36" });
+  assert.equal(browser.key, "f1-10-20", "conversions made before profiles are still found");
+  assert.equal(tv.key, "f1-10-20-vc-aac36");
+  assert.equal(transcodeLocation({ fileId: "f1", size: 10, mtime: 20, variant: "vc-aac36", start: 60 }).key, "f1-10-20-vc-aac36-at60");
+  assert.equal(sessionKey("f1", 0, "vc-aac36"), "f1~vc-aac36");
+  assert.equal(sessionKey("f1", 60, "vc-aac36"), "f1~vc-aac36@60");
+});
+
 test("starts a separate session midway for Live TV", () => {
   const args = hlsArgs("movie.mkv", "C:\cache", { copyVideo: true, copyAudio: true }, { seek: 1800, startNumber: 0, append: false });
   assert.equal(args[args.indexOf("-ss") + 1], "1800.000");

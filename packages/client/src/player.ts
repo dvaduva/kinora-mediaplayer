@@ -52,6 +52,8 @@ export type AttachHlsOptions = {
   onUnsupported: () => void;
   /** The media started playing (hls.js only). */
   onPlaying?: () => void;
+  /** The hls.js player, once created (not called for native HLS), e.g. for its audio tracks. */
+  onHls?: (hls: Hls) => void;
 };
 
 /**
@@ -70,6 +72,7 @@ export function attachHls(media: HTMLMediaElement, src: string, options: AttachH
     return;
   }
   const hls = createHls(media, src, { startPosition: start, ...RESUME_HLS_CONFIG }, options.onFatal);
+  options.onHls?.(hls);
   let corrections = 0;
   const onSeeking = () => {
     if (corrections >= 3 || media.currentTime <= start + 8) return;
@@ -186,7 +189,12 @@ export type ProgressSubtitles = {
 };
 
 /** Saves the position (and the subtitle choice and delay) of a file. */
-export function reportPlaybackProgress(fileId: string | undefined, media: HTMLMediaElement, view: PlaybackView, subtitles: ProgressSubtitles) {
+export function reportPlaybackProgress(
+  fileId: string | undefined,
+  media: Pick<HTMLMediaElement, "currentTime" | "duration">,
+  view: PlaybackView,
+  subtitles: ProgressSubtitles,
+) {
   const reportedDuration = view.plan.mode === "direct" ? media.duration : (view.duration ?? media.duration);
   if (!fileId || !reportedDuration || !Number.isFinite(reportedDuration) || !Number.isFinite(media.currentTime)) return;
   void api("/api/playback/progress", {

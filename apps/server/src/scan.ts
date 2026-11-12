@@ -325,6 +325,14 @@ async function ingestFile(libraryId: string, type: LibraryType, file: string, ro
     existing && existing.size === stat.size && existing.mtime === Math.round(stat.mtimeMs) && !existing.missing;
   if (unchanged) {
     await refreshExternalSubtitles(fileId, file);
+    // Files scanned before capability profiles lack the details a TV's profile checks; probe them once.
+    if (type !== "music" && existing.videoInfoJson == null) {
+      const probed = await probeFile(file);
+      if (probed) {
+        const audio = probed.audio.length > 0 ? JSON.stringify(probed.audio) : existing.audioJson;
+        db.update(mediaFiles).set({ videoInfoJson: JSON.stringify(probed.info), audioJson: audio }).where(eq(mediaFiles.id, fileId)).run();
+      }
+    }
     if (existing.movieId) return Boolean(db.select().from(movies).where(eq(movies.id, existing.movieId)).get()?.matched);
     if (existing.episodeId) {
       const episode = db.select().from(episodes).where(eq(episodes.id, existing.episodeId)).get();
@@ -358,6 +366,7 @@ async function ingestFile(libraryId: string, type: LibraryType, file: string, ro
     width: probed?.width ?? null,
     height: probed?.height ?? null,
     audioJson: JSON.stringify(audio),
+    videoInfoJson: probed ? JSON.stringify(probed.info) : null,
     missing: false,
     updatedAt: now,
   };
@@ -510,6 +519,7 @@ async function ingestMusic(libraryId: string, file: string, root: string, fileId
     width: null,
     height: null,
     audioJson: JSON.stringify([]),
+    videoInfoJson: null,
     missing: false,
     updatedAt: now,
   });
@@ -669,6 +679,7 @@ function writeFile(row: typeof mediaFiles.$inferInsert) {
         width: row.width,
         height: row.height,
         audioJson: row.audioJson,
+        videoInfoJson: row.videoInfoJson,
         missing: false,
         updatedAt: row.updatedAt,
       },

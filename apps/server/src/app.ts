@@ -41,7 +41,7 @@ import { repoRoot } from "./paths.js";
 import { EditError, movieArtwork, movieRatings, movieReviewList, saveOwnReview, updateMovie } from "./movieExtras.js";
 import { contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
-import { beginTranscode, describePlayback, refreshTools } from "./playback/session.js";
+import { beginTranscode, describePlayback, refreshTools, variantFor } from "./playback/session.js";
 import { registerLiveTv } from "./livetv/routes.js";
 import { gigabytes } from "./playback/cache.js";
 import {
@@ -60,7 +60,8 @@ import { isMetadataLanguage } from "./metadata/language.js";
 import { profiles } from "./db/schema.js";
 import { isAllowedHost, isAllowedOrigin, isDeviceForbidden, presentedTokens, redactUrl, routeAccess, trustedOrigins } from "./security.js";
 import { registerDevices } from "./devices/routes.js";
-import { deviceForToken, isDeviceToken } from "./devices/store.js";
+import { deviceForToken, isDeviceToken, recordPlayback } from "./devices/store.js";
+import { profileFor } from "./devices/profile.js";
 import { SERVER_VERSION } from "./version.js";
 
 function sameToken(left: string, right: string) {
@@ -319,7 +320,9 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
 
   app.get("/api/home", async () => homeView());
   app.get("/api/movies", async () => listMovies());
-  app.get("/api/movies/:id", async (request, reply) => movieDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.get("/api/movies/:id", async (request, reply) =>
+    movieDetail((request.params as { id: string }).id, profileFor(request.device)) ?? reply.code(404).send({ error: "not_found" }),
+  );
   app.put("/api/movies/:id/status", async (request, reply) => {
     const status = asRecord(request.body).status;
     // null clears the manual mark and returns to the status derived from playback.
@@ -527,10 +530,21 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
 
   app.get("/api/playback/:fileId", async (request, reply) => {
     const fileId = (request.params as { fileId: string }).fileId;
-    const described = describePlayback(fileId);
+    const profile = profileFor(request.device);
+    const described = describePlayback(fileId, profile);
     if (!described) return reply.code(404).send({ error: "not_found" });
     if (described.view.plan.available && described.view.plan.mode !== "direct") {
-      void beginTranscode(fileId, true).catch(() => undefined);
+      void beginTranscode(fileId, true, 0, described, false, profile).catch(() => undefined);
+    }
+    if (request.device) {
+      const { plan } = described.view;
+      recordPlayback(request.device.id, {
+        at: Date.now(),
+        title: described.view.subtitle ? `${described.view.title} · ${described.view.subtitle}` : described.view.title,
+        mode: plan.mode,
+        available: plan.available,
+        limits: plan.limits ?? [],
+      });
     }
     return described.view;
   });
@@ -549,10 +563,11 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   });
 
   /** Transcode status; `start` > 0 is a separate Live TV session that begins midway. */
-  async function streamStatus(fileId: string, start: number) {
-    const cached = lookupTranscode(fileId, true, start);
+  async function streamStatus(request: FastifyRequest, fileId: string, start: number) {
+    const profile = profileFor(request.device);
+    const cached = lookupTranscode(fileId, true, start, variantFor(fileId, profile));
     if (cached) return cached.status;
-    const described = describePlayback(fileId);
+    const described = describePlayback(fileId, profile);
     if (!described) return null;
     if (!described.view.plan.available) {
       return {
@@ -574,17 +589,22 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
         error: null,
       };
     }
-    const opened = await beginTranscode(fileId, false, start);
+    const opened = await beginTranscode(fileId, false, start, described, false, profile);
     return opened?.status ?? null;
   }
 
   /** The session a playlist or segment request belongs to; a request from a player that was switched away does not restart it. */
-  async function openSession(fileId: string, start: number) {
-    return lookupTranscode(fileId, false, start) ?? (hasOtherTranscode(fileId, start) ? null : await beginTranscode(fileId, false, start));
+  async function openSession(request: FastifyRequest, fileId: string, start: number) {
+    const profile = profileFor(request.device);
+    const variant = variantFor(fileId, profile);
+    return (
+      lookupTranscode(fileId, false, start, variant) ??
+      (hasOtherTranscode(fileId, start, variant) ? null : await beginTranscode(fileId, false, start, undefined, false, profile))
+    );
   }
 
-  async function sendPlaylist(reply: FastifyReply, fileId: string, start: number) {
-    const opened = await openSession(fileId, start);
+  async function sendPlaylist(request: FastifyRequest, reply: FastifyReply, fileId: string, start: number) {
+    const opened = await openSession(request, fileId, start);
     if (!opened) return reply.code(404).send({ error: "not_found" });
     const playlist = path.join(opened.dir, "index.m3u8");
     if (!(await waitForFile(playlist))) return reply.code(404).send({ error: "not_ready" });
@@ -596,7 +616,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
 
   async function sendSegment(request: FastifyRequest, reply: FastifyReply, fileId: string, start: number, segment: string) {
     if (!/^seg\d+\.ts$/.test(segment)) return reply.code(404).send({ error: "not_found" });
-    const opened = await openSession(fileId, start);
+    const opened = await openSession(request, fileId, start);
     if (!opened) return reply.code(404).send({ error: "not_found" });
     const file = path.join(opened.dir, segment);
     if (!(await waitForFile(file, 1000))) return reply.code(404).send({ error: "not_ready" });
@@ -633,11 +653,11 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
 
   app.get("/api/stream/:fileId/status", async (request, reply) => {
     reply.header("Cache-Control", "no-store");
-    const status = await streamStatus((request.params as { fileId: string }).fileId, 0);
+    const status = await streamStatus(request, (request.params as { fileId: string }).fileId, 0);
     return status ?? reply.code(404).send({ error: "not_found" });
   });
 
-  app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => sendPlaylist(reply, (request.params as { fileId: string }).fileId, 0));
+  app.get("/api/stream/:fileId/index.m3u8", async (request, reply) => sendPlaylist(request, reply, (request.params as { fileId: string }).fileId, 0));
 
   app.get("/api/stream/:fileId/:segment", async (request, reply) => {
     const params = request.params as { fileId: string; segment: string };
@@ -649,7 +669,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const start = sessionStart(params.start, params.fileId);
     if (start == null) return reply.code(404).send({ error: "not_found" });
     reply.header("Cache-Control", "no-store");
-    const status = await streamStatus(params.fileId, start);
+    const status = await streamStatus(request, params.fileId, start);
     return status ?? reply.code(404).send({ error: "not_found" });
   });
 
@@ -657,7 +677,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const params = request.params as { fileId: string; start: string };
     const start = sessionStart(params.start, params.fileId);
     if (start == null) return reply.code(404).send({ error: "not_found" });
-    return sendPlaylist(reply, params.fileId, start);
+    return sendPlaylist(request, reply, params.fileId, start);
   });
 
   app.get("/api/stream/:fileId/at/:start/:segment", async (request, reply) => {
@@ -674,7 +694,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const filePath = resolveMediaPath(row);
     if (!filePath) return reply.code(404).send({ error: "not_found" });
     refreshTools();
-    const view = playbackView(fileId);
+    const view = playbackView(fileId, profileFor(request.device));
     if (!view?.plan.available) return reply.code(415).send({ error: view?.plan.reasonCode ?? "missing" });
     if (view.plan.mode !== "direct") return reply.code(415).send({ error: view.plan.reasonCode });
     const stat = fs.statSync(filePath);

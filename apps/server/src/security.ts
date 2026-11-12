@@ -89,6 +89,7 @@ export function routeAccess(method: string, pathname: string): RouteAccess {
  */
 export function isDeviceForbidden(method: string, pathname: string) {
   if (pathname === "/api/devices/me") return false;
+  if (pathname === "/api/devices/me/capabilities" && method === "PUT") return false;
   if (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) return true;
   if (pathname.startsWith("/api/pair/") && !PAIR_POLL.test(pathname)) return true;
   if (pathname === "/api/settings" && method !== "GET") return true;

@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phase 0 is implemented: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 and 1 are implemented (capability profiles: TVs play directly what they decode). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
 
 ## Client–server or standalone?
 
@@ -125,6 +125,20 @@ Status: implemented, verified with tests and in a desktop browser; not yet run o
 - [plan.ts](../apps/server/src/playback/plan.ts) takes a profile. The `browser` profile reproduces today's rules exactly. Tests for both.
 - Transcode fallback keeps 5.1 when the profile allows AC-3/E-AC-3.
 - Player adapter interface in `apps/tv` (load, play, pause, seek, audio tracks, events); `html5` implementation first, wrapping the current player.
+
+### How it was built
+
+Status: implemented and covered by tests; not yet run on a Samsung or LG TV.
+
+- **Profile** (`packages/shared/src/capabilities.ts`): containers (each optionally limited to some codecs), video codecs with max bit depth / ffprobe profiles / max level, audio codecs with max channels, HDR formats, max width/height/bitrate, and what may be copied into HLS segments. Codec names are ffprobe's, folded into families (`videoFamily`, `audioFamily`). `BROWSER_PROFILE` encodes the old rules; `sanitizeCapabilities` checks whatever a client sends.
+- **Media info.** ffprobe now also yields profile, level, bit depth (from `pix_fmt`), HDR (transfer curve + Dolby Vision side data) and bitrate, stored in `media_files.video_info_json` (migration 0011). Files scanned before are probed once on the next scan, and every library is scanned at server start, so the data fills in after the first restart. A missing value is not held against a file.
+- **Plan.** `playbackPlan(input, profile)` returns the mode plus `limits` (why not direct: `container`, `video_codec`, `bit_depth`, `hdr`, `resolution`, `bitrate`, `audio_codec`, `audio_channels`, `forced`…). `hlsOutput` decides what the HLS stream copies and how it encodes. A test compares the browser profile with a verbatim copy of the old function over ~4,700 container × codec × ffmpeg combinations; the only skipped case (`mp4a` in WebM) cannot come out of ffprobe.
+- **Which profile.** `profileFor(request.device)`: the browser's for the web UI and the shared key; for a device, its report with `applyPlatformQuirks` (DTS/TrueHD dropped on TVs, MKV added on webOS) and its Settings switches (`applyDeviceOverrides`). A device that has not reported yet plays by the browser rules. Used by `/api/playback`, `/api/stream/*`, `/api/movies/:id` and Live TV `play`.
+- **Transcode.** Not copied, surround sound becomes AC-3 5.1 (640k) when the profile takes AC-3 in HLS, otherwise stereo AAC as before. Resolution caps add a second scale, bitrate caps add `-maxrate`. Outputs that differ from the browser's get a variant (`vc-aac36-h720…`) in the session key and the cache directory; the browser's keys did not change, so existing caches stay valid.
+- **Detection** (`@kinora/client/capabilities`, ES2015-safe): `MediaSource.isTypeSupported` / `canPlayType`, the extended `width=3840; height=2160` form and `webapis.productinfo` for 4K, `matchMedia("(dynamic-range: high)")` and `webapis.avinfo` for HDR. HLS copies only H.264 (plus AC-3 where MSE takes it), because hls.js plays MPEG-TS. The shell sends the profile with `POST /api/pair`; the TV UI sends it again on every start (`PUT /api/devices/me/capabilities`, the only device-management route a device token may call).
+- **Settings → Devices** shows what the device plays directly, its last playback since the server started (mode and limits; kept in memory), and the switches: always convert, max resolution, max bitrate (`PUT /api/devices/:id/overrides`). They apply to the next `/api/playback` request.
+- **Player adapter** (`apps/tv/src/player`): `PlayerBackend` (`capabilities()`, `create(video)`) and `PlayerAdapter` (load file/HLS, play, pause, seek, time, audio tracks, events). Only `html5` exists; the Player page uses it. Subtitles still go through the `<video>`'s text tracks. A native backend (AVPlay) will need the overlay renderer.
+- **Not done yet:** HEVC copied into HLS (needs fMP4 segments or a native player), HDR tone mapping, and falling back automatically when direct play fails on a TV that over-reports. Until then, use "Always convert".
 
 ### Done when
 - An MKV with HEVC + E-AC-3 plays directly on a TV that supports it.

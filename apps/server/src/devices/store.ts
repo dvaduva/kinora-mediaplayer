@@ -1,7 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
-import { isDevicePlatform, type DeviceView } from "@kinora/shared";
-import { db } from "../db/index.js";
+import {
+  DEFAULT_DEVICE_OVERRIDES,
+  isDevicePlatform,
+  sanitizeCapabilities,
+  sanitizeOverrides,
+  type CapabilityProfile,
+  type DeviceOverrides,
+  type DevicePlayback,
+  type DeviceView,
+} from "@kinora/shared";
+import { db, parseJson } from "../db/index.js";
 import { devices } from "../db/schema.js";
 import type { PairRequest } from "./pairing.js";
 
@@ -31,6 +40,13 @@ export function cleanDeviceName(value: unknown) {
 
 type DeviceRow = typeof devices.$inferSelect;
 
+/** How each device played its last file; kept in memory, so it starts empty after a restart. */
+const lastPlayback = new Map<string, DevicePlayback>();
+
+export function recordPlayback(deviceId: string, playback: DevicePlayback) {
+  lastPlayback.set(deviceId, playback);
+}
+
 function view(row: DeviceRow): DeviceView {
   return {
     id: row.id,
@@ -39,7 +55,24 @@ function view(row: DeviceRow): DeviceView {
     createdAt: row.createdAt,
     lastSeenAt: row.lastSeenAt,
     revokedAt: row.revokedAt,
+    capabilities: sanitizeCapabilities(parseJson<unknown>(row.capabilitiesJson, null)),
+    overrides: row.overridesJson ? sanitizeOverrides(parseJson<unknown>(row.overridesJson, null)) : DEFAULT_DEVICE_OVERRIDES,
+    lastPlayback: lastPlayback.get(row.id) ?? null,
   };
+}
+
+function capabilitiesJson(value: unknown) {
+  const profile = sanitizeCapabilities(value);
+  return profile ? JSON.stringify(profile) : null;
+}
+
+/** The device's own report of what it decodes, sent at pairing and again each time the TV app starts. */
+export function updateCapabilities(id: string, capabilities: CapabilityProfile) {
+  return db.update(devices).set({ capabilitiesJson: JSON.stringify(capabilities) }).where(eq(devices.id, id)).run().changes > 0;
+}
+
+export function setOverrides(id: string, overrides: DeviceOverrides) {
+  return db.update(devices).set({ overridesJson: JSON.stringify(overrides) }).where(eq(devices.id, id)).run().changes > 0;
 }
 
 export function issueDevice(request: PairRequest) {
@@ -49,7 +82,7 @@ export function issueDevice(request: PairRequest) {
     name: request.name,
     platform: request.platform,
     tokenHash: hashToken(token),
-    capabilitiesJson: request.capabilities == null ? null : JSON.stringify(request.capabilities),
+    capabilitiesJson: capabilitiesJson(request.capabilities),
     overridesJson: null,
     createdAt: Date.now(),
     lastSeenAt: null,
@@ -94,5 +127,6 @@ export function revokeDevice(id: string) {
 
 export function deleteDevice(id: string) {
   lastWrite.delete(id);
+  lastPlayback.delete(id);
   return db.delete(devices).where(eq(devices.id, id)).run().changes > 0;
 }

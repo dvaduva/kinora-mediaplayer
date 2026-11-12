@@ -1,7 +1,23 @@
 import type { FastifyInstance } from "fastify";
-import { isDevicePlatform, normalizePairCode, type DevicePlatform, type DeviceView } from "@kinora/shared";
+import {
+  isDevicePlatform,
+  normalizePairCode,
+  sanitizeCapabilities,
+  sanitizeOverrides,
+  type DevicePlatform,
+  type DeviceView,
+} from "@kinora/shared";
 import { PairingStore } from "./pairing.js";
-import { cleanDeviceName, deleteDevice, issueDevice, listDevices, renameDevice, revokeDevice } from "./store.js";
+import {
+  cleanDeviceName,
+  deleteDevice,
+  issueDevice,
+  listDevices,
+  renameDevice,
+  revokeDevice,
+  setOverrides,
+  updateCapabilities,
+} from "./store.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -66,6 +82,21 @@ export function registerDevices(app: FastifyInstance) {
   app.get("/api/devices", async () => listDevices());
 
   app.get("/api/devices/me", async (request) => ({ device: request.device }));
+
+  // The TV app reports what it decodes each time it starts, so a firmware update or a new player is picked up.
+  app.put("/api/devices/me/capabilities", async (request, reply) => {
+    if (!request.device) return reply.code(400).send({ error: "not_a_device" });
+    if (JSON.stringify(request.body ?? null).length > MAX_CAPABILITIES_JSON) return reply.code(413).send({ error: "too_large" });
+    const capabilities = sanitizeCapabilities(request.body);
+    if (!capabilities) return reply.code(400).send({ error: "bad_capabilities" });
+    updateCapabilities(request.device.id, capabilities);
+    return reply.code(204).send();
+  });
+
+  app.put("/api/devices/:id/overrides", async (request, reply) => {
+    if (!setOverrides((request.params as { id: string }).id, sanitizeOverrides(request.body))) return reply.code(404).send({ error: "not_found" });
+    return { ok: true };
+  });
 
   app.put("/api/devices/:id", async (request, reply) => {
     const name = cleanDeviceName(asRecord(request.body).name);

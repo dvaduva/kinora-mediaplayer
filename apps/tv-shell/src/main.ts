@@ -1,5 +1,6 @@
 import { detectLocale, isShellMessage, type HealthInfo, type PairPoll, type PairStart } from "@kinora/shared";
 import { shellCopy } from "@kinora/client/shell-copy";
+import { detectCapabilities } from "@kinora/client/capabilities";
 import { compatibility, isHealth, scan, scanTargets, type Found } from "./discovery";
 import { focusFirst, focusRoot, handleFocusKey } from "./focus";
 import { request } from "./net";
@@ -290,6 +291,15 @@ async function runScan(gen: number, autoConnect: boolean) {
 
 // ---------------------------------------------------------------- pairing
 
+/** What this TV decodes, sent with the pairing request; the TV UI sends it again on every start. */
+function safeCapabilities() {
+  try {
+    return detectCapabilities();
+  } catch {
+    return null;
+  }
+}
+
 function formatCode(code: string) {
   return `${code.slice(0, 3)} ${code.slice(3)}`;
 }
@@ -303,7 +313,7 @@ async function startPairing(url: string) {
   const gen = enter("pair");
   activeUrl = url;
   render(`<p class="eyebrow">Kinora · ${escapeHtml(hostOf(url))}</p><h1>${escapeHtml(t.pairTitle)}</h1><div class="spinner"></div>`);
-  const started = await request("POST", `${url}/api/pair`, { body: { name: deviceName(platform), platform }, timeout: HEALTH_TIMEOUT });
+  const started = await request("POST", `${url}/api/pair`, { body: { name: deviceName(platform), platform, capabilities: safeCapabilities() }, timeout: HEALTH_TIMEOUT });
   if (gen !== generation) return;
   if (started.status === 0) return showOffline(url);
   if (started.status !== 201) {

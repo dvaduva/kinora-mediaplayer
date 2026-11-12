@@ -2,7 +2,23 @@ export type LibraryType = "movie" | "series" | "music";
 
 export type PlaybackMode = "direct" | "remux" | "transcode";
 
+export * from "./capabilities";
+import type { CapabilityProfile, DeviceOverrides } from "./capabilities";
+
 export type PlaybackReason = "ok" | "remux_required" | "transcode_required" | "missing";
+
+/** Why a file does not play directly on a device (or has to be encoded rather than remuxed). */
+export type PlaybackLimit =
+  | "container"
+  | "video_codec"
+  | "video_profile"
+  | "bit_depth"
+  | "hdr"
+  | "resolution"
+  | "bitrate"
+  | "audio_codec"
+  | "audio_channels"
+  | "forced";
 
 export interface PlaybackPlan {
   mode: PlaybackMode;
@@ -11,6 +27,8 @@ export interface PlaybackPlan {
   container: string | null;
   videoCodec: string | null;
   audioCodec: string | null;
+  /** Set when the mode is not direct: what the device's profile ruled out. */
+  limits?: PlaybackLimit[];
 }
 
 export interface AudioStream {
@@ -883,6 +901,19 @@ export interface DeviceView {
   createdAt: number;
   lastSeenAt: number | null;
   revokedAt: number | null;
+  /** What the device reported it decodes; null until it does (it then plays by the browser rules). */
+  capabilities: CapabilityProfile | null;
+  overrides: DeviceOverrides;
+  /** The last file this device opened since the server started, and how it played. */
+  lastPlayback: DevicePlayback | null;
+}
+
+export interface DevicePlayback {
+  at: number;
+  title: string;
+  mode: PlaybackMode;
+  available: boolean;
+  limits: PlaybackLimit[];
 }
 
 /** `POST /api/pair`: the code the TV shows, and the secret only it knows, needed to collect the token. */
