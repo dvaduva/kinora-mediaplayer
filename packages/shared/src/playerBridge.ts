@@ -13,6 +13,14 @@ export const PLAYER_BRIDGE_SOURCE = "kinora-player";
 /** Native players a shell can offer, named in the launch hash (`#…&player=avplay`). */
 export type BridgePlayer = "avplay";
 
+/**
+ * What the launch hash may name: a bridged player, or `webos`. On webOS the frame's own <video> already
+ * plays through LG's native media pipeline, so nothing is bridged except the `capabilities` request
+ * (the shell asks the TV, through Luna, for its model and panel, which the frame cannot).
+ */
+export type LaunchPlayer = BridgePlayer | "webos";
+export const LAUNCH_PLAYERS: readonly LaunchPlayer[] = ["avplay", "webos"];
+
 export interface BridgeAudioTrack {
   id: string;
   language: string | null;

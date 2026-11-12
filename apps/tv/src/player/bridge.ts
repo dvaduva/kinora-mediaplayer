@@ -39,7 +39,8 @@ export function playerUrl(url: string, token: string | null) {
   return `${absolute}${absolute.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
 }
 
-function requestCapabilities(): Promise<CapabilityProfile> {
+/** Asks the shell what this TV decodes; rejects when it does not answer in time. */
+export function requestCapabilities(): Promise<CapabilityProfile> {
   return new Promise((resolve, reject) => {
     requests += 1;
     const request = requests;

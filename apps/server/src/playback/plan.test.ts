@@ -261,6 +261,29 @@ test("an AVPlay profile copies HEVC and E-AC-3 into HLS segments", () => {
   assert.equal(sanitizeCapabilities({ ...avplay, player: "vlc" })?.player, undefined);
 });
 
+test("webOS quirks: no 10-bit H.264, Dolby Vision kept; a webOS profile plays HEVC MKV directly and copies it into HLS", () => {
+  const reported: CapabilityProfile = {
+    ...TV,
+    player: "webos",
+    containers: [{ names: ["mp4"] }, { names: ["mkv"] }],
+    video: [{ codec: "h264", maxBitDepth: 10 }, { codec: "hevc", maxBitDepth: 10 }],
+    audio: [{ codec: "aac", maxChannels: 6 }, { codec: "eac3", maxChannels: 8 }],
+    hdr: ["hdr10", "hlg", "dolby_vision"],
+    hls: { video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"] },
+  };
+  const webos = applyPlatformQuirks("webos", reported);
+  assert.deepEqual(webos.video, [{ codec: "h264", maxBitDepth: 8 }, { codec: "hevc", maxBitDepth: 10 }]);
+  assert.deepEqual(webos.hdr, ["hdr10", "hlg", "dolby_vision"]);
+  assert.equal(sanitizeCapabilities(reported)?.player, "webos");
+  const eac3Mkv = { ...hevcMkv, audioCodec: "eac3" };
+  assert.equal(playbackPlan(eac3Mkv, webos).mode, "direct");
+  const avi = { ...eac3Mkv, container: "avi" };
+  assert.equal(playbackPlan(avi, webos).mode, "remux");
+  const output = hlsOutput(avi, webos);
+  assert.equal(output.copyVideo, true);
+  assert.equal(output.copyAudio, true);
+});
+
 test("profiles from a client are checked field by field", () => {
   assert.equal(sanitizeCapabilities(null), null);
   assert.equal(sanitizeCapabilities({ version: 2 }), null);

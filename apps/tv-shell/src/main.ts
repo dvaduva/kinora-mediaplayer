@@ -1,11 +1,11 @@
 import { detectLocale, isPlayerCommand, isShellMessage, PLAYER_BRIDGE_SOURCE, type HealthInfo, type PairPoll, type PairStart, type PlayerReport } from "@kinora/shared";
 import { shellCopy } from "@kinora/client/shell-copy";
-import { detectAvplayCapabilities, detectCapabilities, hasAvplay } from "@kinora/client/capabilities";
+import { detectAvplayCapabilities, detectCapabilities, detectWebosCapabilities, hasAvplay, type WebosInfo } from "@kinora/client/capabilities";
 import { createAvplayController, type Avplay, type AvplayController } from "./avplay";
 import { compatibility, isHealth, scan, scanTargets, type Found } from "./discovery";
 import { focusFirst, focusRoot, handleFocusKey } from "./focus";
 import { request } from "./net";
-import { detectPlatform, deviceName, exitApp, isBackKey, localAddress, registerKeys } from "./platform";
+import { detectPlatform, deviceName, exitApp, isBackKey, localAddress, registerKeys, webosInfo } from "./platform";
 import { qrSvg } from "./qr";
 import { clearCurrent, currentServer, hostOf, knownServers, normalizeServerUrl, rememberServer, setToken } from "./servers";
 import "./styles.css";
@@ -35,6 +35,16 @@ let activeUrl: string | null = null;
  * <video> element cannot. It exists only in this page, so the UI in the frame drives it by message.
  */
 const avplay: AvplayController | null = platform === "tizen" && hasAvplay() ? setupAvplay() : null;
+
+/**
+ * On webOS the UI's own <video> plays through LG's native pipeline (MKV, HEVC, HDR, Dolby audio, HLS),
+ * so nothing is bridged; the shell only knows the TV's model and panel (Luna), which shape the profile.
+ * Asked once, at start.
+ */
+const webos: Promise<WebosInfo> | null = platform === "webos" ? webosInfo() : null;
+
+/** The player the UI is told to use, in the launch hash. */
+const launchPlayer = avplay ? "avplay" : webos ? "webos" : null;
 
 function setupAvplay() {
   const player = (window as unknown as { webapis: { avplay: Avplay } }).webapis.avplay;
@@ -155,7 +165,7 @@ function openApp(url: string, token: string) {
     frame.focus();
     frame.contentWindow?.focus();
   };
-  frame.setAttribute("src", `${url}/tv/#shell=1&token=${encodeURIComponent(token)}${avplay ? "&player=avplay" : ""}`);
+  frame.setAttribute("src", `${url}/tv/#shell=1&token=${encodeURIComponent(token)}${launchPlayer ? `&player=${launchPlayer}` : ""}`);
   // The heartbeat tells "server gone" (offline screen, then back on its own) from "device revoked" (pairing).
   let misses = 0;
   const beat = async () => {
@@ -188,12 +198,17 @@ window.addEventListener("message", (event) => {
 
 function handlePlayerCommand(command: Parameters<AvplayController["handle"]>[0]) {
   const url = activeUrl;
-  if (!avplay || !url || !frame.contentWindow) return;
+  if (!launchPlayer || !url || !frame.contentWindow) return;
   if (command.command === "capabilities") {
-    const report: PlayerReport = { event: "capabilities", request: command.request, profile: safeCapabilities() };
-    frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(url));
+    const request = command.request;
+    void safeCapabilities().then((profile) => {
+      if (activeUrl !== url || !frame.contentWindow) return;
+      const report: PlayerReport = { event: "capabilities", request, profile };
+      frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(url));
+    });
     return;
   }
+  if (!avplay) return;
   // The player opens media from the connected server only, never an address the page made up.
   if (command.command === "load" && originOf(command.url) !== originOf(url)) return;
   avplay.handle(command);
@@ -341,9 +356,11 @@ async function runScan(gen: number, autoConnect: boolean) {
 // ---------------------------------------------------------------- pairing
 
 /** What this TV decodes, sent with the pairing request; the TV UI sends it again on every start. */
-function safeCapabilities() {
+async function safeCapabilities() {
   try {
-    return avplay ? detectAvplayCapabilities() : detectCapabilities();
+    if (avplay) return detectAvplayCapabilities();
+    if (webos) return detectWebosCapabilities(await webos);
+    return detectCapabilities();
   } catch {
     return null;
   }
@@ -362,7 +379,10 @@ async function startPairing(url: string) {
   const gen = enter("pair");
   activeUrl = url;
   render(`<p class="eyebrow">Kinora · ${escapeHtml(hostOf(url))}</p><h1>${escapeHtml(t.pairTitle)}</h1><div class="spinner"></div>`);
-  const started = await request("POST", `${url}/api/pair`, { body: { name: deviceName(platform), platform, capabilities: safeCapabilities() }, timeout: HEALTH_TIMEOUT });
+  const name = deviceName(platform, webos ? await webos : null);
+  const capabilities = await safeCapabilities();
+  if (gen !== generation) return;
+  const started = await request("POST", `${url}/api/pair`, { body: { name, platform, capabilities }, timeout: HEALTH_TIMEOUT });
   if (gen !== generation) return;
   if (started.status === 0) return showOffline(url);
   if (started.status !== 201) {

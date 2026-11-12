@@ -3,7 +3,8 @@ import type { BridgeAudioTrack, CapabilityProfile } from "@kinora/shared";
 /**
  * The TV's video player behind one interface, so the UI does not care what plays the file:
  * `html5` (the <video> element, with hls.js for converted streams), `avplay` (Samsung's native player,
- * run by the Tizen shell outside this frame) and later `exoplayer-bridge` (Android TV). Each backend
+ * run by the Tizen shell outside this frame), `webos` (the <video> on LG's native pipeline, HLS included)
+ * and later `exoplayer-bridge` (Android TV). Each backend
  * reports the capabilities of its own pipeline.
  */
 
@@ -43,7 +44,7 @@ export interface PlayerAdapter {
 }
 
 export interface PlayerBackend {
-  name: "html5" | "avplay" | "exoplayer-bridge";
+  name: "html5" | "avplay" | "webos" | "exoplayer-bridge";
   /** What this backend decodes on this device, as sent to the server. A bridge asks the shell, hence the promise. */
   capabilities(): CapabilityProfile | Promise<CapabilityProfile>;
   /**

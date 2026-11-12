@@ -1,4 +1,5 @@
 import type { DevicePlatform } from "@kinora/shared";
+import type { WebosInfo } from "@kinora/client/capabilities";
 
 type Tizen = {
   tvinputdevice?: { registerKeyBatch?: (keys: string[]) => void; registerKey?: (key: string) => void };
@@ -23,7 +24,8 @@ export function detectPlatform(): DevicePlatform {
   return "browser";
 }
 
-export function deviceName(platform: DevicePlatform) {
+/** `webos`: what Luna said about the TV (see `webosInfo`), for its model name. */
+export function deviceName(platform: DevicePlatform, webos?: WebosInfo | null) {
   if (platform === "tizen") {
     try {
       const model = host.webapis?.productinfo?.getRealModel?.() ?? host.webapis?.productinfo?.getModel?.();
@@ -33,7 +35,7 @@ export function deviceName(platform: DevicePlatform) {
     }
     return "Samsung TV";
   }
-  if (platform === "webos") return "LG TV";
+  if (platform === "webos") return webos?.modelName ? `LG TV ${webos.modelName}` : "LG TV";
   return "Browser";
 }
 
@@ -41,7 +43,7 @@ function isIPv4(value: unknown): value is string {
   return typeof value === "string" && /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(value) && value !== "0.0.0.0";
 }
 
-function lunaCall(uri: string): Promise<Record<string, unknown> | null> {
+function lunaCall(uri: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     if (!host.PalmServiceBridge) return resolve(null);
     const timer = window.setTimeout(() => resolve(null), 3000);
@@ -55,7 +57,7 @@ function lunaCall(uri: string): Promise<Record<string, unknown> | null> {
           resolve(null);
         }
       };
-      bridge.call(uri, "{}");
+      bridge.call(uri, JSON.stringify(params));
     } catch {
       window.clearTimeout(timer);
       resolve(null);
@@ -90,6 +92,31 @@ export async function localAddress(platform: DevicePlatform): Promise<string | n
   }
   // Opened from a server in a desktop browser (development): its host is on the right subnet.
   return isIPv4(window.location.hostname) ? window.location.hostname : null;
+}
+
+/** Luna answers booleans as "true"/"false" strings on some firmware. */
+function lunaFlag(value: unknown) {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return null;
+}
+
+function lunaText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 60) : null;
+}
+
+/**
+ * The LG TV's model, webOS SDK version and whether the panel is 4K, from the system property service
+ * (what webOSTV.js's `deviceInfo` asks). Every field is null when Luna does not answer, as in a browser.
+ */
+export async function webosInfo(): Promise<WebosInfo> {
+  const reply = await lunaCall("luna://com.webos.service.tv.systemproperty/getSystemInfo", { keys: ["modelName", "sdkVersion", "UHD"] });
+  const ok = reply && reply.returnValue !== false;
+  return {
+    modelName: ok ? lunaText(reply.modelName) : null,
+    sdkVersion: ok ? lunaText(reply.sdkVersion) : null,
+    uhd: ok ? lunaFlag(reply.UHD) : null,
+  };
 }
 
 /** Media and channel keys reach a Tizen app only once registered; webOS sends them anyway. */

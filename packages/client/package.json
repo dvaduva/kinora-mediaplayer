@@ -9,7 +9,7 @@
     "./capabilities": "./src/capabilities.ts"
   },
   "scripts": {
-    "test": "tsx --test src/vtt.test.ts"
+    "test": "tsx --test src/vtt.test.ts src/capabilities.test.ts"
   },
   "dependencies": {
     "@kinora/shared": "workspace:*",

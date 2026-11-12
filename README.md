@@ -190,10 +190,14 @@ On Tizen the UI plays through Samsung's native player (AVPlay): MKV, HEVC, HDR10
 
 #### Sideloading on LG webOS
 
-1. Run `pnpm tv:shell`.
-2. Enable Developer Mode and install the [webOS CLI](https://webostv.developer.lge.com/).
-3. Package the `apps/tv/webos` folder (`ares-package apps/tv/webos`) and install the IPK on the TV (`ares-install`).
-4. On first launch it finds the server and shows a pairing code.
+1. Install the webOS CLI (`npm install -g @webos-tools/cli`), enable Developer Mode on the TV and register it with `ares-setup-device`.
+2. Build, package and install in one go:
+   ```bash
+   pnpm tv:package:webos -- --install --run   # apps/tv/webos/dist/com.kinora.tv_<version>_all.ipk
+   ```
+3. On first launch it finds the server and shows a pairing code.
+
+On webOS the UI plays through LG's native `<video>` pipeline: MKV, HEVC, HDR and Dolby audio play directly, and converted streams copy HEVC and E-AC-3. Developer Mode expires after about 6 weeks unless extended. Step by step, with debugging and quirks: [docs/tv/webos.md](docs/tv/webos.md).
 
 To try the shell in a desktop browser: `pnpm --filter @kinora/tv-shell dev` and open <http://localhost:5175/>, then enter `127.0.0.1:3001` (the server must have the TV UI built).
 

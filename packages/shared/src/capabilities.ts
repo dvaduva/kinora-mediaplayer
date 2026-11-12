@@ -54,8 +54,8 @@ export interface CapabilityProfile {
   player?: ProfilePlayer;
 }
 
-export type ProfilePlayer = "html5" | "avplay" | "exoplayer";
-const PROFILE_PLAYERS: readonly ProfilePlayer[] = ["html5", "avplay", "exoplayer"];
+export type ProfilePlayer = "html5" | "avplay" | "webos" | "exoplayer";
+const PROFILE_PLAYERS: readonly ProfilePlayer[] = ["html5", "avplay", "webos", "exoplayer"];
 
 /** Switches a user sets per device in Settings → Devices. */
 export interface DeviceOverrides {
@@ -200,9 +200,11 @@ export function applyPlatformQuirks(platform: string, profile: CapabilityProfile
   if (platform === "webos" && !containers.some((entry) => entry.names.includes("mkv"))) containers.push({ names: ["mkv"] });
   let video = profile.video;
   let hdr = profile.hdr;
-  if (platform === "tizen") {
-    // Samsung decodes H.264 in hardware up to 8-bit only; MSE answers yes for High 10 and then shows a black picture.
+  if (platform === "tizen" || platform === "webos") {
+    // TV hardware decodes H.264 up to 8-bit only (Samsung and LG alike); MSE may answer yes for High 10 and then show a black picture.
     video = video.map((entry) => (entry.codec === "h264" && (entry.maxBitDepth ?? 8) > 8 ? { ...entry, maxBitDepth: 8 } : entry));
+  }
+  if (platform === "tizen") {
     // Samsung TVs have no Dolby Vision; a DV-only file (profile 5) has no HDR10 base layer to fall back on.
     if (hdr) hdr = hdr.filter((format) => format !== "dolby_vision");
   }

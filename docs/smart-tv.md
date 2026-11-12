@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0, 1 and 2 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 to 3 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay; on webOS through LG's native `<video>` pipeline, HLS included). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
 
 ## Client–server or standalone?
 
@@ -176,6 +176,17 @@ The test checklist below passes on a Samsung TV, media keys included.
 - webOS-specific profile overrides.
 - `pnpm tv:package:webos` (`ares-package`).
 - `docs/tv/webos.md`: Developer Mode (and its expiry), `ares-setup-device`, install, `ares-inspect`.
+
+### How it was built
+
+Status: implemented and covered by tests (the profile and the server rules); the IPK builds with `ares-package`; not yet run on an LG TV.
+
+- **No bridge.** Unlike AVPlay, LG's native pipeline is behind the ordinary `<video>` element (with a plain `src`, not MSE), in the UI's frame too. The shell adds `&player=webos` to the launch hash and the UI picks the `webos` adapter (`apps/tv/src/player/webos.ts`): the HTML5 adapter with `nativeHls` (HLS given to the element instead of hls.js, token in the URL, put back on the start point if it opens at the live edge, duration from `seekable` while the stream grows) and `pauseWhenHidden`. Every converted film now depends on the TV's HLS player, so a failure before the first frame falls back to hls.js for the rest of the session (enough for H.264 streams; HEVC copied in needs **Always convert**). On a real LG, test a converted film and seeking first. Text tracks and `audioTracks` work as in the HTML5 player.
+- **Profile from the shell.** The frame cannot reach Luna, so the UI asks the shell with the bridge's `capabilities` command; the shell answers with `detectWebosCapabilities(webosInfo())` (`player: "webos"`). `webosInfo` asks `com.webos.service.tv.systemproperty/getSystemInfo` for the model, SDK version and 4K panel. The profile is LG's 2020+ media spec (MKV, TS, AVI; HEVC 10-bit, MPEG-2/4; AC-3, E-AC-3, PCM), narrowed by the decoder for VP9, AV1, Opus/Vorbis and Dolby Vision. HLS segments may carry HEVC and E-AC-3. The model name also names the device at pairing ("LG TV OLED55C1").
+- **webOS quirks** (server-side): H.264 capped at 8-bit like Tizen, Dolby Vision kept (besides DTS/TrueHD dropped and MKV added from phase 1).
+- **Manifest.** `appinfo.json` declares the Luna ACG groups (`network.query`, `systemconfig.query`), enforced from webOS 26 when declared and required from webOS 27.
+- **Packaging**: `pnpm tv:package:webos [-- --install --run --device <name>]` builds the shell, stages the app's files and runs `ares-package --no-minify`, `ares-install`, `ares-launch` (`@webos-tools/cli`, on PATH or in `ARES_CLI`). No certificate, so CI can build the IPK (phase 5).
+- **Not done yet:** placeholder icons (LG wants 80×80 and 130×130 for the store), embedded text subtitles, automatic fallback to transcode when the pipeline refuses a file (use **Always convert** meanwhile), and seeking ahead within a growing transcode.
 
 ### Done when
 The same checklist passes on an LG TV.

@@ -174,3 +174,66 @@ export function detectAvplayCapabilities(): CapabilityProfile {
     player: "avplay",
   };
 }
+
+/** What the webOS shell learns from Luna (`com.webos.service.tv.systemproperty`); each field may be unknown. */
+export type WebosInfo = {
+  modelName: string | null;
+  /** webOS SDK version ("6.3.0"; webOS 22 reports 7.x, 23 reports 8.x…). */
+  sdkVersion: string | null;
+  /** A 4K panel. */
+  uhd: boolean | null;
+};
+
+/**
+ * What LG's media pipeline plays when a <video> gets a plain `src` (not MSE): the webOS media spec for
+ * the 2020+ models Kinora targets, narrowed by the TV. canPlayType there under-reports (it says nothing
+ * for Matroska, which plays), so most of this is the published spec, not a probe. 4K comes from Luna or
+ * the decoder; VP9, AV1 and Dolby Vision from the decoder, since only some models and years have them.
+ * The pipeline also plays HLS itself, so HEVC and Dolby audio may be copied into the segments (hls.js
+ * is not used on webOS). DTS and TrueHD are dropped on the server (`applyPlatformQuirks`).
+ */
+export function detectWebosCapabilities(info: WebosInfo, probe: (type: string) => boolean = prober()): CapabilityProfile {
+  const video: VideoCodecSupport[] = [{ codec: "h264", maxBitDepth: 8 }, { codec: "hevc", maxBitDepth: 10 }, { codec: "mpeg2" }, { codec: "mpeg4" }];
+  const vp9 = probe('video/webm; codecs="vp9"') || probe('video/webm; codecs="vp09.00.40.08"');
+  if (vp9) video.push({ codec: "vp9", maxBitDepth: probe('video/webm; codecs="vp09.02.51.10"') ? 10 : 8 });
+  const av1 = probe('video/mp4; codecs="av01.0.08M.08"');
+  if (av1) video.push({ codec: "av1", maxBitDepth: 10 });
+  const audio: AudioCodecSupport[] = [
+    { codec: "aac", maxChannels: 6 },
+    { codec: "mp3", maxChannels: 2 },
+    { codec: "ac3", maxChannels: 6 },
+    { codec: "eac3", maxChannels: 8 },
+    { codec: "pcm", maxChannels: 8 },
+  ];
+  if (probe('audio/webm; codecs="opus"')) audio.push({ codec: "opus", maxChannels: 8 });
+  if (probe('audio/webm; codecs="vorbis"')) audio.push({ codec: "vorbis", maxChannels: 6 });
+  const webm: string[] = [];
+  if (vp9) webm.push("vp9");
+  if (av1) webm.push("av1");
+  const containers: ContainerSupport[] = [
+    { names: ["mp4", "m4v", "mov"] },
+    { names: ["mkv"] },
+    { names: ["ts", "m2ts"] },
+    { names: ["avi"], video: ["h264", "mpeg4"], audio: ["mp3", "ac3", "aac", "pcm"] },
+  ];
+  if (webm.length) containers.push({ names: ["webm"], video: webm, audio: ["opus", "vorbis"] });
+  const size = info.uhd === true ? { maxWidth: 3840, maxHeight: 2160 } : info.uhd === false ? { maxWidth: 1920, maxHeight: 1080 } : detectSize(probe, true);
+  // Every LG 4K model since 2017 takes HDR10 and HLG (tone-mapped on the cheaper panels); Dolby Vision only where the decoder has it.
+  let hdr = detectHdr(probe);
+  if (size.maxHeight >= 2160 && hdr.length === 0) {
+    hdr = ["hdr10", "hlg"];
+    if (probe('video/mp4; codecs="dvh1.05.06"') || probe('video/mp4; codecs="dvhe.05.06"')) hdr.push("dolby_vision");
+  }
+  return {
+    version: 1,
+    containers,
+    video,
+    audio,
+    hdr,
+    ...size,
+    maxBitrate: null,
+    hls: { video: ["h264", "hevc"], audio: ["aac", "mp3", "ac3", "eac3"] },
+    subtitles: "overlay",
+    player: "webos",
+  };
+}

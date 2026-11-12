@@ -11,5 +11,9 @@
   "requiredPermissions": [
     "network.client"
   ],
+  "requiredACG": [
+    "network.query",
+    "systemconfig.query"
+  ],
   "disableBackHistoryAPI": true
 }

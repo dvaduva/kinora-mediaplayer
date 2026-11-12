@@ -1,14 +1,19 @@
-import { SHELL_MESSAGE_SOURCE, type BridgePlayer, type ShellMessageType } from "@kinora/shared";
+import { LAUNCH_PLAYERS, SHELL_MESSAGE_SOURCE, type LaunchPlayer, type ShellMessageType } from "@kinora/shared";
 
 const SHELL_KEY = "kinora.tv.inShell";
 const PLAYER_KEY = "kinora.tv.shellPlayer";
 
 /**
  * What the TV shell passed in the URL hash when it opened this UI: `#shell=1&token=…`, plus
- * `&player=avplay` when the shell offers a native player (see `PlayerCommand` in @kinora/shared).
+ * `&player=avplay` when the shell offers a native player (see `PlayerCommand` in @kinora/shared), or
+ * `&player=webos` in the LG package (the <video> here is already native; see `LaunchPlayer`).
  * The hash never reaches the server; it is read once at start and removed from the address bar.
  */
-export type ShellLaunch = { inShell: boolean; token: string | null; player: BridgePlayer | null };
+export type ShellLaunch = { inShell: boolean; token: string | null; player: LaunchPlayer | null };
+
+function launchPlayer(value: string | null): LaunchPlayer | null {
+  return LAUNCH_PLAYERS.find((name) => name === value) ?? null;
+}
 
 let launch: ShellLaunch | null = null;
 
@@ -17,7 +22,7 @@ export function readShellLaunch(): ShellLaunch {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   let inShell = params.get("shell") === "1";
   const token = params.get("token");
-  let player: BridgePlayer | null = params.get("player") === "avplay" ? "avplay" : null;
+  let player = launchPlayer(params.get("player"));
   try {
     // A reload inside the frame loses the hash; the session remembers that a shell is around.
     if (inShell) {
@@ -25,7 +30,7 @@ export function readShellLaunch(): ShellLaunch {
       sessionStorage.setItem(PLAYER_KEY, player ?? "");
     } else {
       inShell = sessionStorage.getItem(SHELL_KEY) === "1";
-      player = sessionStorage.getItem(PLAYER_KEY) === "avplay" ? "avplay" : null;
+      player = launchPlayer(sessionStorage.getItem(PLAYER_KEY));
     }
   } catch {
     // storage unavailable
