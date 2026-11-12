@@ -1,29 +1,31 @@
 # Kinora
 
-Kinora este un media server personal pentru filme, seriale și muzică. Scanează folderele de pe disc sau din rețea, aduce afișe, distribuție și trailere de la TMDB (coperți de album de la MusicBrainz) și redă totul în browser. Ce nu poate fi redat direct este convertit din mers, cu ffmpeg, într-un flux HLS.
+Kinora is a personal media server for movies, series and music. It scans folders on local disks or network shares, fetches posters, cast and trailers from TMDB (album covers from MusicBrainz) and plays everything in the browser. Whatever cannot be played directly is converted on the fly with ffmpeg into an HLS stream.
 
-Interfața este în română și engleză.
+The interface is available in English and Romanian.
 
-## Cerințe
+## Requirements
 
-| Componentă | De ce |
+| Component | Why |
 |---|---|
-| **Node.js 22+** (testat cu 24) | serverul rulează TypeScript direct, prin `tsx` |
-| **pnpm 10** prin Corepack | proiectul e un monorepo pnpm (`corepack enable`) |
-| **ffmpeg și ffprobe** | detalii tehnice, subtitrări din fișier, remux și transcodare |
-| **Token TMDB** (opțional) | metadate pentru filme și seriale |
+| **Node.js 22+** (tested with 24) | the server runs TypeScript directly through `tsx` |
+| **pnpm 10** via Corepack | the project is a pnpm monorepo (`corepack enable`) |
+| **ffmpeg and ffprobe** | technical details, embedded subtitles, remux and transcoding |
+| **TMDB token** (optional) | metadata for movies and series |
 
-Pe Windows, ffmpeg se instalează cel mai simplu cu:
+On Windows, the easiest way to install ffmpeg is:
 
 ```powershell
 winget install Gyan.FFmpeg
 ```
 
-Kinora îl găsește în `PATH` sau în folderul de pachete winget, deci nu e nevoie să repornești terminalul după instalare. Fără ffprobe lipsesc detaliile tehnice. Fără ffmpeg se redau doar fișierele compatibile direct cu browserul.
+Kinora finds it in `PATH` or in the winget packages folder, so you do not need to restart the terminal after installing. Without ffprobe, technical details are missing. Without ffmpeg, only files the browser can play directly will play.
 
-Tokenul TMDB este „API Read Access Token” din [setările contului TMDB](https://www.themoviedb.org/settings/api). Îl introduci în pagina **Setări** din aplicație.
+The TMDB token is the "API Read Access Token" from your [TMDB account settings](https://www.themoviedb.org/settings/api). Enter it on the **Settings** page in the app.
 
-## Pornire
+Titles, overviews and genres are fetched in English by default. **Settings → Metadata → Metadata language** switches them to Romanian; titles already matched are refreshed in the background. Installs that matched titles before this setting existed keep Romanian.
+
+## Getting started
 
 ```bash
 corepack enable
@@ -31,80 +33,81 @@ pnpm install
 pnpm dev
 ```
 
-- Interfața de dezvoltare: <http://localhost:5173>. Vite trimite cererile `/api` către server.
-- Serverul: <http://127.0.0.1:3001>.
+- Development UI: <http://localhost:5173>. Vite forwards `/api` requests to the server.
+- Server: <http://127.0.0.1:3001>.
 
-La prima pornire, deschide **Setări**, adaugă un folder (filme, seriale sau muzică, câte o cale pe linie) și, opțional, tokenul TMDB. Scanarea pornește imediat. Folderele sunt urmărite, așa că fișierele noi apar singure.
+On first start, open **Settings**, add a folder (movies, series or music, one path per line) and, optionally, the TMDB token. Scanning starts right away. Folders are watched, so new files show up on their own.
 
-### Utilizare zilnică (fără Vite)
+### Everyday use (without Vite)
 
 ```bash
-pnpm build   # compilează interfața în apps/web/dist
-pnpm start   # serverul livrează interfața și API-ul pe portul 3001
+pnpm build   # builds the UI into apps/web/dist
+pnpm start   # the server serves the UI and the API on port 3001
 ```
 
-## Configurare
+## Configuration
 
-Majoritatea setărilor se fac din pagina **Setări** și se păstrează în baza de date. Câteva sunt variabile de mediu:
+Most settings are made on the **Settings** page and stored in the database. A few are environment variables:
 
-| Variabilă | Implicit | Rol |
+| Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `3001` | portul serverului |
-| `KINORA_ALLOWED_ORIGINS` | – | origini suplimentare acceptate pentru API, separate prin virgulă (de ex. un reverse proxy: `https://media.acasa`) |
-| `KINORA_VIDEO_ENCODER` | `libx264` | encoderul H.264 folosit la transcodare, de ex. `h264_nvenc` (NVIDIA), `h264_qsv` (Intel), `h264_amf` (AMD) |
+| `PORT` | `3001` | server port |
+| `KINORA_ALLOWED_ORIGINS` | – | extra origins accepted by the API, comma-separated (e.g. a reverse proxy: `https://media.home`) |
+| `KINORA_VIDEO_ENCODER` | `libx264` | H.264 encoder used for transcoding, e.g. `h264_nvenc` (NVIDIA), `h264_qsv` (Intel), `h264_amf` (AMD) |
+| `KINORA_IPTV_MAX_STREAMS` | `4` | maximum number of IPTV relays running at once |
 
-### Acces din rețea
+### Network access
 
-Implicit, Kinora ascultă doar pe `127.0.0.1`. Pentru acces de pe alte dispozitive:
+By default, Kinora listens only on `127.0.0.1`. To reach it from other devices:
 
-1. În **Setări**, alege o cheie de acces.
-2. Schimbă adresa în `0.0.0.0` sau în IP-ul calculatorului.
-3. Repornește serverul.
+1. In **Settings**, choose an access key.
+2. Change the address to `0.0.0.0` or to the computer's IP.
+3. Restart the server.
 
-Serverul refuză să pornească pe o adresă externă fără cheie de acces. Cheia se trimite ca header `Authorization: Bearer …` sau prin cookie-ul setat la autentificare.
+The server refuses to start on an external address without an access key. The key is sent as an `Authorization: Bearer …` header or through the cookie set at sign-in.
 
-Protecții incluse:
-- API-ul acceptă cereri din browser doar de la pagina servită de Kinora, de la serverul Vite sau din `KINORA_ALLOWED_ORIGINS`. Alte site-uri primesc `403`.
-- Cât timp serverul ascultă doar local, un `Host` care nu e local primește `421`, ca protecție împotriva DNS rebinding.
-- Fișierele sunt servite doar din interiorul folderelor bibliotecilor.
+Built-in protections:
+- The API accepts browser requests only from the page served by Kinora, from the Vite dev server or from `KINORA_ALLOWED_ORIGINS`. Other sites get `403`.
+- While the server listens only locally, a non-local `Host` gets `421`, as protection against DNS rebinding.
+- Files are served only from inside the library folders.
 
-## Cum se redă un fișier
+## How a file is played
 
-| Fișier | Mod | Ce face serverul |
+| File | Mode | What the server does |
 |---|---|---|
-| MP4/MOV/M4V cu H.264 și AAC/MP3, WebM cu H.264/VP9 și Opus/Vorbis | `direct` | trimite fișierul cu suport pentru HTTP Range |
-| H.264 cu AAC/MP3 în alt container (MKV, AVI, TS) | `remux` | copiază pistele în segmente HLS (rapid) |
-| H.264 cu alt sunet (AC-3, E-AC-3, DTS…) | `transcode` | copiază imaginea, convertește sunetul în AAC stereo |
-| Alt codec video (HEVC, AV1, VP9 în MKV, MPEG-4…) | `transcode` | convertește imaginea în H.264 8-bit (maxim 1080p) |
+| MP4/MOV/M4V with H.264 and AAC/MP3, WebM with H.264/VP9 and Opus/Vorbis | `direct` | sends the file with HTTP Range support |
+| H.264 with AAC/MP3 in another container (MKV, AVI, TS) | `remux` | copies the tracks into HLS segments (fast) |
+| H.264 with other audio (AC-3, E-AC-3, DTS…) | `transcode` | copies the video, converts the audio to stereo AAC |
+| Any other video codec (HEVC, AV1, VP9 in MKV, MPEG-4…) | `transcode` | converts the video to 8-bit H.264 (up to 1080p) |
 
-Limitări cunoscute:
-- Conversia pornește de la începutul fișierului. Când imaginea trebuie convertită, reluarea de la o poziție avansată sau derularea înainte așteaptă până ajunge encoderul acolo.
-- Conținutul HDR este convertit fără tone mapping, deci culorile pot ieși mai șterse.
-- Rulează o singură conversie odată: deschiderea altui fișier o oprește pe cea curentă.
+Known limitations:
+- Conversion starts at the beginning of the file. When the video has to be converted, resuming from a later position or seeking ahead waits until the encoder gets there.
+- HDR content is converted without tone mapping, so colors may look washed out.
+- Only one conversion runs at a time: opening another file stops the current one.
 
-### Cache-ul de conversii
+### Conversion cache
 
-Fiecare conversie se păstrează în `data/cache/transcode`, ca a doua vizionare să pornească instant. Cache-ul are o limită (implicit 30 GB, modificabilă în **Setări**):
-- conversiile nefolosite de 30 de zile se șterg automat;
-- peste limită se șterg, pe rând, cele vizionate cel mai demult;
-- conversia în curs nu se șterge niciodată;
-- butonul **Golește conversiile** șterge tot, mai puțin conversia în curs.
+Every conversion is kept in `data/cache/transcode`, so a second viewing starts instantly. The cache has a limit (30 GB by default, configurable in **Settings**):
+- conversions unused for 30 days are deleted automatically;
+- above the limit, the least recently watched ones are deleted first;
+- the conversion in progress is never deleted;
+- the **Clear conversions** button deletes everything except the conversion in progress.
 
-### Subtitrări
+### Subtitles
 
-- Subtitrările externe (`.srt`, `.vtt`, `.ass`, `.ssa`) de lângă fișierul video sunt găsite automat, la fel și cele încorporate în fișier.
-- Toate sunt convertite în WebVTT. Fișierele în Windows-1250 sunt decodate, iar diacriticele românești sunt corectate (ş→ș, ţ→ț).
-- Subtitrările încorporate ajung la player pe bucăți de 60 de secunde, în jurul poziției din film:
-  - la remux sau transcodare, aceeași comandă ffmpeg care face streamul le scrie și pe ele, fără o citire în plus a fișierului;
-  - la redare directă (sau pentru porțiuni convertite înainte), serverul sare la poziția respectivă și citește doar acea fereastră, una singură odată; ferestrele pe lângă care s-a trecut cu seek sunt anulate.
-  - Bucățile citite rămân în `data/cache/subtitles/chunks`.
-- Subtitrările de tip imagine (PGS, VobSub) nu pot fi afișate.
+- External subtitles (`.srt`, `.vtt`, `.ass`, `.ssa`) next to the video file are found automatically, as are those embedded in the file.
+- All of them are converted to WebVTT. Windows-1250 files are decoded, and Romanian diacritics are fixed (ş→ș, ţ→ț).
+- Embedded subtitles reach the player in 60-second chunks around the current position:
+  - during remux or transcode, the same ffmpeg command that produces the stream writes them too, with no extra read of the file;
+  - during direct play (or for parts converted earlier), the server jumps to that position and reads only that window, one at a time; windows skipped by seeking are cancelled.
+  - Chunks that have been read stay in `data/cache/subtitles/chunks`.
+- Image-based subtitles (PGS, VobSub) cannot be shown.
 
-## Interfața TV
+## TV interface
 
-Kinora include o interfață dedicată televizoarelor (D-pad / 10-foot) în `apps/tv`.
+Kinora includes a UI built for TVs (D-pad / 10-foot) in `apps/tv`. The architecture and the plan for the Samsung Tizen, LG webOS and Android TV apps are in [docs/smart-tv.md](docs/smart-tv.md).
 
-### Din browser (dezvoltare)
+### In a browser (development)
 
 ```bash
 pnpm dev
@@ -114,76 +117,85 @@ pnpm dev
 - Desktop UI: <http://localhost:5173>
 - API: <http://127.0.0.1:3001>
 
-Pe un televizor sau cu tastatura ca telecomandă: săgeți pentru navigare, Enter pentru selectare, Backspace/Escape pentru înapoi. În player: Enter/Space pauză, ←/→ seek ±10s.
+On a TV, or with a keyboard as the remote: arrows to move, Enter to select, Backspace/Escape to go back. In the player: Enter/Space to pause, ←/→ to seek ±10 s.
 
-### Din rețeaua locală (producție)
+### On the local network (production)
 
-1. În **Setări** (interfața web), setează o cheie de acces și leagă serverul de `0.0.0.0` (sau IP-ul PC-ului), apoi repornește.
-2. Construiește ambele interfețe și pornește serverul:
+1. In **Settings** (web UI), set an access key and bind the server to `0.0.0.0` (or the PC's IP), then restart.
+2. Build both UIs and start the server:
 
 ```bash
 pnpm build
 pnpm start
 ```
 
-3. Pe televizor sau telefon deschide `http://<ip-pc>:3001/tv/`.
+3. On the TV or a phone, open `http://<pc-ip>:3001/tv/`.
 
-Aceeași origine ca API-ul permite redarea directă a fișierelor (cookie de sesiune). Shell-urile Tizen/webOS din `apps/tv/tizen` și `apps/tv/webos` sunt ambalaje subțiri care cer adresa serverului și deschid `/tv/`.
+Sharing the API's origin lets files play directly (session cookie). The Tizen/webOS wrappers in `apps/tv/tizen` and `apps/tv/webos` are thin shells that ask for the server address and open `/tv/`.
 
-#### Sideload pe Samsung Tizen
+#### Sideloading on Samsung Tizen
 
-1. Activează Developer Mode pe TV și notează IP-ul.
-2. În Tizen Studio, importă `apps/tv/tizen` și conectează televizorul.
-3. Rulează / instalează pachetul pe dispozitiv.
-4. La prima deschidere introdu `http://<ip-pc>:3001`.
+1. Enable Developer Mode on the TV and note its IP.
+2. In Tizen Studio, import `apps/tv/tizen` and connect the TV.
+3. Run / install the package on the device.
+4. On first launch, enter `http://<pc-ip>:3001`.
 
-#### Sideload pe LG webOS
+#### Sideloading on LG webOS
 
-1. Activează Developer Mode și instalează [webOS CLI](https://webostv.developer.lge.com/).
-2. Empachetează folderul `apps/tv/webos` (`ares-package apps/tv/webos`).
-3. Instalează IPK-ul pe TV (`ares-install`).
-4. La prima deschidere introdu adresa Kinora.
+1. Enable Developer Mode and install the [webOS CLI](https://webostv.developer.lge.com/).
+2. Package the `apps/tv/webos` folder (`ares-package apps/tv/webos`).
+3. Install the IPK on the TV (`ares-install`).
+4. On first launch, enter the Kinora address.
 
-### Checklist rapid (tastatură ca telecomandă)
+### Quick checklist (keyboard as remote)
 
-- [ ] Deschide `/tv/`, autentifică-te dacă e nevoie de cheie
-- [ ] Navighează Acasă → Filme / Seriale cu săgețile
-- [ ] Deschide un titlu, apasă Redă
-- [ ] Pauză cu Enter, seek cu săgeți, ieșire cu Escape
-- [ ] Progresul apare la „Continuă vizionarea” după ce te întorci
+- [ ] Open `/tv/` and sign in if a key is required
+- [ ] Move from Home to Movies / Series with the arrows
+- [ ] Open a title and press Play
+- [ ] Pause with Enter, seek with the arrows, leave with Escape
+- [ ] Progress shows under "Continue watching" when you return
 
-## Structura proiectului
+## Project structure
 
 ```
-apps/server     API Fastify, scanare, metadate, streaming (TypeScript, tsx)
-  drizzle/      migrațiile bazei de date (generate)
-  src/db/       schema Drizzle și rularea migrațiilor
-  src/playback/ plan de redare, HLS, subtitrări, cache
-apps/web        interfața React (Vite)
-apps/tv         interfața TV (Vite) + shell-uri Tizen/webOS
-packages/shared tipurile comune ale API-ului
-data/           baza SQLite și cache-urile (nu intră în git)
+apps/server       Fastify API, scanning, metadata, streaming (TypeScript, tsx)
+  drizzle/        database migrations (generated)
+  src/db/         Drizzle schema and migration runner
+  src/livetv/     Live TV: channels, schedule, IPTV, relay
+  src/playback/   playback plan, HLS, subtitles, cache
+apps/web          React UI (Vite)
+apps/tv           TV UI (Vite) + Tizen/webOS shells
+packages/shared   API types shared by server and clients
+packages/client   client code shared by the web and TV UIs (API, player, i18n, Live TV helpers)
+packages/media-ui shared React media components (music visualizer, music video loop)
+docs/             design notes and implementation plans
+data/             SQLite database and caches (not in git)
 ```
 
-## Baza de date
+## Database
 
-Datele stau în `data/kinora.db` (SQLite, mod WAL). Schema este definită în [apps/server/src/db/schema.ts](apps/server/src/db/schema.ts), iar migrațiile se aplică automat la pornire. Bazele create înainte de migrații sunt preluate de la versiunea de bază.
+Data lives in `data/kinora.db` (SQLite, WAL mode). The schema is defined in [apps/server/src/db/schema.ts](apps/server/src/db/schema.ts), and migrations are applied automatically at startup. Databases created before migrations existed are adopted at the baseline version.
 
-Pentru a modifica schema:
+To change the schema:
 
 ```bash
-# 1. editează apps/server/src/db/schema.ts
-pnpm --filter @kinora/server db:generate --name descriere_scurta
-# 2. verifică SQL-ul generat în apps/server/drizzle/ și pune-l în același commit
+# 1. edit apps/server/src/db/schema.ts
+pnpm --filter @kinora/server db:generate --name short_description
+# 2. review the generated SQL in apps/server/drizzle/ and commit it together with the change
 ```
 
-Cheile străine sunt active. Ștergerea unei biblioteci șterge în cascadă titlurile, fișierele, subtitrările și progresul de vizionare. Migrațiile rulează cu verificarea cheilor oprită și se termină cu `PRAGMA foreign_key_check`.
+Foreign keys are enforced. Deleting a library cascades to its titles, files, subtitles and watch progress. Migrations run with foreign key checks off and end with `PRAGMA foreign_key_check`.
 
-## Teste
+## Tests
 
 ```bash
-pnpm test        # testele serverului (node:test)
-pnpm typecheck   # server și interfață
+pnpm test        # server tests (node:test)
+pnpm typecheck   # server and UIs
 ```
 
-Testele care pornesc ffmpeg sunt sărite automat dacă ffmpeg lipsește. Un fișier de test nou trebuie adăugat în scriptul `test` din [apps/server/package.json](apps/server/package.json).
+Tests that start ffmpeg are skipped automatically when ffmpeg is missing. A new test file must be added to the `test` script in [apps/server/package.json](apps/server/package.json).
+
+## Documentation
+
+- [docs/smart-tv.md](docs/smart-tv.md): Smart TV apps (Tizen, webOS, Android TV), architecture and phased plan
+- [docs/live-tv-plan.md](docs/live-tv-plan.md): Live TV (virtual channels, IPTV, EPG), plan and implementation notes

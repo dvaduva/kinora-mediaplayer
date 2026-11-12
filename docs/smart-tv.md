@@ -1,0 +1,172 @@
+# Smart TV apps — architecture and implementation plan
+
+Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
+
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). `apps/tv/tizen` and `apps/tv/webos` are thin wrappers that ask for the server address and redirect to `<server>/tv/`. There is no Android TV app yet.
+
+## Client–server or standalone?
+
+### Why not a standalone TV app
+
+| What Kinora does | Can it run on the TV? |
+|---|---|
+| Scan libraries on local disks and NAS shares | **No** on Tizen/webOS: web apps have no file system or SMB access. Possible on Android TV, but awkward. |
+| Remux and transcode with ffmpeg | **No.** There is no ffmpeg and the CPU is too weak. A file the TV cannot decode simply does not play. |
+| TMDB metadata, subtitle cache, EPG and IPTV relay | In theory, but storage is small and it would be written three times (Tizen JS, webOS JS, Android Kotlin). |
+| Watch progress shared between TV, desktop and phone | **No**, not without a central server. |
+
+A standalone app would be a Kodi rewritten three times, and it still could not run on Tizen or webOS. Its one real advantage is not depending on a PC being on.
+
+**Decision:** the Kinora server stays the source of truth (library, metadata, progress, transcoding). TV apps are clients. They are *smart* clients: they report what they can decode, use the platform's native player where it helps, and ask for transcoding only as a fallback.
+
+### Risks of the client–server model, and what the code shows today
+
+1. **The server is a single point of failure.** With the PC off, the TV can do nothing. Worse, the Tizen wrapper redirects straight to the saved address ([apps/tv/tizen/index.html](../apps/tv/tizen/index.html)); if the server is down or its IP changed, the user is stuck on an error page with no way to change the address.
+2. **Playback decisions are made for a browser, not a TV.** [plan.ts](../apps/server/src/playback/plan.ts) plays only H.264/VP9 in MP4/WebM directly and remuxes or transcodes everything else. TVs decode HEVC, AC-3/E-AC-3, MKV, 4K and HDR in hardware. The server burns CPU for nothing and the TV gets worse quality (HDR lost, 5.1 folded to stereo AAC). This is the biggest gap: there are no client capability profiles.
+3. **Only one transcode runs at a time.** Two TVs that both need a transcode stop each other. Direct play on capable TVs is the main fix; hardware encoding helps the rest.
+4. **Remote keys are only partly handled.** There is no `tizen.tvinputdevice.registerKey` and no handling of the Back key codes (10009 on Tizen, 461 on webOS). Media keys (Play/Pause/FF/RW) do not work, and Back may close the app.
+5. **The UI is loaded from the server.** The wrapper does `location.replace(<server>/tv/)`. Updates ship with the server, but there is no offline screen, the wrapper and server versions can drift apart, and Samsung and LG stores generally reject thin wrappers around remote web pages.
+6. **Setup is painful.** The user types `http://192.168.x.x:3001` with a remote. There is no discovery or pairing.
+7. **LAN only, plain HTTP, one shared key.** Remote access would need HTTPS, a tunnel or reverse proxy, and per-device credentials.
+
+## Decisions
+
+| Topic | Decision |
+|---|---|
+| Architecture | Kinora server + smart TV clients; no standalone app |
+| Distribution | Sideload (Developer Mode) now; public stores in a later phase. Nothing in the design may block store builds |
+| Platforms | Tizen, webOS and Android TV, all three tested on real devices. Fire TV comes with the Android TV app |
+| Platform order | Shared foundation → Tizen → webOS → Android TV |
+| Network | LAN only for now. Remote access is a separate later phase, with Tailscale as the recommended route |
+| Playback | Per-device capability profile as the shared foundation; then native players per platform (AVPlay on Tizen, ExoPlayer/Media3 on Android TV) |
+| Who decides the playback mode | The server. The client sends its profile (stored on the device token); the server returns `direct` / `remux` / `transcode` with a reason. The desktop web UI uses a `browser` profile that behaves exactly like today |
+| Capability detection | Runtime detection (`MediaSource.isTypeSupported`, `canPlayType`, platform APIs, Android codec queries) + static per-platform overrides (TVs sometimes report support they lack, e.g. DTS with no sound) + per-device switches in Settings (force transcode, resolution and bitrate cap) |
+| Transcode fallback | Still H.264, but audio keeps 5.1 (AC-3/E-AC-3) when the TV supports it. Hardware encoding is its own later phase |
+| Subtitles | Text subtitles are rendered by Kinora over the video on every platform (timing from `@kinora/client`), so look and settings are the same everywhere. PGS/VobSub burned in during transcode, later phase |
+| UI delivery | Hybrid: a bundled shell (connect, discovery, pairing, server switch, offline screen, version check) loads the UI from the server once `/api/health` reports a compatible `apiVersion`. The UI must stay buildable as a fully bundled app for the store phase |
+| Discovery | Automatic where possible, manual IP as fallback, a list of known servers, and a "Change server" screen that is always reachable. Android: mDNS (`_kinora._tcp`) via NSD. Tizen/webOS: no mDNS in web apps, so the shell reads the TV's IP (`webapis.network.getIp()` on Tizen, Luna `connectionmanager` on webOS) and scans the /24 subnet for `/api/health` (short timeout, parallel requests, ~2–4 s), trying the last known port first |
+| Pairing | The TV requests a code (`POST /api/pair`) and shows a 6-character code plus a QR code for `http://<server>/pair?code=…`. The user approves it in the web UI or on a phone, while signed in. The TV polls and receives a device token. Codes expire after 5 minutes. Typing the access key stays as a fallback |
+| Authentication | One token per device, with a device list in Settings (name, platform, last seen, revoke). The shared access key stays as a fallback |
+| Android TV technology | A thin Kotlin app: a WebView loads the same `/tv/` UI, and a JS↔native bridge hands playback to ExoPlayer/Media3. One UI for every platform; a fully native app (Compose for TV) stays an option if the WebView proves slow on weak devices |
+| Server availability | Document running the server as a service (Windows service, systemd) now. Docker for NAS and Wake-on-LAN in a later phase |
+| UI language | Auto-detected from `navigator.language` (Romanian for `ro-*`, otherwise English), with the manual choice saved as today. The shells use the same dictionary |
+| Repo layout | See below |
+| Build and CI | `pnpm tv:package:tizen`, `pnpm tv:package:webos`, `pnpm tv:package:android`. GitHub Actions builds the APK and IPK on tags; Tizen stays local because the Samsung certificate is tied to the account and device |
+
+### Repo layout
+
+```
+apps/tv/            TV UI (as today) + player adapter (html5 | avplay | exoplayer-bridge)
+apps/tv-shell/      shared shell (TS/Vite): connect, discovery, pairing, offline screen, version check
+apps/tv/tizen/      config.xml + the built shell
+apps/tv/webos/      appinfo.json + the built shell
+apps/android-tv/    Gradle project (Kotlin): WebView + ExoPlayer bridge + NSD
+```
+
+The shell is written once and copied into each package at build time. The Tizen author certificate never goes into git.
+
+### Out of scope for now
+
+Remote access, store submissions, a fully native UI per platform, DVR.
+
+## Phase 0 — Shared foundation
+
+**Goal:** a TV finds the server, pairs without typing an IP, and recovers when the server goes away.
+
+### Server
+- Device tokens: `devices` table (`id`, `name`, `platform`, `token_hash`, `capabilities_json`, `overrides_json`, `created_at`, `last_seen_at`, `revoked_at`). The auth middleware accepts a device token alongside the shared key.
+- Pairing: `POST /api/pair` (creates a code, 5-minute expiry), `GET /api/pair/:code` (TV polls), `POST /api/pair/:code/approve` (signed-in user). A `/pair` page in the web UI with code entry, opened directly from the QR code.
+- `GET /api/health` without auth: `{ name: "kinora", apiVersion, serverVersion }`, nothing sensitive.
+- mDNS announcement `_kinora._tcp` with the port and `apiVersion`.
+- **Settings → Devices:** list, rename, revoke.
+- Docs: running the server as a Windows service and as a systemd unit.
+
+### Shell (`apps/tv-shell`)
+- Known servers list; on start, check the last server's `/api/health` with a timeout instead of redirecting blindly.
+- Discovery: subnet scan on Tizen/webOS, manual IP entry, "Change server" always reachable (including from the offline screen).
+- Pairing screen with code and QR.
+- Version check: incompatible `apiVersion` gives a clear message (update the server or the app).
+- Offline / reconnecting screen with retry.
+- Built into `apps/tv/tizen` and `apps/tv/webos`; replaces today's `index.html` wrappers.
+
+### TV UI (`apps/tv`)
+- Remote keys: Back (10009 Tizen, 461 webOS, Escape/Backspace in a browser) goes back, and exits only from Home with a confirmation; media keys registered (`tizen.tvinputdevice.registerKey`) and mapped to play, pause, seek and stop.
+- i18n: auto-detect ro/en; move any remaining hard-coded strings into the dictionary.
+
+### Done when
+- A fresh TV finds the server on the LAN without typing an IP, pairs by code or QR, and appears in Settings → Devices.
+- Revoking a device sends it back to pairing.
+- With the server stopped, the TV shows the offline screen and lets you change the server; it reconnects on its own when the server is back.
+- Back and media keys work on Tizen and webOS.
+- `pnpm test` and `pnpm typecheck` pass.
+
+## Phase 1 — Capability profiles
+
+**Goal:** a TV plays directly every file it can decode, and the desktop does not change.
+
+- Profile type in `packages/shared`: containers, video codecs with profile/level/bit depth, HDR formats, audio codecs with channel counts, max resolution and bitrate, subtitle handling.
+- Runtime detection in `apps/tv`, sent at pairing and refreshed at startup; static per-platform overrides; per-device switches in Settings → Devices (force transcode, resolution cap, bitrate cap).
+- [plan.ts](../apps/server/src/playback/plan.ts) takes a profile. The `browser` profile reproduces today's rules exactly. Tests for both.
+- Transcode fallback keeps 5.1 when the profile allows AC-3/E-AC-3.
+- Player adapter interface in `apps/tv` (load, play, pause, seek, audio tracks, events); `html5` implementation first, wrapping the current player.
+
+### Done when
+- An MKV with HEVC + E-AC-3 plays directly on a TV that supports it.
+- The desktop web UI makes the same decisions as before (covered by tests).
+- Forcing transcode for a device in Settings takes effect on the next play.
+
+## Phase 2 — Tizen
+
+- AVPlay adapter (`webapis.avplay`): MKV, HEVC, HDR, audio track selection; subtitles rendered by Kinora.
+- Tizen-specific profile overrides.
+- `pnpm tv:package:tizen` (Tizen CLI, local author certificate).
+- `docs/tv/tizen.md`: Developer Mode, certificates, install, debugging (remote inspector), known model quirks.
+
+### Done when
+The test checklist below passes on a Samsung TV, media keys included.
+
+## Phase 3 — webOS
+
+- webOS adapter: the native `<video>` pipeline (wider codec support than a desktop browser), Luna `connectionmanager` for the TV's IP.
+- webOS-specific profile overrides.
+- `pnpm tv:package:webos` (`ares-package`).
+- `docs/tv/webos.md`: Developer Mode (and its expiry), `ares-setup-device`, install, `ares-inspect`.
+
+### Done when
+The same checklist passes on an LG TV.
+
+## Phase 4 — Android TV / Fire TV
+
+- `apps/android-tv`: Kotlin app, WebView with the shell and `/tv/`, JS↔native bridge to ExoPlayer/Media3 (exposed to the UI as the `exoplayer-bridge` adapter), discovery via NSD, Leanback launcher banner, Back and media keys forwarded to the UI.
+- Codec detection through `MediaCodecList` for the profile.
+- `pnpm tv:package:android` (Gradle, debug or signed APK).
+- `docs/tv/android-tv.md`: building, sideloading with `adb`, Fire TV notes.
+
+### Done when
+The same checklist passes on an Android TV device, and the APK starts on a Fire TV.
+
+## Phase 5 — CI and releases
+
+- GitHub Actions: build the APK and webOS IPK on tags, attach them to the release.
+- One version number shared by the server, the shell and the apps; `apiVersion` bumped only on breaking API changes.
+
+## Later phases
+
+Each needs its own round of decisions before it starts.
+
+- **Always-on server:** Docker image for NAS, Wake-on-LAN sent from the TV app.
+- **Server performance:** hardware encoding chosen from Settings with detection (today only `KINORA_VIDEO_ENCODER`), more than one concurrent transcode, HDR tone mapping, PGS/VobSub burned in.
+- **Remote access:** Tailscale first, then HTTPS behind a reverse proxy; adaptive bitrate.
+- **Stores:** fully bundled UI, privacy policy, Samsung / LG / Google Play review requirements.
+
+## Test checklist (per platform)
+
+- [ ] Fresh install finds the server (or accepts a manual IP) and pairs by code or QR
+- [ ] Home → Movies / Series with the D-pad; Back returns to the previous screen
+- [ ] Open a title and play it; pause, seek and stop with both the D-pad and media keys
+- [ ] An H.264 MP4 and an HEVC MKV with 5.1 audio both play; Settings → Devices shows which mode was used
+- [ ] Text subtitles show and follow the subtitle settings
+- [ ] Progress appears under "Continue watching" after returning
+- [ ] Live TV: open a channel, zap up and down
+- [ ] Stop the server: the offline screen appears; start it again: the app reconnects
+- [ ] Revoke the device: the app returns to pairing
