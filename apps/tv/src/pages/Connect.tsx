@@ -3,12 +3,14 @@ import type { AppSetup, HomeView } from "@kinora/shared";
 import { api, createSession, setConnection } from "../api";
 import { Focusable } from "../components/Focusable";
 import { loadConnection, normalizeBaseUrl, saveConnection } from "../connection";
+import { useLocale } from "../i18n";
 
 type Props = {
   onConnected: () => void;
 };
 
 export function ConnectPage(props: Props) {
+  const { t } = useLocale();
   const saved = loadConnection();
   const [baseUrl, setBaseUrl] = useState(saved.baseUrl);
   const [token, setToken] = useState(saved.token);
@@ -35,11 +37,7 @@ export function ConnectPage(props: Props) {
       props.onConnected();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "failed";
-      setError(
-        message === "unauthorized" || message === "token_required"
-          ? "Cheia de acces este greșită sau lipsește."
-          : "Nu pot contacta serverul. Verifică adresa și că Kinora ascultă în rețea.",
-      );
+      setError(message === "unauthorized" || message === "token_required" ? t.errWrongKey : t.errUnreachable);
     } finally {
       setBusy(false);
     }
@@ -49,14 +47,11 @@ export function ConnectPage(props: Props) {
     <div className="connect">
       <div className="connect-card">
         <p className="eyebrow">Kinora TV</p>
-        <h1>Conectează televizorul</h1>
-        <p className="lede">
-          Lasă adresa goală când deschizi <code>/tv</code> de pe același server. Altfel introdu IP-ul Kinora din rețeaua
-          ta locală.
-        </p>
+        <h1>{t.connectTitle}</h1>
+        <p className="lede">{t.connectLede}</p>
         <form className="connect-form" onSubmit={submit}>
           <label>
-            Adresa serverului
+            {t.serverAddress}
             <input
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
@@ -66,11 +61,11 @@ export function ConnectPage(props: Props) {
             />
           </label>
           <label>
-            Cheie de acces
+            {t.accessKey}
             <input
               value={token}
               onChange={(event) => setToken(event.target.value)}
-              placeholder="opțional dacă nu e configurată"
+              placeholder={t.accessKeyPlaceholder}
               autoComplete="off"
               spellCheck={false}
             />
@@ -78,7 +73,7 @@ export function ConnectPage(props: Props) {
           {error ? <p className="error">{error}</p> : null}
           <Focusable className="connect-submit" focusOnMount onEnterPress={() => void submit()}>
             <button type="submit" disabled={busy}>
-              {busy ? "Se conectează…" : "Conectează"}
+              {busy ? t.connecting : t.connect}
             </button>
           </Focusable>
         </form>

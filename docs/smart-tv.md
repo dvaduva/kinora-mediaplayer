@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). `apps/tv/tizen` and `apps/tv/webos` are thin wrappers that ask for the server address and redirect to `<server>/tv/`. There is no Android TV app yet.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phase 0 is implemented: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
 
 ## Client–server or standalone?
 
@@ -92,6 +92,22 @@ Remote access, store submissions, a fully native UI per platform, DVR.
 ### TV UI (`apps/tv`)
 - Remote keys: Back (10009 Tizen, 461 webOS, Escape/Backspace in a browser) goes back, and exits only from Home with a confirmation; media keys registered (`tizen.tvinputdevice.registerKey`) and mapped to play, pause, seek and stop.
 - i18n: auto-detect ro/en; move any remaining hard-coded strings into the dictionary.
+
+### How it was built
+
+Status: implemented, verified with tests and in a desktop browser; not yet run on a Samsung or LG TV.
+
+- **The UI runs in a frame inside the shell**, not through `location.replace`. The shell page stays on top, so it keeps the platform APIs (key registration, the TV's IP, exit), can put the offline screen over the UI, and "Change server" is always one step away. The UI loads as `<server>/tv/#shell=1&token=…` and talks to the shell with `postMessage` (`ready`, `exit`, `unauthorized`, `change-server`; see `ShellMessage` in `packages/shared`).
+- **Tokens.** The hash carries the token, so it never appears in a request line. Elements that cannot send headers (`<video>`, `<img>`, `<track>`) get `?token=` instead (`mediaUrl` in `@kinora/client`), because cookies may not reach a server framed by a `file://` page. The server reads the query token only on GET/HEAD.
+- **Pairing.** `POST /api/pair` also returns a `secret`; `GET /api/pair/:code?secret=…` needs it, and the token is handed out once. Someone who reads the code off the screen can approve it but cannot collect the token. `GET /api/pair/:code/info` (signed in) tells the approval page which device is asking. Codes live in memory: after a server restart the TV simply asks for a new one.
+- **Heartbeat.** While the UI is shown, the shell calls `GET /api/devices/me` every 10 s: a network error twice in a row shows the offline screen (which probes every 5 s and reconnects by itself), a `401` returns to pairing. A revoked or unknown device token gets `401` even on a server without an access key.
+- **What a device token may do.** Browse, play, report progress and match titles. Not: Settings writes, libraries, folders, caches, other devices, pairing approvals (`isDeviceForbidden` in `security.ts`).
+- **Cross-origin.** Only `/api/health`, `POST /api/pair`, `GET /api/pair/:code` and `GET /api/devices/me` answer any origin (`Access-Control-Allow-Origin: *`, no cookies). Requests with a `Bearer` header skip the origin check, since a browser never adds that header on its own.
+- **Shell build.** One classic IIFE script targeting ES2015/Chromium 53 (esbuild), because `file://` pages cannot load module scripts and webOS 4 / Tizen 4 predate ES2017. Network calls use `XMLHttpRequest` for hard timeouts without `AbortController`. Generated files in `apps/tv/tizen` and `apps/tv/webos` are not in git (`pnpm tv:shell`).
+- **Manifests.** Tizen `config.xml` gains `<access origin="*">`, `allow-navigation` and the `network.public` / `productinfo` privileges; webOS `appinfo.json` sets `disableBackHistoryAPI` so Back reaches the app.
+- **Keys.** `apps/tv/src/remote.ts` maps key codes and names to actions (back, play, pause, play/pause, stop, rewind, fast-forward, channel up/down). The shell registers the Tizen media and channel keys; webOS sends them without registration. Back on a page without in-app history goes Home instead of leaving.
+- **Language.** With no saved choice, every UI and the shell follow `navigator.language` (`detectLocale` in `packages/shared`); the shell's strings are in `@kinora/client/shell-copy`.
+- **Browser floor.** The TV UI builds for Chromium 68 (`build.target` in `apps/tv/vite.config.ts`): webOS 5 and Tizen 5.5 or newer. Vite lowers syntax only, so the UI and `@kinora/client` must not call runtime APIs newer than that (`flatMap`, `Object.fromEntries`, `replaceAll`, `.at()`…) without a fallback; the dependencies' newer calls are feature-detected or on code paths the TV does not use. Older TVs (webOS 4, Tizen 4) would need a legacy, non-module build; the shell already runs there.
 
 ### Done when
 - A fresh TV finds the server on the LAN without typing an IP, pairs by code or QR, and appears in Settings → Devices.

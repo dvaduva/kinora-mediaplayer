@@ -10,6 +10,7 @@ import { onScanFinished, restartWatches, startScan } from "./scan.js";
 import { prepareUpcoming, repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
 import { refreshDueSources } from "./livetv/iptv.js";
 import { clearRelayCache, stopAllRelays, sweepRelays } from "./livetv/relay.js";
+import { announce, stopAnnouncing } from "./mdns.js";
 import { getSetting, isLocalHost, seedMetadataLanguage, seedProfile, transcodeCacheGb } from "./settings.js";
 
 // Windows often tries IPv6 first; TMDB connects hang until undici's default 10s timeout.
@@ -39,6 +40,7 @@ if (!isLocalHost(host) && !getSetting("accessToken")) {
 const port = Number(process.env.PORT ?? 3001);
 const app = await buildApp({ bindHost: host });
 await app.listen({ host, port });
+announce({ bindHost: host, port, log: (message) => app.log.warn(message) });
 // Live TV keeps 72h of program ahead; the job also replaces programs whose files went away.
 const runLiveTvJob = () => {
   try {
@@ -67,6 +69,7 @@ setInterval(() => {
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     stopAllRelays();
+    stopAnnouncing();
     process.exit(0);
   });
 }

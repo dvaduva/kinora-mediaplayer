@@ -71,6 +71,13 @@
       "when": 1794159636478,
       "tag": "0009_workable_sunset_bain",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794485597544,
+      "tag": "0010_devices",
+      "breakpoints": true
     }
   ]
 }

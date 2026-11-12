@@ -1,8 +1,10 @@
 import { FocusContext, setFocus, useFocusable } from "@noriginmedia/norigin-spatial-navigation";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Focusable } from "./Focusable";
+import { ExitDialog } from "./ExitDialog";
 import { useLocale } from "../i18n";
+import { remoteAction } from "../remote";
 
 const NAV = [
   { to: "/", labelKey: "home", key: "nav-home" },
@@ -28,20 +30,25 @@ export function Shell() {
     trackChildren: true,
   });
 
+  const [exitOpen, setExitOpen] = useState(false);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" && event.key !== "Backspace") return;
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-      if (location.pathname.startsWith("/play/") || location.pathname.startsWith("/live/")) return;
+      if (exitOpen || remoteAction(event) !== "back") return;
+      event.preventDefault();
       if (location.pathname !== "/") {
-        event.preventDefault();
-        navigate(-1);
+        // A page opened directly (no history inside the app) goes Home instead of leaving the app.
+        const index = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+        if (index > 0) navigate(-1);
+        else navigate("/", { replace: true });
+        return;
       }
+      // Back on Home is the only way out, and it asks first.
+      setExitOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [location.pathname, navigate]);
+  }, [location.pathname, navigate, exitOpen]);
 
   return (
     <FocusContext.Provider value={focusKey}>
@@ -73,6 +80,7 @@ export function Shell() {
         <main className="main">
           <Outlet />
         </main>
+        {exitOpen ? <ExitDialog onClose={() => setExitOpen(false)} /> : null}
       </div>
     </FocusContext.Provider>
   );

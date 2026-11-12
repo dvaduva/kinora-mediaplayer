@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Focusable } from "../components/Focusable";
 import { clearConnection, loadConnection } from "../connection";
 import { setConnection } from "../api";
+import { inShell, notifyShell } from "../host";
 import { useLocale } from "../i18n";
 
 type Props = {
@@ -12,6 +13,7 @@ export function SettingsPage(props: Props) {
   const { t, toggle, locale } = useLocale();
   const navigate = useNavigate();
   const connection = loadConnection();
+  const shell = inShell();
 
   return (
     <div className="page settings-page">
@@ -28,15 +30,17 @@ export function SettingsPage(props: Props) {
             className="btn"
             focusKey="settings-disconnect"
             onEnterPress={() => {
+              // In the TV shell the device keeps its pairing; the shell shows the server list.
+              if (notifyShell("change-server")) return;
               clearConnection();
               setConnection({ baseUrl: "", token: "" });
               props.onDisconnect();
             }}
           >
-            {t.disconnect}
+            {shell ? t.changeServer : t.disconnect}
           </Focusable>
         </div>
-        <p className="hint">{t.disconnectHelp}</p>
+        <p className="hint">{shell ? t.changeServerHelp : t.disconnectHelp}</p>
       </section>
 
       <section className="settings-block">

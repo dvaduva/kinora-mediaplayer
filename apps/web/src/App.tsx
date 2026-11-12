@@ -13,6 +13,7 @@ import { PlayerPage } from "./pages/Player";
 import { LiveTvPage } from "./pages/LiveTv";
 import { LivePlayerPage } from "./pages/LivePlayer";
 import { SettingsPage } from "./pages/Settings";
+import { PairPage } from "./pages/Pair";
 import { Icon, Mark } from "./ui";
 
 export function App() {
@@ -303,6 +304,7 @@ function Shell(props: { ffprobe: boolean }) {
           <Route path="/identify" element={<IdentifyPage />} />
           <Route path="/settings/:section?" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />
+          <Route path="/pair" element={<PairPage />} />
         </Routes>
       </main>
     </div>

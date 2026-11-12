@@ -5,6 +5,8 @@ import { api, createSession, setConnection, setUnauthorized } from "./api";
 import { AudioProvider } from "./audio";
 import { Shell } from "./components/Shell";
 import { loadConnection, saveConnection } from "./connection";
+import { inShell, notifyShell, readShellLaunch } from "./host";
+import { registerRemoteKeys } from "./remote";
 import { LocaleProvider } from "./i18n";
 import { ConnectPage } from "./pages/Connect";
 import { MovieDetailPage, SeriesDetailPage } from "./pages/Detail";
@@ -27,12 +29,18 @@ export function App() {
 
   useEffect(() => {
     ensureSpatial();
-    setUnauthorized(() => setConnected(false));
+    registerRemoteKeys();
+    // Inside the TV shell, pairing and the server list belong to the shell: a revoked token sends it back there.
+    setUnauthorized(() => {
+      if (!notifyShell("unauthorized")) setConnected(false);
+    });
     void bootstrap().finally(() => setChecking(false));
   }, []);
 
   async function bootstrap() {
-    const saved = loadConnection();
+    const launch = readShellLaunch();
+    // The shell hands over the device token on every launch; it lives on this origin only as long as the shell says so.
+    const saved = launch.token ? { baseUrl: "", token: launch.token } : loadConnection();
     setConnection(saved);
     try {
       const setup = await api<AppSetup>("/api/setup");
@@ -47,7 +55,9 @@ export function App() {
       await api<HomeView>("/api/home");
       saveConnection(saved);
       setConnected(true);
-    } catch {
+      notifyShell("ready");
+    } catch (reason) {
+      if (reason instanceof Error && reason.message === "unauthorized") notifyShell("unauthorized");
       setConnected(false);
     } finally {
       setReady(true);
@@ -65,7 +75,13 @@ export function App() {
   return (
     <LocaleProvider>
       {!connected ? (
-        <ConnectPage onConnected={() => setConnected(true)} />
+        inShell() ? (
+          <div className="boot">
+            <p>Kinora TV</p>
+          </div>
+        ) : (
+          <ConnectPage onConnected={() => setConnected(true)} />
+        )
       ) : (
         <BrowserRouter basename="/tv">
           <AudioProvider>

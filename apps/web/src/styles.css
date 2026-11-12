@@ -1775,3 +1775,16 @@ a.rating-chip:hover strong { color: var(--brass); }
 .iptv-public .field-help { margin: 0; }
 .iptv-public-buttons { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .iptv-public-added { color: var(--faint); font-size: 14px; }
+
+.pair-page { display: grid; gap: 18px; max-width: 560px; }
+.pair-page h1 { font-size: 32px; }
+.pair-page > p { margin: 0; }
+.pair-code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 28px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+.device-rename { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.device-rename .field { flex: 1 1 240px; }
+.device-rename .play { padding: 10px 22px; }

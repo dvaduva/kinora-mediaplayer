@@ -8,5 +8,8 @@
   "icon": "icon.png",
   "largeIcon": "icon.png",
   "resolution": "1920x1080",
-  "requiredPermissions": ["network.client"]
+  "requiredPermissions": [
+    "network.client"
+  ],
+  "disableBackHistoryAPI": true
 }

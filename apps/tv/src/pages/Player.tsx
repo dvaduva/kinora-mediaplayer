@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import { Focusable } from "../components/Focusable";
 import { useLocale } from "../i18n";
+import { remoteAction } from "../remote";
 import {
   attachHls,
   formatClock,
@@ -143,6 +144,14 @@ export function PlayerPage() {
     showChrome();
   }
 
+  function setPlaying(playing: boolean) {
+    const media = videoRef.current;
+    if (!media) return;
+    if (playing) void media.play().catch(() => undefined);
+    else media.pause();
+    showChrome();
+  }
+
   function seekBy(delta: number) {
     const media = videoRef.current;
     if (!media || !Number.isFinite(media.duration)) return;
@@ -169,13 +178,31 @@ export function PlayerPage() {
   useEffect(() => {
     showChrome();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "Backspace") {
+      const action = remoteAction(event);
+      if (action === "back") {
         event.preventDefault();
         if (subsOpen) {
           setSubsOpen(false);
           return;
         }
         leave();
+        return;
+      }
+      if (action === "stop") {
+        event.preventDefault();
+        leave();
+        return;
+      }
+      // Media keys work even with the subtitle panel open; arrows and Enter belong to the panel then.
+      if (action === "play" || action === "pause" || action === "playPause") {
+        event.preventDefault();
+        if (action === "playPause") togglePlay();
+        else setPlaying(action === "play");
+        return;
+      }
+      if (action === "rewind" || action === "fastForward") {
+        event.preventDefault();
+        seekBy(action === "rewind" ? -SEEK_STEP : SEEK_STEP);
         return;
       }
       if (subsOpen) return;
@@ -185,17 +212,17 @@ export function PlayerPage() {
         showChrome();
         return;
       }
-      if (event.key === "Enter" || event.key === " " || event.key === "MediaPlayPause" || event.key === "k") {
+      if (event.key === "Enter" || event.key === " " || event.key === "k") {
         event.preventDefault();
         togglePlay();
         return;
       }
-      if (event.key === "ArrowLeft" || event.key === "MediaRewind") {
+      if (event.key === "ArrowLeft") {
         event.preventDefault();
         seekBy(-SEEK_STEP);
         return;
       }
-      if (event.key === "ArrowRight" || event.key === "MediaFastForward") {
+      if (event.key === "ArrowRight") {
         event.preventDefault();
         seekBy(SEEK_STEP);
       }

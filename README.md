@@ -77,6 +77,7 @@ Most settings are made on the **Settings** page and stored in the database. A fe
 | `KINORA_ALLOWED_ORIGINS` | – | extra origins accepted by the API, comma-separated (e.g. a reverse proxy: `https://media.home`) |
 | `KINORA_VIDEO_ENCODER` | `libx264` | H.264 encoder used for transcoding, e.g. `h264_nvenc` (NVIDIA), `h264_qsv` (Intel), `h264_amf` (AMD) |
 | `KINORA_IPTV_MAX_STREAMS` | `4` | maximum number of IPTV relays running at once |
+| `KINORA_MDNS` | on | `0` turns off the `_kinora._tcp` mDNS announcement (made only when listening beyond localhost) |
 
 ### Network access
 
@@ -88,10 +89,15 @@ By default, Kinora listens only on `127.0.0.1`. To reach it from other devices:
 
 The server refuses to start on an external address without an access key. The key is sent as an `Authorization: Bearer …` header or through the cookie set at sign-in.
 
+TVs do not need the key: they **pair** instead (see [TV interface](#tv-interface)) and get a token of their own, listed under **Settings → Devices**, where it can be renamed or revoked. A device token can browse, play and match titles, but not change settings, libraries or other devices.
+
+To keep the server running when nobody is logged in, see [docs/server-service.md](docs/server-service.md) (Windows service and systemd).
+
 Built-in protections:
 - The API accepts browser requests only from the page served by Kinora, from the Vite dev server or from `KINORA_ALLOWED_ORIGINS`. Other sites get `403`.
 - While the server listens only locally, a non-local `Host` gets `421`, as protection against DNS rebinding.
 - Files are served only from inside the library folders.
+- Only `/api/health`, pairing (`POST /api/pair`, `GET /api/pair/:code`) and the device heartbeat (`/api/devices/me`) answer other origins, without cookies: the TV apps call them from their packaged page.
 
 ## How a file is played
 
@@ -139,7 +145,7 @@ pnpm dev
 - Desktop UI: <http://localhost:5173>
 - API: <http://127.0.0.1:3001>
 
-On a TV, or with a keyboard as the remote: arrows to move, Enter to select, Backspace/Escape to go back. In the player: Enter/Space to pause, ←/→ to seek ±10 s.
+On a TV, or with a keyboard as the remote: arrows to move, Enter to select, Backspace/Escape to go back. In the player: Enter/Space to pause, ←/→ to seek ±10 s; media keys work too.
 
 ### On the local network (production)
 
@@ -153,21 +159,39 @@ pnpm start
 
 3. On the TV or a phone, open `http://<pc-ip>:3001/tv/`.
 
-Sharing the API's origin lets files play directly (session cookie). The Tizen/webOS wrappers in `apps/tv/tizen` and `apps/tv/webos` are thin shells that ask for the server address and open `/tv/`.
+### TV apps (Tizen, webOS)
+
+`apps/tv/tizen` and `apps/tv/webos` hold the **TV shell** (`apps/tv-shell`), built and copied there by:
+
+```bash
+pnpm tv:shell     # also part of pnpm build
+```
+
+The shell is packaged with the app. On start it:
+
+1. checks the last server's `/api/health` (with a timeout) instead of redirecting blindly;
+2. on a fresh TV, scans the TV's /24 subnet for Kinora servers (2–4 s), with manual address entry as a fallback and a list of servers used before;
+3. pairs: the TV shows a 6-character code and a QR code for `http://<server>/pair?code=…`. Approve it from a phone or computer (**Settings → Devices → Pair a TV**, or the QR code). Typing the access key on the TV still works;
+4. checks the server's `apiVersion` and says which side to update when they do not match;
+5. loads `/tv/` from the server in a full-screen frame, and keeps checking the server: if it stops, an offline screen appears (with **Change server**) and the TV reconnects on its own when the server is back; if the device is revoked, it returns to pairing.
+
+Back on the remote goes back, and on Home it asks before leaving the app. Media keys (play, pause, stop, rewind, fast-forward) and channel keys work in the player and in Live TV.
 
 #### Sideloading on Samsung Tizen
 
-1. Enable Developer Mode on the TV and note its IP.
-2. In Tizen Studio, import `apps/tv/tizen` and connect the TV.
-3. Run / install the package on the device.
-4. On first launch, enter `http://<pc-ip>:3001`.
+1. Run `pnpm tv:shell`.
+2. Enable Developer Mode on the TV and note its IP.
+3. In Tizen Studio, import `apps/tv/tizen`, sign it with your author certificate (never commit it) and connect the TV.
+4. Run / install the package on the device. On first launch it finds the server and shows a pairing code.
 
 #### Sideloading on LG webOS
 
-1. Enable Developer Mode and install the [webOS CLI](https://webostv.developer.lge.com/).
-2. Package the `apps/tv/webos` folder (`ares-package apps/tv/webos`).
-3. Install the IPK on the TV (`ares-install`).
-4. On first launch, enter the Kinora address.
+1. Run `pnpm tv:shell`.
+2. Enable Developer Mode and install the [webOS CLI](https://webostv.developer.lge.com/).
+3. Package the `apps/tv/webos` folder (`ares-package apps/tv/webos`) and install the IPK on the TV (`ares-install`).
+4. On first launch it finds the server and shows a pairing code.
+
+To try the shell in a desktop browser: `pnpm --filter @kinora/tv-shell dev` and open <http://localhost:5175/>, then enter `127.0.0.1:3001` (the server must have the TV UI built).
 
 ### Quick checklist (keyboard as remote)
 
@@ -186,7 +210,8 @@ apps/server       Fastify API, scanning, metadata, streaming (TypeScript, tsx)
   src/livetv/     Live TV: channels, schedule, IPTV, relay
   src/playback/   playback plan, HLS, subtitles, cache
 apps/web          React UI (Vite)
-apps/tv           TV UI (Vite) + Tizen/webOS shells
+apps/tv           TV UI (Vite); tizen/ and webos/ hold the platform manifests and the built shell
+apps/tv-shell     TV shell (TS, esbuild): discovery, pairing, offline screen, version check
 packages/shared   API types shared by server and clients
 packages/client   client code shared by the web and TV UIs (API, player, i18n, Live TV helpers)
 packages/media-ui shared React media components (music visualizer, music video loop)
@@ -211,13 +236,14 @@ Foreign keys are enforced. Deleting a library cascades to its titles, files, sub
 ## Tests
 
 ```bash
-pnpm test        # server tests (node:test)
-pnpm typecheck   # server and UIs
+pnpm test        # server and TV shell tests (node:test)
+pnpm typecheck   # server, UIs and TV shell
 ```
 
-Tests that start ffmpeg are skipped automatically when ffmpeg is missing. A new test file must be added to the `test` script in [apps/server/package.json](apps/server/package.json).
+Tests that start ffmpeg are skipped automatically when ffmpeg is missing. A new test file must be added to the `test` script in [apps/server/package.json](apps/server/package.json) (or [apps/tv-shell/package.json](apps/tv-shell/package.json)).
 
 ## Documentation
 
 - [docs/smart-tv.md](docs/smart-tv.md): Smart TV apps (Tizen, webOS, Android TV), architecture and phased plan
+- [docs/server-service.md](docs/server-service.md): running the server as a Windows service or a systemd unit
 - [docs/live-tv-plan.md](docs/live-tv-plan.md): Live TV (virtual channels, IPTV, EPG), plan and implementation notes

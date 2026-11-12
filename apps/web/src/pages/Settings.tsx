@@ -9,16 +9,17 @@ import type { SectionProps } from "./settings/common";
 import { LibrariesSection } from "./settings/LibrariesSection";
 import { LiveTvSection } from "./settings/LiveTvSection";
 import { MetadataSection } from "./settings/MetadataSection";
+import { DevicesSection } from "./settings/DevicesSection";
 import { NetworkSection } from "./settings/NetworkSection";
 import { PlaybackSection } from "./settings/PlaybackSection";
 import { StorageSection } from "./settings/StorageSection";
 import { SystemSection } from "./settings/SystemSection";
 
-type SectionId = "libraries" | "livetv" | "playback" | "metadata" | "network" | "storage" | "system";
+type SectionId = "libraries" | "livetv" | "playback" | "metadata" | "network" | "devices" | "storage" | "system";
 
 const SECTIONS: {
   id: SectionId;
-  icon: "folder" | "live" | "captions" | "tag" | "network" | "storage" | "system";
+  icon: "folder" | "live" | "captions" | "tag" | "network" | "tv" | "storage" | "system";
   title: (t: Copy) => string;
   help: (t: Copy) => string;
   view: ComponentType<SectionProps>;
@@ -28,6 +29,7 @@ const SECTIONS: {
   { id: "playback", icon: "captions", title: (t) => t.settingsPlayback, help: (t) => t.settingsPlaybackHelp, view: PlaybackSection },
   { id: "metadata", icon: "tag", title: (t) => t.settingsMetadata, help: (t) => t.settingsMetadataHelp, view: MetadataSection },
   { id: "network", icon: "network", title: (t) => t.settingsNetwork, help: (t) => t.settingsNetworkHelp, view: NetworkSection },
+  { id: "devices", icon: "tv", title: (t) => t.settingsDevices, help: (t) => t.settingsDevicesHelp, view: DevicesSection },
   { id: "storage", icon: "storage", title: (t) => t.settingsStorage, help: (t) => t.settingsStorageHelp, view: StorageSection },
   { id: "system", icon: "system", title: (t) => t.settingsSystem, help: (t) => t.settingsSystemHelp, view: SystemSection },
 ];

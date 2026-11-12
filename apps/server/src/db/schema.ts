@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
@@ -349,4 +349,21 @@ export const channelPrograms = sqliteTable("channel_programs", {
   image: text("image"),
 }, (table) => [
   index("channel_programs_channel_start").on(table.channelId, table.start),
+]);
+
+/** Paired TVs and other clients; each holds its own token, stored here only as a SHA-256 hash. */
+export const devices = sqliteTable("devices", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  platform: text("platform").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  /** What the device reported it can decode (capability profile, Phase 1). */
+  capabilitiesJson: text("capabilities_json"),
+  /** Per-device switches set in Settings (force transcode, caps). */
+  overridesJson: text("overrides_json"),
+  createdAt: integer("created_at").notNull(),
+  lastSeenAt: integer("last_seen_at"),
+  revokedAt: integer("revoked_at"),
+}, (table) => [
+  uniqueIndex("devices_token_hash").on(table.tokenHash),
 ]);

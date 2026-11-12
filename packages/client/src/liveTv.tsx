@@ -164,7 +164,8 @@ export function filterChannels<T extends Pick<LiveChannel, "favorite" | "categor
 
 /** Categories with at least one channel, by name. */
 export function channelCategories(channels: Pick<LiveChannel, "category">[], t: Omit<LiveTvCopy, "liveFillerTitle">) {
-  const values = [...new Set(channels.flatMap((channel) => (channel.category ? [channel.category] : [])))];
+  // filter + map rather than flatMap: the TV UI also runs on Chromium 68 (webOS 5), which lacks flatMap.
+  const values = [...new Set(channels.map((channel) => channel.category).filter((category): category is string => Boolean(category)))];
   return values.sort((a, b) => categoryLabel(a, t).localeCompare(categoryLabel(b, t)));
 }
 

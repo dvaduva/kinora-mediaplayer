@@ -10,7 +10,7 @@ import {
   type TranscodeStatus,
 } from "@kinora/shared";
 import {
-  apiUrl,
+  mediaUrl,
   byChannel,
   categoryLabel,
   channelCategories,
@@ -41,6 +41,7 @@ import { api } from "../api";
 import { Focusable } from "../components/Focusable";
 import { ScrollRail } from "../components/ScrollRail";
 import { useLocale, type Copy, type Locale } from "../i18n";
+import { remoteAction } from "../remote";
 
 const MINUTE = 60_000;
 /** Grid scale: pixels per minute; ~3 hours fit a desktop-width TV browser. */
@@ -53,7 +54,7 @@ type Tab = GuideTab;
 
 function resolveUrl(path: string) {
   if (path.startsWith("http")) return path;
-  return apiUrl(path);
+  return mediaUrl(path);
 }
 
 /** Logos are stored as server paths; the TV app talks to a configured server, so they are resolved against it. */
@@ -631,24 +632,26 @@ export function LivePlayerPage() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "Backspace") {
+      const action = remoteAction(event);
+      if (action === "back" || action === "stop") {
         event.preventDefault();
         navigate("/live");
         return;
       }
-      if (event.key === "ArrowUp" || event.key === "PageUp") {
+      const media = videoRef.current;
+      if (event.key === "ArrowUp" || event.key === "PageUp" || action === "channelUp" || action === "next") {
         event.preventDefault();
         zap(1);
         setBanner(true);
-      } else if (event.key === "ArrowDown" || event.key === "PageDown") {
+      } else if (event.key === "ArrowDown" || event.key === "PageDown" || action === "channelDown" || action === "previous") {
         event.preventDefault();
         zap(-1);
         setBanner(true);
-      } else if (event.key === " " || event.key === "k") {
+      } else if (event.key === " " || event.key === "k" || action === "playPause" || action === "play" || action === "pause") {
         event.preventDefault();
-        const media = videoRef.current;
         if (!media || session?.mode === "filler") return;
-        if (media.paused) void media.play().catch(() => undefined);
+        const play = action === "play" || (action !== "pause" && media.paused);
+        if (play) void media.play().catch(() => undefined);
         else media.pause();
       } else if (event.key === "i") {
         event.preventDefault();

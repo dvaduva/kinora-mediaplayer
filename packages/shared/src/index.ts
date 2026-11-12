@@ -854,3 +854,81 @@ export function isMusicChannel(sources: ChannelSource[], libraryType: (id: strin
     sources.every((source) => MUSIC_SOURCE_TYPES.includes(source.type) || (source.type === "library" && libraryType(source.value) === "music"))
   );
 }
+
+/**
+ * Version of the HTTP API the TV shells and apps talk to. Bumped only on breaking changes;
+ * a shell refuses a server whose `apiVersion` it does not know.
+ */
+export const API_VERSION = 1;
+
+/** `GET /api/health`: open to anyone on the network, so it carries nothing sensitive. */
+export interface HealthInfo {
+  name: "kinora";
+  apiVersion: number;
+  serverVersion: string;
+}
+
+export const DEVICE_PLATFORMS = ["tizen", "webos", "android", "browser"] as const;
+export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
+
+export function isDevicePlatform(value: unknown): value is DevicePlatform {
+  return typeof value === "string" && (DEVICE_PLATFORMS as readonly string[]).includes(value);
+}
+
+/** A paired device as Settings → Devices shows it. */
+export interface DeviceView {
+  id: string;
+  name: string;
+  platform: DevicePlatform;
+  createdAt: number;
+  lastSeenAt: number | null;
+  revokedAt: number | null;
+}
+
+/** `POST /api/pair`: the code the TV shows, and the secret only it knows, needed to collect the token. */
+export interface PairStart {
+  code: string;
+  secret: string;
+  expiresAt: number;
+}
+
+/** `GET /api/pair/:code?secret=…`: the TV polls until the code is approved; the token is handed out once. */
+export type PairPoll =
+  | { status: "pending"; expiresAt: number }
+  | { status: "approved"; token: string; device: DeviceView }
+  | { status: "expired" };
+
+/** Six characters without look-alikes (no 0/O, 1/I/L), shown on the TV and typed on the phone. */
+export const PAIR_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const PAIR_CODE_LENGTH = 6;
+
+/** Upper-cases a typed code and drops spaces and dashes; null when it cannot be a pairing code. */
+export function normalizePairCode(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const code = value.toUpperCase().replace(/[\s-]+/g, "");
+  if (code.length !== PAIR_CODE_LENGTH) return null;
+  for (const char of code) if (!PAIR_CODE_ALPHABET.includes(char)) return null;
+  return code;
+}
+
+/** Romanian for `ro-*` (and `mo`), English otherwise. The manual choice, when saved, wins over this. */
+export function detectLocale(language: string | null | undefined): "ro" | "en" {
+  return /^(ro|mo)\b/i.test(language ?? "") ? "ro" : "en";
+}
+
+/**
+ * The TV shell loads the UI as `<server>/tv/#shell=1&token=…` in a frame. The UI tells the shell,
+ * through `postMessage`, what only the shell can do: leave the app, or go back to pairing and the server list.
+ */
+export const SHELL_MESSAGE_SOURCE = "kinora-tv";
+export type ShellMessageType = "ready" | "exit" | "unauthorized" | "change-server";
+export interface ShellMessage {
+  source: typeof SHELL_MESSAGE_SOURCE;
+  type: ShellMessageType;
+}
+
+export function isShellMessage(value: unknown): value is ShellMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Record<string, unknown>;
+  return message.source === SHELL_MESSAGE_SOURCE && ["ready", "exit", "unauthorized", "change-server"].includes(String(message.type));
+}

@@ -124,6 +124,13 @@ const ICONS = {
       <path d="M4.5 6v12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V6M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5" />
     </>
   ),
+  /* A screen on a stand. */
+  tv: (
+    <>
+      <rect x="3" y="4.5" width="18" height="12" rx="1.5" />
+      <path d="M8.5 20h7M12 16.5V20" />
+    </>
+  ),
   system: (
     <>
       <rect x="3" y="4.5" width="18" height="15" rx="1.5" />

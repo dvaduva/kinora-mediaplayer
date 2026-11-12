@@ -54,6 +54,22 @@ const tvRo = {
   matchFailed: "Potrivirea a eșuat",
   musicMatchHint: "Caută pe MusicBrainz după artist, album și melodie. Melodia ajută când titlul albumului e vag.",
   liveNoFavorites: "Niciun canal favorit.",
+  // Leaving the app and the server connection
+  exitTitle: "Ieși din Kinora?",
+  exitHelp: "Redarea se oprește; progresul rămâne salvat.",
+  exitStay: "Rămâi",
+  exitLeave: "Ieși",
+  changeServer: "Schimbă serverul",
+  changeServerHelp: "Revino la lista de servere și la asociere.",
+  connectTitle: "Conectează televizorul",
+  connectLede: "Lasă adresa goală când deschizi /tv de pe același server. Altfel introdu IP-ul Kinora din rețeaua ta locală.",
+  serverAddress: "Adresa serverului",
+  accessKey: "Cheie de acces",
+  accessKeyPlaceholder: "opțional dacă nu e configurată",
+  connect: "Conectează",
+  connecting: "Se conectează…",
+  errWrongKey: "Cheia de acces este greșită sau lipsește.",
+  errUnreachable: "Nu pot contacta serverul. Verifică adresa și că Kinora ascultă în rețea.",
 };
 
 const tvEn: Record<keyof typeof tvRo, string> = {
@@ -109,6 +125,22 @@ const tvEn: Record<keyof typeof tvRo, string> = {
   matchFailed: "Matching failed",
   musicMatchHint: "Search MusicBrainz by artist, album, and track. The track helps when the album title is vague.",
   liveNoFavorites: "No favorite channels.",
+  // Leaving the app and the server connection
+  exitTitle: "Leave Kinora?",
+  exitHelp: "Playback stops; your progress stays saved.",
+  exitStay: "Stay",
+  exitLeave: "Leave",
+  changeServer: "Change server",
+  changeServerHelp: "Go back to the server list and pairing.",
+  connectTitle: "Connect this TV",
+  connectLede: "Leave the address empty when you open /tv on the server itself. Otherwise enter the Kinora address on your local network.",
+  serverAddress: "Server address",
+  accessKey: "Access key",
+  accessKeyPlaceholder: "optional if none is set",
+  connect: "Connect",
+  connecting: "Connecting…",
+  errWrongKey: "The access key is wrong or missing.",
+  errUnreachable: "Cannot reach the server. Check the address and that Kinora listens on the network.",
 };
 
 const ro = { ...baseCopy.ro, ...tvRo };

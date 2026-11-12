@@ -5,7 +5,12 @@
   <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>
   <icon src="icon.png"/>
   <name>Kinora</name>
+  <!-- The shell probes the LAN for servers and loads the UI from the chosen one in a frame. -->
+  <access origin="*" subdomains="true"/>
+  <tizen:allow-navigation>*</tizen:allow-navigation>
   <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+  <tizen:privilege name="http://developer.samsung.com/privilege/productinfo"/>
   <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
   <tizen:profile name="tv-samsung"/>
   <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>

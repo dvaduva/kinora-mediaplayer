@@ -1743,3 +1743,25 @@ code {
     --poster-w: 8.5rem;
   }
 }
+
+.exit-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 6, 9, 0.72);
+}
+
+.exit-card {
+  width: min(32rem, 90vw);
+  padding: 2rem;
+  border-radius: 1.25rem;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.exit-card h2 {
+  margin: 0 0 0.5rem;
+}

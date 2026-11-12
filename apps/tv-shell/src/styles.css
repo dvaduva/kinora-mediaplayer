@@ -1,0 +1,261 @@
+/* Sized for a 1920×1080 TV viewed from the sofa; the same palette as the TV UI. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d12;
+  --bg-elevated: #141821;
+  --text: #f4f1ea;
+  --muted: #9aa3b5;
+  --accent: #d2ae62;
+  --focus: #f0d59a;
+  --danger: #e36d6d;
+  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 20px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#view {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem;
+  overflow-y: auto;
+  background:
+    radial-gradient(900px 480px at 80% 0%, rgba(210, 174, 98, 0.16), transparent 60%),
+    radial-gradient(700px 420px at 10% 100%, rgba(70, 100, 160, 0.18), transparent 55%),
+    var(--bg);
+}
+
+#frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg);
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.card {
+  width: 100%;
+  max-width: 54rem;
+  max-height: 100%;
+  padding: 2.25rem 2.5rem;
+  border-radius: 1.25rem;
+  background: rgba(20, 24, 33, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.card.small {
+  max-width: 32rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.4rem;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+h2 {
+  margin: 1.5rem 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.lede {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.note {
+  min-height: 1.4em;
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+}
+
+.note.error {
+  color: var(--danger);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 0.8rem 1.5rem;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  outline: none;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a1408;
+  font-weight: 600;
+}
+
+button:focus,
+input:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px rgba(240, 213, 154, 0.35);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
+.actions button {
+  margin: 0 1rem 0.5rem 0;
+}
+
+.servers {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.server {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 0 0.75rem 0.75rem 0;
+  border-radius: 0.9rem;
+  text-align: left;
+}
+
+.server small {
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+
+.manual {
+  display: flex;
+  align-items: flex-end;
+  margin-top: 1.5rem;
+}
+
+.manual label {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  margin-right: 1rem;
+  color: var(--muted);
+}
+
+.manual input {
+  margin-top: 0.4rem;
+  padding: 0.8rem 1rem;
+  border-radius: 0.85rem;
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.pair {
+  display: flex;
+  align-items: center;
+}
+
+.pair > div:first-child {
+  flex: 1;
+  margin-right: 2rem;
+}
+
+.code {
+  margin: 0.5rem 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 4.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text);
+}
+
+.link {
+  margin: 0;
+  color: var(--muted);
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
+}
+
+.qr {
+  width: 15rem;
+  height: 15rem;
+  flex-shrink: 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.spinner {
+  width: 3rem;
+  height: 3rem;
+  margin-top: 1rem;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.12);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 9, 0.75);
+}

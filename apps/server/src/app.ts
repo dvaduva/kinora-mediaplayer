@@ -2,11 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import cookie from "@fastify/cookie";
-import cors from "@fastify/cors";
+import cors, { type FastifyCorsOptionsDelegateCallback } from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { ExternalTitleDetail, LibraryType, PersonDetail } from "@kinora/shared";
-import { isSubtitleColor, isSubtitleSize, SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
+import { API_VERSION, isSubtitleColor, isSubtitleSize, SUBTITLE_DELAY_LIMIT, type HealthInfo } from "@kinora/shared";
 import {
   albumDetail,
   decorateSimilar,
@@ -58,7 +58,10 @@ import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, refr
 import { getProfile, getSetting, isLocalHost, metadataLanguage, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
 import { isMetadataLanguage } from "./metadata/language.js";
 import { profiles } from "./db/schema.js";
-import { isAllowedHost, isAllowedOrigin, trustedOrigins } from "./security.js";
+import { isAllowedHost, isAllowedOrigin, isDeviceForbidden, presentedTokens, redactUrl, routeAccess, trustedOrigins } from "./security.js";
+import { registerDevices } from "./devices/routes.js";
+import { deviceForToken, isDeviceToken } from "./devices/store.js";
+import { SERVER_VERSION } from "./version.js";
 
 function sameToken(left: string, right: string) {
   const a = Buffer.from(left);
@@ -95,10 +98,33 @@ function sessionStart(raw: string, fileId: string) {
 
 export async function buildApp(options: { bindHost?: string; logger?: boolean } = {}) {
   const bindHost = options.bindHost ?? "127.0.0.1";
-  const app = Fastify({ logger: options.logger ?? true });
+  const app = Fastify({
+    logger:
+      options.logger === false
+        ? false
+        : {
+            // Media elements carry the token in the query (?token=), and the TV polls pairing with ?secret=.
+            serializers: {
+              req: (request) => ({
+                method: request.method,
+                url: redactUrl(request.url),
+                host: request.host,
+                remoteAddress: request.ip,
+                remotePort: request.socket?.remotePort,
+              }),
+            },
+          },
+  });
   const trusted = trustedOrigins();
-  // Same-origin requests need no CORS; only the dev server and configured origins get CORS headers.
-  await app.register(cors, { origin: trusted, credentials: true });
+  // Same-origin requests need no CORS; only the dev server and configured origins get CORS headers with cookies.
+  // The few routes the TV shells call from their packaged page answer any origin, without cookies.
+  const corsFor: FastifyCorsOptionsDelegateCallback = (request, callback) => {
+    const pathname = (request.url ?? "").split("?")[0] ?? "";
+    const method = request.method === "OPTIONS" ? String(request.headers["access-control-request-method"] ?? "GET") : request.method;
+    if (routeAccess(method, pathname).anyOrigin) callback(null, { origin: "*", credentials: false });
+    else callback(null, { origin: trusted, credentials: true });
+  };
+  await app.register(cors, () => corsFor);
   await app.register(cookie);
 
   // YouTube embeds need a Referer; same-origin / no-referrer policies trigger error 153.
@@ -110,23 +136,40 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   app.addHook("onRequest", async (request, reply) => {
     if (!isAllowedHost(request.headers.host, bindHost)) return reply.code(421).send({ error: "bad_host" });
     if (!request.url.startsWith("/api")) return;
-    if (!isAllowedOrigin(request.headers.origin, request.headers.host, trusted)) {
+    // Preflights carry no credentials and change nothing; the CORS plugin answers them.
+    if (request.method === "OPTIONS") return;
+    const pathname = request.url.split("?")[0] ?? "";
+    const access = routeAccess(request.method, pathname);
+    // A Bearer header is never sent by the browser on its own, so it needs no origin check (unlike the cookie).
+    const hasBearer = (request.headers.authorization ?? "").startsWith("Bearer ");
+    if (!access.anyOrigin && !hasBearer && !isAllowedOrigin(request.headers.origin, request.headers.host, trusted)) {
       return reply.code(403).send({ error: "bad_origin" });
     }
-    const open = request.url.startsWith("/api/health") || request.url.startsWith("/api/setup") || request.url.startsWith("/api/session");
-    if (open) return;
+    if (access.open) return;
+    const tokens = presentedTokens({
+      method: request.method,
+      authorization: request.headers.authorization,
+      query: request.query,
+      cookie: request.cookies.kinora_token,
+    });
     const configured = getSetting("accessToken");
-    if (!configured) return;
-    const header = request.headers.authorization;
-    const bearer = header?.startsWith("Bearer ") ? header.slice(7) : "";
-    const cookieToken = request.cookies.kinora_token ?? "";
-    if (sameToken(bearer, configured) || sameToken(cookieToken, configured)) return;
-    return reply.code(401).send({ error: "unauthorized" });
+    if (configured && tokens.some((token) => sameToken(token, configured))) return;
+    const deviceTokens = tokens.filter(isDeviceToken);
+    for (const token of deviceTokens) {
+      const device = deviceForToken(token);
+      if (!device) continue;
+      if (isDeviceForbidden(request.method, pathname)) return reply.code(403).send({ error: "forbidden" });
+      request.device = device;
+      return;
+    }
+    // A revoked or unknown device token is refused even on an open (localhost) server, so the TV returns to pairing.
+    if (deviceTokens.length > 0 || configured) return reply.code(401).send({ error: "unauthorized" });
   });
 
-  app.get("/api/health", async () => {
-    refreshTools();
-    return { ok: true, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe };
+  app.get("/api/health", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const health: HealthInfo = { name: "kinora", apiVersion: API_VERSION, serverVersion: SERVER_VERSION };
+    return health;
   });
 
   app.get("/api/setup", async () => {
@@ -141,8 +184,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   app.post("/api/session", async (request, reply) => {
     const configured = getSetting("accessToken");
     const token = String(asRecord(request.body).token ?? "");
-    if (!configured) return { ok: true };
-    if (!sameToken(token, configured)) return reply.code(401).send({ error: "unauthorized" });
+    // A paired device on the same origin gets the cookie too, so <video src> works without the token in the URL.
+    if (isDeviceToken(token)) {
+      if (!deviceForToken(token)) return reply.code(401).send({ error: "unauthorized" });
+    } else {
+      if (!configured) return { ok: true };
+      if (!sameToken(token, configured)) return reply.code(401).send({ error: "unauthorized" });
+    }
     reply.setCookie("kinora_token", token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 400 });
     return { ok: true };
   });
@@ -713,6 +761,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
   });
 
   registerLiveTv(app);
+  registerDevices(app);
 
   const webDist = path.join(repoRoot, "apps", "web", "dist");
   const tvDist = path.join(repoRoot, "apps", "tv", "dist");

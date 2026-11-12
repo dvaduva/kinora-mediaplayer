@@ -1,9 +1,10 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { detectLocale } from "@kinora/shared";
 import type { Locale } from "./format";
 
 export type LocaleValue<C> = { locale: Locale; t: C; toggle: () => void };
 
-/** Builds a locale provider + hook over `copy`, remembering the choice under `storageKey` (default `"ro"`). */
+/** Builds a locale provider + hook over `copy`, remembering the choice under `storageKey` (default: the browser language). */
 export function createLocale<C>(copy: Record<Locale, C>, storageKey: string) {
   const LocaleContext = createContext<LocaleValue<C> | null>(null);
 
@@ -14,7 +15,7 @@ export function createLocale<C>(copy: Record<Locale, C>, storageKey: string) {
     } catch {
       // storage unavailable
     }
-    return "ro";
+    return detectLocale(typeof navigator === "undefined" ? null : navigator.language);
   }
 
   function LocaleProvider(props: { children: ReactNode }) {
