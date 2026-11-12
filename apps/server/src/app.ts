@@ -611,7 +611,8 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
     const contents = fs.readFileSync(playlist, "utf8");
     reply.type("application/vnd.apple.mpegurl");
     reply.header("Cache-Control", "no-cache");
-    return reply.send(playlistForClient(contents));
+    const query = request.query as { token?: unknown } | undefined;
+    return reply.send(playlistForClient(contents, typeof query?.token === "string" ? query.token : null));
   }
 
   async function sendSegment(request: FastifyRequest, reply: FastifyReply, fileId: string, start: number, segment: string) {

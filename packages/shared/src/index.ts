@@ -3,6 +3,7 @@ export type LibraryType = "movie" | "series" | "music";
 export type PlaybackMode = "direct" | "remux" | "transcode";
 
 export * from "./capabilities";
+export * from "./playerBridge";
 import type { CapabilityProfile, DeviceOverrides } from "./capabilities";
 
 export type PlaybackReason = "ok" | "remux_required" | "transcode_required" | "missing";

@@ -116,5 +116,61 @@ export function detectCapabilities(): CapabilityProfile {
     maxBitrate: null,
     hls: { video: ["h264"], audio: hlsAudio },
     subtitles: "overlay",
+    player: "html5",
+  };
+}
+
+type AvplayHost = { webapis?: { avplay?: unknown } };
+
+/** AVPlay exists in this page (the Tizen shell, with webapis.js loaded). */
+export function hasAvplay() {
+  try {
+    return Boolean((window as unknown as AvplayHost).webapis?.avplay);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What Samsung's native player (AVPlay) decodes. AVPlay has no capability query, so this is the
+ * published Samsung TV media spec for the 2019+ models Kinora targets, narrowed by what the TV itself
+ * says: 4K and HDR from productinfo/avinfo, VP9 and AV1 from the decoder (only some years have them).
+ * AVPlay opens Matroska, AVI and MPEG-TS as files and plays HLS with HEVC and Dolby audio in the
+ * segments, which hls.js cannot. DTS and Dolby Vision are dropped on the server (`applyPlatformQuirks`).
+ */
+export function detectAvplayCapabilities(): CapabilityProfile {
+  const probe = prober();
+  const video: VideoCodecSupport[] = [{ codec: "h264", maxBitDepth: 8 }, { codec: "hevc", maxBitDepth: 10 }, { codec: "mpeg2" }, { codec: "mpeg4" }];
+  if (probe('video/webm; codecs="vp9"') || probe('video/webm; codecs="vp09.00.40.08"')) video.push({ codec: "vp9", maxBitDepth: 10 });
+  if (probe('video/mp4; codecs="av01.0.08M.08"')) video.push({ codec: "av1", maxBitDepth: 10 });
+  const audio: AudioCodecSupport[] = [
+    { codec: "aac", maxChannels: 6 },
+    { codec: "mp3", maxChannels: 2 },
+    { codec: "ac3", maxChannels: 6 },
+    { codec: "eac3", maxChannels: 8 },
+    { codec: "pcm", maxChannels: 8 },
+    { codec: "opus", maxChannels: 8 },
+    { codec: "vorbis", maxChannels: 6 },
+  ];
+  const containers: ContainerSupport[] = [
+    { names: ["mp4", "m4v", "mov"] },
+    { names: ["mkv"] },
+    { names: ["webm"], video: ["vp9", "av1"], audio: ["opus", "vorbis"] },
+    { names: ["ts", "m2ts"] },
+    { names: ["avi"], video: ["h264", "mpeg4"], audio: ["mp3", "ac3", "aac", "pcm"] },
+  ];
+  // HDR without the Dolby Vision probe: Samsung has none (the server drops it too).
+  const hdr = detectHdr(probe).filter((format) => format !== "dolby_vision");
+  return {
+    version: 1,
+    containers,
+    video,
+    audio,
+    hdr,
+    ...detectSize(probe, true),
+    maxBitrate: null,
+    hls: { video: ["h264", "hevc"], audio: ["aac", "mp3", "ac3", "eac3"] },
+    subtitles: "overlay",
+    player: "avplay",
   };
 }

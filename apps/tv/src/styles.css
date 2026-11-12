@@ -1765,3 +1765,33 @@ code {
 .exit-card h2 {
   margin: 0 0 0.5rem;
 }
+
+/* A native player (AVPlay) draws the picture on the TV's video plane under the page: let it show through. */
+html.avplay-active,
+html.avplay-active body,
+html.avplay-active .player,
+html.avplay-active .player-video {
+  background: transparent;
+}
+
+/* Captions drawn by Kinora when the player has no text tracks (SubtitleOverlay). */
+.subtitle-overlay {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  bottom: 9vh;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.subtitle-overlay p {
+  margin: 0;
+  padding: 0.15em 0.45em;
+  border-radius: 0.2em;
+  background: rgba(0, 0, 0, 0.55);
+  line-height: 1.3;
+  text-align: center;
+  text-shadow: 0 0 0.12em #000, 0 0.05em 0.12em #000;
+  white-space: pre-wrap;
+}

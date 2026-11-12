@@ -232,6 +232,35 @@ test("platform quirks drop DTS on TVs and add Matroska on webOS", () => {
   assert.equal(applyPlatformQuirks("browser", reported), reported);
 });
 
+test("Tizen quirks: no 10-bit H.264 and no Dolby Vision", () => {
+  const reported: CapabilityProfile = {
+    ...TV,
+    video: [{ codec: "h264", maxBitDepth: 10 }, { codec: "hevc", maxBitDepth: 10 }],
+    hdr: ["hdr10", "hlg", "dolby_vision"],
+  };
+  const tizen = applyPlatformQuirks("tizen", reported);
+  assert.deepEqual(tizen.video, [{ codec: "h264", maxBitDepth: 8 }, { codec: "hevc", maxBitDepth: 10 }]);
+  assert.deepEqual(tizen.hdr, ["hdr10", "hlg"]);
+  assert.deepEqual(applyPlatformQuirks("webos", reported).hdr, reported.hdr);
+  const hi10 = { kind: "video" as const, container: "mkv", videoCodec: "h264", audioCodec: "aac", bitDepth: 10, ffmpeg: true };
+  assert.deepEqual(playbackPlan(hi10, tizen).limits, ["bit_depth"]);
+  const dolbyOnly = { ...hevcMkv, hdr: ["dolby_vision" as const] };
+  assert.deepEqual(playbackPlan(dolbyOnly, tizen).limits, ["hdr"]);
+  assert.equal(playbackPlan({ ...hevcMkv, hdr: ["hdr10" as const, "dolby_vision" as const] }, tizen).mode, "direct", "DV profile 8 plays its HDR10 base");
+});
+
+test("an AVPlay profile copies HEVC and E-AC-3 into HLS segments", () => {
+  const avplay: CapabilityProfile = { ...TV, player: "avplay", containers: [{ names: ["mp4"] }], hls: { video: ["h264", "hevc"], audio: ["aac", "ac3", "eac3"] } };
+  const plan = playbackPlan({ ...hevcMkv, audioCodec: "eac3" }, avplay);
+  assert.equal(plan.mode, "remux");
+  assert.deepEqual(plan.limits, ["container"]);
+  const output = hlsOutput({ ...hevcMkv, audioCodec: "eac3" }, avplay);
+  assert.equal(output.copyVideo, true);
+  assert.equal(output.copyAudio, true);
+  assert.equal(sanitizeCapabilities(avplay)?.player, "avplay");
+  assert.equal(sanitizeCapabilities({ ...avplay, player: "vlc" })?.player, undefined);
+});
+
 test("profiles from a client are checked field by field", () => {
   assert.equal(sanitizeCapabilities(null), null);
   assert.equal(sanitizeCapabilities({ version: 2 }), null);

@@ -41,6 +41,13 @@ test("rewrites absolute playlist paths to segment names", () => {
   assert.equal(playlistHasSegment(playlist), true);
 });
 
+test("hands a query token on to every segment for players that cannot send headers", () => {
+  const playlist = playlistForClient("#EXTM3U\n#EXTINF:4.000,\nseg00000.ts\n#EXTINF:4.000,\nseg00001.ts\n", "kd_a b");
+  assert.match(playlist, /^seg00000\.ts\?token=kd_a%20b$/m);
+  assert.match(playlist, /^seg00001\.ts\?token=kd_a%20b$/m);
+  assert.doesNotMatch(playlistForClient("#EXTM3U\nseg00000.ts\n", null), /token/);
+});
+
 test("starts playback once the resume point has been converted", () => {
   assert.equal(transcodePlaybackReady({ state: "running", seconds: 1, playlist: true }, 0), true);
   assert.equal(transcodePlaybackReady({ state: "running", seconds: 10, playlist: true }, 40), false);

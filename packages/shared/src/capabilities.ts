@@ -50,7 +50,12 @@ export interface CapabilityProfile {
   hls: { video: string[]; audio: string[] };
   /** Text subtitles are drawn by Kinora over the video on every platform. */
   subtitles: "overlay";
+  /** The pipeline that reported this profile; absent for the HTML5 <video> (and older apps). */
+  player?: ProfilePlayer;
 }
+
+export type ProfilePlayer = "html5" | "avplay" | "exoplayer";
+const PROFILE_PLAYERS: readonly ProfilePlayer[] = ["html5", "avplay", "exoplayer"];
 
 /** Switches a user sets per device in Settings → Devices. */
 export interface DeviceOverrides {
@@ -163,6 +168,7 @@ export function sanitizeCapabilities(value: unknown): CapabilityProfile | null {
   }
   const hdr = Array.isArray(input.hdr) ? HDR_FORMATS.filter((format) => (input.hdr as unknown[]).includes(format)) : null;
   const hls = record(input.hls);
+  const player = PROFILE_PLAYERS.find((name) => name === input.player);
   return {
     version: 1,
     containers,
@@ -177,6 +183,7 @@ export function sanitizeCapabilities(value: unknown): CapabilityProfile | null {
       audio: (hls && stringList(hls.audio, audioFamily)) ?? ["aac", "mp3"],
     },
     subtitles: "overlay",
+    ...(player ? { player } : {}),
   };
 }
 
@@ -191,7 +198,15 @@ export function applyPlatformQuirks(platform: string, profile: CapabilityProfile
   );
   // webOS plays Matroska in its <video> pipeline but leaves canPlayType("video/x-matroska") empty.
   if (platform === "webos" && !containers.some((entry) => entry.names.includes("mkv"))) containers.push({ names: ["mkv"] });
-  return { ...profile, audio, containers };
+  let video = profile.video;
+  let hdr = profile.hdr;
+  if (platform === "tizen") {
+    // Samsung decodes H.264 in hardware up to 8-bit only; MSE answers yes for High 10 and then shows a black picture.
+    video = video.map((entry) => (entry.codec === "h264" && (entry.maxBitDepth ?? 8) > 8 ? { ...entry, maxBitDepth: 8 } : entry));
+    // Samsung TVs have no Dolby Vision; a DV-only file (profile 5) has no HDR10 base layer to fall back on.
+    if (hdr) hdr = hdr.filter((format) => format !== "dolby_vision");
+  }
+  return { ...profile, video, audio, hdr, containers };
 }
 
 export function applyDeviceOverrides(profile: CapabilityProfile, overrides: DeviceOverrides): EffectiveProfile {

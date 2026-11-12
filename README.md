@@ -179,10 +179,14 @@ Back on the remote goes back, and on Home it asks before leaving the app. Media 
 
 #### Sideloading on Samsung Tizen
 
-1. Run `pnpm tv:shell`.
-2. Enable Developer Mode on the TV and note its IP.
-3. In Tizen Studio, import `apps/tv/tizen`, sign it with your author certificate (never commit it) and connect the TV.
-4. Run / install the package on the device. On first launch it finds the server and shows a pairing code.
+1. Install Tizen Studio with the TV extensions, create a Samsung author certificate (never commit it) and enable Developer Mode on the TV.
+2. Connect the TV (`sdb connect <tv-ip>`), then build, sign and install in one go:
+   ```bash
+   pnpm tv:package:tizen -- --install --run   # apps/tv/tizen/dist/Kinora.wgt
+   ```
+3. On first launch it finds the server and shows a pairing code.
+
+On Tizen the UI plays through Samsung's native player (AVPlay): MKV, HEVC, HDR10 and Dolby audio play directly. Step by step, with debugging and known model quirks: [docs/tv/tizen.md](docs/tv/tizen.md).
 
 #### Sideloading on LG webOS
 

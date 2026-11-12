@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import { Focusable } from "../components/Focusable";
+import { SubtitleOverlay } from "../components/SubtitleOverlay";
 import { useLocale } from "../i18n";
 import { remoteAction } from "../remote";
-import { playerBackend, type PlayerAdapter } from "../player";
+import { playerBackend, type AudioTrackInfo, type PlayerAdapter } from "../player";
 import {
+  cueStyleSheet,
   formatClock,
   formatDelay,
   hlsUrl,
@@ -27,6 +29,7 @@ export function PlayerPage() {
   const { fileId } = useParams();
   const { t, locale } = useLocale();
   const navigate = useNavigate();
+  const backend = playerBackend();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerRef = useRef<PlayerAdapter | null>(null);
   const [paused, setPaused] = useState(false);
@@ -36,6 +39,8 @@ export function PlayerPage() {
   const [subsOpen, setSubsOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [delay, setDelay] = useState(0);
+  const [audioTracks, setAudioTracks] = useState<AudioTrackInfo[]>([]);
+  const audioKey = useRef("");
   const resumed = useRef(false);
   const hideTimer = useRef(0);
   const subtitleDirty = useRef(false);
@@ -55,7 +60,7 @@ export function PlayerPage() {
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    const player = playerBackend.create(video, {
+    const player = backend.create(video, {
       onFatal: () => setErrorRef.current("playback_failed"),
       onUnsupported: () => setErrorRef.current("playback_failed"),
     });
@@ -99,6 +104,12 @@ export function PlayerPage() {
     const clock = window.setInterval(() => {
       setPosition(player.currentTime);
       setDuration(player.duration || view.duration || 0);
+      const tracks = player.audioTracks();
+      const key = tracks.map((track) => `${track.id}${track.enabled ? "*" : ""}`).join(",");
+      if (key !== audioKey.current) {
+        audioKey.current = key;
+        setAudioTracks(tracks);
+      }
     }, 500);
 
     return () => {
@@ -291,8 +302,9 @@ export function PlayerPage() {
         togglePlay();
       }}
     >
+      {backend.textTracks ? <style>{cueStyleSheet("video.player-video", view.subtitleStyle)}</style> : null}
       <video ref={videoRef} className="player-video" playsInline autoPlay crossOrigin="anonymous">
-        {showExternalTrack && selectedTrack ? (
+        {backend.textTracks && showExternalTrack && selectedTrack ? (
           <track
             key={selectedTrack.id}
             id={selectedTrack.id}
@@ -304,6 +316,14 @@ export function PlayerPage() {
           />
         ) : null}
       </video>
+      {!backend.textTracks ? (
+        <SubtitleOverlay
+          url={showExternalTrack && selectedTrack ? subtitleUrl(fileId, selectedTrack.id) : null}
+          delay={delay}
+          style={view.subtitleStyle}
+          currentTime={() => playerRef.current?.currentTime ?? 0}
+        />
+      ) : null}
       {waiting ? (
         <div className="player-wait">
           <p>{t.preparing}</p>
@@ -379,6 +399,23 @@ export function PlayerPage() {
                   </div>
                   <p className="hint">{t.subtitleDelayHelp}</p>
                 </div>
+              ) : null}
+              {audioTracks.length > 1 ? (
+                <>
+                  <p className="player-subs-title">{t.audioTrack}</p>
+                  <div className="player-subs-list">
+                    {audioTracks.map((track) => (
+                      <Focusable
+                        key={track.id}
+                        className={track.enabled ? "subs-option is-active" : "subs-option"}
+                        focusKey={`audio-${track.id}`}
+                        onEnterPress={() => playerRef.current?.selectAudioTrack(track.id)}
+                      >
+                        {track.label}
+                      </Focusable>
+                    ))}
+                  </div>
+                </>
               ) : null}
             </div>
           ) : null}

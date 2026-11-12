@@ -100,5 +100,6 @@ function createHtml5Player(video: HTMLVideoElement, callbacks: PlayerCallbacks):
 export const html5Backend: PlayerBackend = {
   name: "html5",
   capabilities: detectCapabilities,
+  textTracks: true,
   create: createHtml5Player,
 };

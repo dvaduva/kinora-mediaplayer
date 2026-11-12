@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 and 1 are implemented (capability profiles: TVs play directly what they decode). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0, 1 and 2 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
 
 ## Client–server or standalone?
 
@@ -151,6 +151,21 @@ Status: implemented and covered by tests; not yet run on a Samsung or LG TV.
 - Tizen-specific profile overrides.
 - `pnpm tv:package:tizen` (Tizen CLI, local author certificate).
 - `docs/tv/tizen.md`: Developer Mode, certificates, install, debugging (remote inspector), known model quirks.
+
+### How it was built
+
+Status: implemented and covered by tests (the AVPlay controller against a fake player); not yet run on a Samsung TV.
+
+- **AVPlay lives in the shell.** `webapis` exists only in the packaged page, not in the UI's frame (loaded from the server). The shell owns the player (`apps/tv-shell/src/avplay.ts`) and an `<object type="application/avplayer">` under the frame; the UI's `avplay` adapter (`apps/tv/src/player/bridge.ts`) sends `PlayerCommand`s by `postMessage` and keeps the shell's `PlayerReport`s (state, time, duration, audio tracks) so its getters stay synchronous. Every `load` has a session number; reports and commands for an older one are dropped. The shell opens media only from the connected server's origin. The same bridge is meant for the ExoPlayer adapter in phase 4.
+- **Which player.** The shell adds `&player=avplay` to the launch hash when AVPlay is there; `playerBackend()` picks the bridge, otherwise `html5`. Live TV stays on hls.js.
+- **Picture.** AVPlay draws under the page: the shell and the UI put `avplay-active` on `<html>` while a source is loaded and clear their backgrounds. Letterboxed, full screen (AVPlay's 1920×1080 space). Suspended when the app goes to the background, restored on return.
+- **Profile** (`detectAvplayCapabilities`, `player: "avplay"`): the Samsung media spec for 2019+ models (MKV, AVI, TS; HEVC 10-bit, MPEG-2/4; AC-3, E-AC-3, PCM, Opus, Vorbis) narrowed by the TV (4K from productinfo, HDR from avinfo, VP9/AV1 from the decoder). HLS segments may carry HEVC and E-AC-3, since AVPlay plays HLS itself. Sent at pairing by the shell and on every start by the UI, which asks the shell for it.
+- **Tokens in HLS.** AVPlay cannot send headers: playlist and segments carry `?token=`; `playlistForClient` appends the playlist request's token to each segment.
+- **Tizen quirks** (server-side): H.264 capped at 8-bit, Dolby Vision dropped (besides DTS/TrueHD from phase 1).
+- **Subtitles** are drawn by `SubtitleOverlay` from the WebVTT (`parseVtt` / `activeCueLines` in `@kinora/client`), with the size and colour from Settings and the per-file delay. The HTML5 player now applies the same size and colour to its text tracks.
+- **Audio tracks**: an **Audio** list in the player's CC panel when the file has more than one (AVPlay's tracks, or the HTML5 `audioTracks`).
+- **Packaging**: `pnpm tv:package:tizen [-- --install --run --target <serial>]` builds the shell, stages only the app's files, signs with the active (or `TIZEN_PROFILE`) security profile and installs with `sdb`.
+- **Not done yet:** embedded text subtitles under AVPlay (the server would need to extract them, as for the HTML5 player), automatic fallback to transcode when AVPlay refuses a file it was expected to play (use **Always convert** meanwhile), and seeking ahead within a growing transcode.
 
 ### Done when
 The test checklist below passes on a Samsung TV, media keys included.

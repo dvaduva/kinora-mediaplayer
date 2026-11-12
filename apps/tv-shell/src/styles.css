@@ -50,6 +50,23 @@ body {
   height: 100%;
   border: 0;
   background: var(--bg);
+  z-index: 1;
+}
+
+/* AVPlay's video plane sits under the page and shows wherever the page is transparent. */
+#avplayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+html.avplay-active,
+html.avplay-active body,
+html.avplay-active #frame {
+  background: transparent;
 }
 
 [hidden] {

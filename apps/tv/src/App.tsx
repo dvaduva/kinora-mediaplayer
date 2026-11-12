@@ -29,13 +29,10 @@ import { ensureSpatial } from "./spatial";
  */
 function reportCapabilities(token: string | null | undefined) {
   if (!token || !token.startsWith("kd_")) return;
-  let capabilities: unknown;
-  try {
-    capabilities = playerBackend.capabilities();
-  } catch {
-    return;
-  }
-  void api("/api/devices/me/capabilities", { method: "PUT", body: JSON.stringify(capabilities) }).catch(() => undefined);
+  // A bridge backend asks the shell; a shell that does not answer leaves the last report in place.
+  new Promise((resolve) => resolve(playerBackend().capabilities()))
+    .then((capabilities) => api("/api/devices/me/capabilities", { method: "PUT", body: JSON.stringify(capabilities) }))
+    .catch(() => undefined);
 }
 
 export function App() {

@@ -53,4 +53,6 @@ export {
   useNow,
 } from "./liveTv";
 export type { ChannelFilter, GuideTab, LiveTvCopy } from "./liveTv";
-export { detectCapabilities } from "./capabilities";
+export { detectAvplayCapabilities, detectCapabilities, hasAvplay } from "./capabilities";
+export { activeCueLines, parseVtt } from "./vtt";
+export type { Cue } from "./vtt";

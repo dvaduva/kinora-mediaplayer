@@ -27,6 +27,7 @@ const tvRo = {
   searchPlaceholder: "Titlu film, serial sau album…",
   channels: "Canale",
   subtitleOff: "Oprită",
+  audioTrack: "Sunet",
   // TV wording for shared keys
   identify: "Potrivire",
   search: "Caută",
@@ -98,6 +99,7 @@ const tvEn: Record<keyof typeof tvRo, string> = {
   searchPlaceholder: "Movie, series, or album title…",
   channels: "Channels",
   subtitleOff: "Off",
+  audioTrack: "Audio",
   // TV wording for shared keys
   identify: "Match",
   search: "Search",

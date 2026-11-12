@@ -268,7 +268,12 @@ export function consumeProgress(buffer: string, chunk: string) {
   return { rest, seconds };
 }
 
-export function playlistForClient(contents: string) {
+/**
+ * The playlist as a player gets it: bare segment names only. A player that sent the token in the query
+ * (`?token=`, as native TV players must: they cannot set headers) gets it appended to every segment too.
+ */
+export function playlistForClient(contents: string, token?: string | null) {
+  const suffix = token ? `?token=${encodeURIComponent(token)}` : "";
   const lines: string[] = [];
   for (const line of contents.split(/\r?\n/)) {
     const trimmed = line.trim().replace(/^\uFEFF/, "");
@@ -278,7 +283,7 @@ export function playlistForClient(contents: string) {
       continue;
     }
     const name = trimmed.split(/[/\\]/).pop() ?? "";
-    if (/^seg\d+\.ts$/.test(name)) lines.push(name);
+    if (/^seg\d+\.ts$/.test(name)) lines.push(name + suffix);
   }
   return `${lines.join("\n")}\n`;
 }

@@ -1,6 +1,7 @@
-import { detectLocale, isShellMessage, type HealthInfo, type PairPoll, type PairStart } from "@kinora/shared";
+import { detectLocale, isPlayerCommand, isShellMessage, PLAYER_BRIDGE_SOURCE, type HealthInfo, type PairPoll, type PairStart, type PlayerReport } from "@kinora/shared";
 import { shellCopy } from "@kinora/client/shell-copy";
-import { detectCapabilities } from "@kinora/client/capabilities";
+import { detectAvplayCapabilities, detectCapabilities, hasAvplay } from "@kinora/client/capabilities";
+import { createAvplayController, type Avplay, type AvplayController } from "./avplay";
 import { compatibility, isHealth, scan, scanTargets, type Found } from "./discovery";
 import { focusFirst, focusRoot, handleFocusKey } from "./focus";
 import { request } from "./net";
@@ -29,6 +30,38 @@ let generation = 0;
 let timers: number[] = [];
 let activeUrl: string | null = null;
 
+/**
+ * Samsung's native player, when this is the Tizen package: it plays MKV, HEVC, HDR and Dolby audio the
+ * <video> element cannot. It exists only in this page, so the UI in the frame drives it by message.
+ */
+const avplay: AvplayController | null = platform === "tizen" && hasAvplay() ? setupAvplay() : null;
+
+function setupAvplay() {
+  const player = (window as unknown as { webapis: { avplay: Avplay } }).webapis.avplay;
+  // AVPlay renders into this element's video plane; it sits under the frame, which turns transparent while playing.
+  const plane = document.createElement("object");
+  plane.id = "avplayer";
+  plane.setAttribute("type", "application/avplayer");
+  document.body.insertBefore(plane, frame);
+  const controller = createAvplayController(player, {
+    send: (report: PlayerReport) => {
+      if (!frame.contentWindow || !activeUrl) return;
+      frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(activeUrl));
+    },
+    onActive: (active) => {
+      if (active) document.documentElement.classList.add("avplay-active");
+      else document.documentElement.classList.remove("avplay-active");
+    },
+  });
+  document.addEventListener("visibilitychange", () => controller.visibility(document.hidden));
+  return controller;
+}
+
+function originOf(url: string) {
+  const match = /^(https?:\/\/[^/?#]+)/i.exec(url);
+  return match ? match[1]!.toLowerCase() : "*";
+}
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
@@ -46,6 +79,7 @@ function enter(next: Screen) {
   timers = [];
   screen = next;
   if (next !== "app") {
+    avplay?.stop();
     frame.hidden = true;
     // Leaving the UI stops whatever it was playing.
     if (frame.getAttribute("src") !== "about:blank") frame.setAttribute("src", "about:blank");
@@ -121,7 +155,7 @@ function openApp(url: string, token: string) {
     frame.focus();
     frame.contentWindow?.focus();
   };
-  frame.setAttribute("src", `${url}/tv/#shell=1&token=${encodeURIComponent(token)}`);
+  frame.setAttribute("src", `${url}/tv/#shell=1&token=${encodeURIComponent(token)}${avplay ? "&player=avplay" : ""}`);
   // The heartbeat tells "server gone" (offline screen, then back on its own) from "device revoked" (pairing).
   let misses = 0;
   const beat = async () => {
@@ -139,7 +173,9 @@ function openApp(url: string, token: string) {
 }
 
 window.addEventListener("message", (event) => {
-  if (event.source !== frame.contentWindow || !isShellMessage(event.data) || screen !== "app") return;
+  if (event.source !== frame.contentWindow || screen !== "app") return;
+  if (isPlayerCommand(event.data)) return handlePlayerCommand(event.data);
+  if (!isShellMessage(event.data)) return;
   const url = activeUrl;
   if (event.data.type === "exit") exitApp();
   else if (event.data.type === "ready") frame.focus();
@@ -149,6 +185,19 @@ window.addEventListener("message", (event) => {
     startPairing(url);
   }
 });
+
+function handlePlayerCommand(command: Parameters<AvplayController["handle"]>[0]) {
+  const url = activeUrl;
+  if (!avplay || !url || !frame.contentWindow) return;
+  if (command.command === "capabilities") {
+    const report: PlayerReport = { event: "capabilities", request: command.request, profile: safeCapabilities() };
+    frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(url));
+    return;
+  }
+  // The player opens media from the connected server only, never an address the page made up.
+  if (command.command === "load" && originOf(command.url) !== originOf(url)) return;
+  avplay.handle(command);
+}
 
 // ---------------------------------------------------------------- offline
 
@@ -294,7 +343,7 @@ async function runScan(gen: number, autoConnect: boolean) {
 /** What this TV decodes, sent with the pairing request; the TV UI sends it again on every start. */
 function safeCapabilities() {
   try {
-    return detectCapabilities();
+    return avplay ? detectAvplayCapabilities() : detectCapabilities();
   } catch {
     return null;
   }

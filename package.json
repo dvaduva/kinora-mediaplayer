@@ -11,9 +11,10 @@
   "scripts": {
     "dev": "corepack pnpm --parallel --filter @kinora/server --filter @kinora/web --filter @kinora/tv dev",
     "start": "corepack pnpm --filter @kinora/server start",
-    "test": "corepack pnpm --filter @kinora/server --filter @kinora/tv-shell test",
+    "test": "corepack pnpm --filter @kinora/server --filter @kinora/tv-shell --filter @kinora/client test",
     "typecheck": "corepack pnpm --filter @kinora/server --filter @kinora/web --filter @kinora/tv --filter @kinora/tv-shell typecheck",
     "build": "corepack pnpm --filter @kinora/web --filter @kinora/tv --filter @kinora/tv-shell build",
-    "tv:shell": "corepack pnpm --filter @kinora/tv-shell build"
+    "tv:shell": "corepack pnpm --filter @kinora/tv-shell build",
+    "tv:package:tizen": "node scripts/tv-package-tizen.mjs"
   }
 }
