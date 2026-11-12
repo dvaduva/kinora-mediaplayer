@@ -125,6 +125,45 @@ export async function matchMovie(movieId: string, tmdbId: number) {
   await enrichMovie(movieId, tmdbId);
 }
 
+let refreshing: Promise<void> | null = null;
+let refreshAgain = false;
+
+/**
+ * Re-fetches every matched movie and series, e.g. after the metadata language changes.
+ * Runs in the background, one title at a time; a second call while running queues one more pass.
+ */
+export function refreshAllMetadata() {
+  if (refreshing) {
+    refreshAgain = true;
+    return;
+  }
+  refreshing = (async () => {
+    do {
+      refreshAgain = false;
+      const movieRows = db.select({ id: movies.id, tmdbId: movies.tmdbId }).from(movies).where(eq(movies.matched, true)).all();
+      for (const row of movieRows) {
+        if (row.tmdbId == null) continue;
+        try {
+          await enrichMovie(row.id, row.tmdbId);
+        } catch {
+          // One failed title must not stop the rest; the old metadata stays.
+        }
+      }
+      const seriesRows = db.select({ id: series.id, tmdbId: series.tmdbId }).from(series).where(eq(series.matched, true)).all();
+      for (const row of seriesRows) {
+        if (row.tmdbId == null) continue;
+        try {
+          await matchSeries(row.id, row.tmdbId);
+        } catch {
+          // Same as above.
+        }
+      }
+    } while (refreshAgain);
+  })().finally(() => {
+    refreshing = null;
+  });
+}
+
 export async function matchSeries(seriesId: string, tmdbId: number) {
   await enrichSeries(seriesId, tmdbId);
   const owned = db.select().from(episodes).where(eq(episodes.seriesId, seriesId)).all();

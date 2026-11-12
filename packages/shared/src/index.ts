@@ -517,6 +517,8 @@ export interface AppSettings {
   tmdbHint: string | null;
   omdbConfigured: boolean;
   omdbHint: string | null;
+  /** Language of TMDB titles, overviews and genres. */
+  metadataLanguage: "en" | "ro";
   bindHost: string;
   tokenRequired: boolean;
   ffmpeg: boolean;

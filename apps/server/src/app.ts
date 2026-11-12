@@ -54,8 +54,9 @@ import {
 } from "./playback/transcode.js";
 import { tools } from "./process.js";
 import { browse, BrowseError } from "./browse.js";
-import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, startScan } from "./scan.js";
-import { getProfile, getSetting, isLocalHost, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
+import { createLibrary, deleteLibrary, matchAlbum, matchMovie, matchSeries, refreshAllMetadata, startScan } from "./scan.js";
+import { getProfile, getSetting, isLocalHost, metadataLanguage, PROFILE_ID, setSetting, tokenHint, transcodeCacheGb } from "./settings.js";
+import { isMetadataLanguage } from "./metadata/language.js";
 import { profiles } from "./db/schema.js";
 import { isAllowedHost, isAllowedOrigin, trustedOrigins } from "./security.js";
 
@@ -153,6 +154,7 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       tmdbHint: tokenHint(getSetting("tmdbReadToken")),
       omdbConfigured: Boolean(getSetting("omdbApiKey")),
       omdbHint: tokenHint(getSetting("omdbApiKey")),
+      metadataLanguage: metadataLanguage(),
       bindHost: getSetting("bindHost") ?? "127.0.0.1",
       tokenRequired: Boolean(getSetting("accessToken")),
       ffmpeg: tools.ffmpeg,
@@ -178,6 +180,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       setSetting("omdbApiKey", key);
     }
     if (body.clearOmdbApiKey === true) setSetting("omdbApiKey", null);
+    if (body.metadataLanguage !== undefined) {
+      if (!isMetadataLanguage(body.metadataLanguage)) return reply.code(400).send({ error: "bad_metadata_language" });
+      if (body.metadataLanguage !== metadataLanguage()) {
+        setSetting("metadataLanguage", body.metadataLanguage);
+        refreshAllMetadata();
+      }
+    }
     if (typeof body.bindHost === "string" && body.bindHost.trim()) {
       const host = body.bindHost.trim();
       const token = typeof body.accessToken === "string" && body.accessToken.trim() ? body.accessToken.trim() : getSetting("accessToken");

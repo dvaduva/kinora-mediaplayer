@@ -10,7 +10,7 @@ import { onScanFinished, restartWatches, startScan } from "./scan.js";
 import { prepareUpcoming, repairMissing, syncAutoChannels, topUpChannels } from "./livetv/channels.js";
 import { refreshDueSources } from "./livetv/iptv.js";
 import { clearRelayCache, stopAllRelays, sweepRelays } from "./livetv/relay.js";
-import { getSetting, isLocalHost, seedProfile, transcodeCacheGb } from "./settings.js";
+import { getSetting, isLocalHost, seedMetadataLanguage, seedProfile, transcodeCacheGb } from "./settings.js";
 
 // Windows often tries IPv6 first; TMDB connects hang until undici's default 10s timeout.
 dns.setDefaultResultOrder("ipv4first");
@@ -24,6 +24,7 @@ setGlobalDispatcher(
 detectTools();
 stopOrphanEncoders();
 seedProfile();
+seedMetadataLanguage();
 
 setTranscodeCacheLimit(gigabytes(transcodeCacheGb()));
 pruneTranscodes();

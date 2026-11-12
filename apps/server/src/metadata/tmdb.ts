@@ -3,10 +3,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { ArtworkOption, CastMember, MovieArtwork, MovieReview, TmdbCandidate, Trailer } from "@kinora/shared";
 import { dataDir } from "../paths.js";
-import { getSetting } from "../settings.js";
+import { getSetting, metadataLanguage } from "../settings.js";
 import { titlesEqual } from "../parse/names.js";
 import { createQueue } from "./gate.js";
 import { downloadTmdbImages } from "./images.js";
+import { languageRank, tmdbLocale, tmdbMediaLanguages, tmdbRegion, type MetadataLanguage } from "./language.js";
 import { pickTrailer, rankVideos, type TrailerCandidate } from "./trailer.js";
 
 // One in-flight TMDB call at a time — parallel connects pile up and hit Connect Timeout on flaky links.
@@ -47,7 +48,7 @@ function isConnectFailure(error: unknown) {
 
 /**
  * UI may send "Arrival 2016". TMDB often returns nothing when the year is inside `query`
- * (especially with ro-RO), so we split title/year and filter with API params + local ranking.
+ * (especially with a non-English language), so we split title/year and filter with API params + local ranking.
  */
 export function parseSearchInput(query: string, year: number | null) {
   const trimmed = query.trim().replace(/\s+/g, " ");
@@ -79,7 +80,7 @@ function isTmdbUrl(query: string) {
 
 async function candidateById(kind: "movie" | "tv", tmdbId: number): Promise<TmdbCandidate[]> {
   try {
-    const body = await tmdbGet(`/${kind}/${tmdbId}?language=ro-RO`);
+    const body = await tmdbGet(`/${kind}/${tmdbId}?language=${tmdbLocale(metadataLanguage())}`);
     const candidate = candidateFrom(body);
     return candidate ? [candidate] : [];
   } catch (error) {
@@ -229,7 +230,7 @@ export function chooseMatch(title: string, year: number | null, hits: TmdbHit[])
 }
 
 async function movieSearchRaw(title: string, year: number | null, mode: "primary" | "any" | "none") {
-  const params = new URLSearchParams({ query: title, language: "ro-RO", include_adult: "false" });
+  const params = new URLSearchParams({ query: title, language: tmdbLocale(metadataLanguage()), include_adult: "false" });
   if (year != null && mode === "primary") params.set("primary_release_year", String(year));
   if (year != null && mode === "any") params.set("year", String(year));
   const body = record(await tmdbGet(`/search/movie?${params}`));
@@ -259,13 +260,13 @@ export async function searchMovies(query: string, year: number | null) {
 
 export async function searchSeries(query: string, year: number | null) {
   const parsed = parseSearchInput(query, year);
-  const params = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+  const params = new URLSearchParams({ query: parsed.title, language: tmdbLocale(metadataLanguage()) });
   if (parsed.year != null) params.set("first_air_date_year", String(parsed.year));
   let hits = list(record(await tmdbGet(`/search/tv?${params}`))?.results)
     .map(seriesHit)
     .filter((hit): hit is TmdbHit => hit != null);
   if (!hits.length && parsed.year != null) {
-    const fallback = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+    const fallback = new URLSearchParams({ query: parsed.title, language: tmdbLocale(metadataLanguage()) });
     hits = list(record(await tmdbGet(`/search/tv?${fallback}`))?.results)
       .map(seriesHit)
       .filter((hit): hit is TmdbHit => hit != null);
@@ -301,7 +302,7 @@ function rankCandidates(items: TmdbCandidate[], year: number | null) {
 }
 
 async function movieCandidateSearch(title: string, year: number | null, mode: "primary" | "any" | "none") {
-  const params = new URLSearchParams({ query: title, language: "ro-RO", include_adult: "false" });
+  const params = new URLSearchParams({ query: title, language: tmdbLocale(metadataLanguage()), include_adult: "false" });
   if (year != null && mode === "primary") params.set("primary_release_year", String(year));
   if (year != null && mode === "any") params.set("year", String(year));
   const body = record(await tmdbGet(`/search/movie?${params}`));
@@ -330,13 +331,13 @@ export async function searchSeriesCandidates(query: string, year: number | null)
   if (direct != null) return candidateById("tv", direct);
   if (isTmdbUrl(query)) return [];
   const parsed = parseSearchInput(query, year);
-  const params = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+  const params = new URLSearchParams({ query: parsed.title, language: tmdbLocale(metadataLanguage()) });
   if (parsed.year != null) params.set("first_air_date_year", String(parsed.year));
   let results = list(record(await tmdbGet(`/search/tv?${params}`))?.results)
     .map(candidateFrom)
     .filter((item): item is TmdbCandidate => item != null);
   if (!results.length && parsed.year != null) {
-    const fallback = new URLSearchParams({ query: parsed.title, language: "ro-RO" });
+    const fallback = new URLSearchParams({ query: parsed.title, language: tmdbLocale(metadataLanguage()) });
     results = list(record(await tmdbGet(`/search/tv?${fallback}`))?.results)
       .map(candidateFrom)
       .filter((item): item is TmdbCandidate => item != null);
@@ -440,16 +441,17 @@ export interface TmdbPerson {
   imdbId: string | null;
 }
 
-/** Person profile; Romanian biography when TMDB has one, English otherwise. Shares the cache entry used by name latinization. */
+/** Person profile; biography in the metadata language when TMDB has one, English otherwise. Shares the cache entry used by name latinization. */
 export async function fetchPerson(personId: number): Promise<TmdbPerson | null> {
   const person = record(await tmdbGet(`/person/${personId}?language=en-US&append_to_response=translations`));
   if (!person) return null;
   const translations = list(record(person.translations)?.translations).map(record);
-  const romanian = text(record(translations.find((item) => item?.iso_639_1 === "ro")?.data)?.biography);
+  const language = metadataLanguage();
+  const localized = language === "en" ? null : text(record(translations.find((item) => item?.iso_639_1 === language)?.data)?.biography);
   const name = text(person.name) ?? "";
   return {
     name: await latinPersonName(personId, name),
-    biography: romanian ?? text(person.biography),
+    biography: localized ?? text(person.biography),
     birthday: text(person.birthday),
     deathday: text(person.deathday),
     placeOfBirth: text(person.place_of_birth),
@@ -507,20 +509,25 @@ function similarOf(details: Record<string, unknown>, titleField: "title" | "name
     .filter((item): item is NonNullable<typeof item> => item != null);
 }
 
-function releaseDateOf(details: Record<string, unknown>) {
+/**
+ * Romanian keeps the local (RO) theatrical date. Other languages use the original release date:
+ * a language is not a country, and a late US release would also shift the year (Nosferatu 1922 → 1929).
+ */
+function releaseDateOf(details: Record<string, unknown>, language: MetadataLanguage) {
   const results = list(record(details.release_dates)?.results).map(record);
-  const romanian = results.find((item) => item?.iso_3166_1 === "RO");
-  const dates = list(romanian?.release_dates).map(record);
+  const region = tmdbRegion(language);
+  const local = region ? results.find((item) => item?.iso_3166_1 === region) : null;
+  const dates = list(local?.release_dates).map(record);
   const theatrical = dates.find((item) => item?.type === 3) ?? dates[0];
   const chosen = text(theatrical?.release_date) ?? text(details.release_date);
   return chosen ? chosen.slice(0, 10) : null;
 }
 
-function preferredPoster(images: unknown, fallback: string | null) {
+function preferredPoster(images: unknown, fallback: string | null, language: MetadataLanguage) {
   const posters = list(record(images)?.posters)
     .map(record)
     .filter((image) => text(image?.file_path));
-  const rank = (language: unknown) => (language === "ro" ? 0 : language === "en" ? 1 : language == null ? 2 : 3);
+  const rank = (value: unknown) => languageRank(language, typeof value === "string" ? value : null);
   posters.sort((a, b) => rank(a?.iso_639_1) - rank(b?.iso_639_1));
   return text(posters[0]?.file_path) ?? fallback;
 }
@@ -568,17 +575,19 @@ export interface MovieMetadata {
 }
 
 export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
+  const language = metadataLanguage();
+  const media = tmdbMediaLanguages(language);
   // One round-trip: parallel detail/image/video calls were timing out on this network.
   const details = record(
     await tmdbGet(
-      `/movie/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,release_dates,images,videos&include_image_language=ro,en,null&include_video_language=ro,en,null`,
+      `/movie/${tmdbId}?language=${tmdbLocale(language)}&append_to_response=credits,recommendations,external_ids,translations,release_dates,images,videos&include_image_language=${media}&include_video_language=${media}`,
     ),
   );
   if (!details) throw new Error("tmdb_empty");
   const images = details.images;
   const videos = videosOf(details.videos);
   const credits = record(details.credits);
-  const poster = preferredPoster(images, text(details.poster_path));
+  const poster = preferredPoster(images, text(details.poster_path), language);
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
   const cast = await latinizeCast(castOf(credits));
   const directors = await latinizeCrew(namesOf(credits, "Director"));
@@ -589,7 +598,7 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
   ]);
   const stills = stillsOf(images);
   const similar = similarOf(details, "title");
-  const trailer = pickTrailer(videos);
+  const trailer = pickTrailer(videos, language);
   // Never block matching on CDN downloads — posters load via redirect.
   void downloadTmdbImages([
     { size: "w342", path: poster },
@@ -598,7 +607,7 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
     ...cast.map((person) => ({ size: "w185", path: person.profilePath })),
     ...similar.map((item) => ({ size: "w342", path: item.posterPath })),
   ]);
-  const releaseDate = releaseDateOf(details);
+  const releaseDate = releaseDateOf(details, language);
   return {
     tmdbId,
     imdbId: text(record(details.external_ids)?.imdb_id),
@@ -621,7 +630,7 @@ export async function fetchMovie(tmdbId: number): Promise<MovieMetadata> {
     stills,
     similar,
     trailer,
-    videos: rankVideos(videos),
+    videos: rankVideos(videos, language),
   };
 }
 
@@ -675,7 +684,7 @@ function artworkOf(images: unknown, field: "posters" | "backdrops"): ArtworkOpti
 
 /** Every poster and backdrop TMDB has for a movie, for picking artwork by hand. */
 export async function fetchMovieArtwork(tmdbId: number): Promise<MovieArtwork> {
-  const images = await tmdbGet(`/movie/${tmdbId}/images?include_image_language=ro,en,null`, 7 * DAY_MS);
+  const images = await tmdbGet(`/movie/${tmdbId}/images?include_image_language=${tmdbMediaLanguages(metadataLanguage())}`, 7 * DAY_MS);
   return { posters: artworkOf(images, "posters"), backdrops: artworkOf(images, "backdrops") };
 }
 
@@ -699,16 +708,18 @@ export interface SeriesMetadata {
 }
 
 export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
+  const language = metadataLanguage();
+  const media = tmdbMediaLanguages(language);
   const details = record(
     await tmdbGet(
-      `/tv/${tmdbId}?language=ro-RO&append_to_response=credits,recommendations,external_ids,translations,images,videos&include_image_language=ro,en,null&include_video_language=ro,en,null`,
+      `/tv/${tmdbId}?language=${tmdbLocale(language)}&append_to_response=credits,recommendations,external_ids,translations,images,videos&include_image_language=${media}&include_video_language=${media}`,
     ),
   );
   if (!details) throw new Error("tmdb_empty");
   const images = details.images;
   const videos = videosOf(details.videos);
   const credits = record(details.credits);
-  const poster = preferredPoster(images, text(details.poster_path));
+  const poster = preferredPoster(images, text(details.poster_path), language);
   const backdropPath = preferredBackdrop(images, text(details.backdrop_path));
   const cast = await latinizeCast(castOf(credits));
   const creators = await latinizeCrew(
@@ -718,7 +729,7 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
       .filter((person): person is CrewName => person.name != null),
   );
   const similar = similarOf(details, "name");
-  const trailer = pickTrailer(videos);
+  const trailer = pickTrailer(videos, language);
   const airDate = text(details.first_air_date);
   void downloadTmdbImages([
     { size: "w342", path: poster },
@@ -743,7 +754,7 @@ export async function fetchSeries(tmdbId: number): Promise<SeriesMetadata> {
     cast,
     similar,
     trailer,
-    videos: rankVideos(videos),
+    videos: rankVideos(videos, language),
   };
 }
 
@@ -757,7 +768,7 @@ export interface EpisodeMetadata {
 }
 
 export async function fetchSeason(tmdbId: number, seasonNumber: number) {
-  const body = record(await tmdbGet(`/tv/${tmdbId}/season/${seasonNumber}?language=ro-RO`));
+  const body = record(await tmdbGet(`/tv/${tmdbId}/season/${seasonNumber}?language=${tmdbLocale(metadataLanguage())}`));
   const episodes = list(body?.episodes)
     .map(record)
     .map((episode) => {

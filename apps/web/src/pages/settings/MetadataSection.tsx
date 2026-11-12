@@ -7,14 +7,15 @@ export function MetadataSection({ settings, reload, onDirty }: SectionProps) {
   const { t } = useLocale();
   const [tmdb, setTmdb] = useState("");
   const [omdb, setOmdb] = useState("");
+  const [language, setLanguage] = useState(settings.metadataLanguage);
   const save = useSave(t);
-  const dirty = Boolean(tmdb.trim() || omdb.trim());
+  const dirty = Boolean(tmdb.trim() || omdb.trim() || language !== settings.metadataLanguage);
   useReportDirty(onDirty, dirty);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     void save.run(async () => {
-      await api("/api/settings", { method: "PUT", body: JSON.stringify({ tmdbReadToken: tmdb, omdbApiKey: omdb }) });
+      await api("/api/settings", { method: "PUT", body: JSON.stringify({ tmdbReadToken: tmdb, omdbApiKey: omdb, metadataLanguage: language }) });
       setTmdb("");
       setOmdb("");
       reload();
@@ -41,6 +42,16 @@ export function MetadataSection({ settings, reload, onDirty }: SectionProps) {
           configured={settings.omdbConfigured}
           hint={settings.omdbHint}
         />
+        <div className="settings-row">
+          <label className="field">
+            <span className="settings-label">{t.metadataLanguage}</span>
+            <select value={language} onChange={(event) => setLanguage(event.target.value === "ro" ? "ro" : "en")}>
+              <option value="en">English</option>
+              <option value="ro">Română</option>
+            </select>
+          </label>
+          <p className="field-help">{t.metadataLanguageHelp}</p>
+        </div>
         <SaveRow t={t} dirty={dirty} state={save.state} />
       </form>
     </section>
