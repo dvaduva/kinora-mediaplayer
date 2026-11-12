@@ -4,6 +4,28 @@ Kinora is a personal media server for movies, series and music. It scans folders
 
 The interface is available in English and Romanian.
 
+![Kinora home screen with continue watching](docs/screenshots/web-home.webp)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Movie details](docs/screenshots/web-movie.webp) | ![Movie library](docs/screenshots/web-movies.webp) |
+| **Movie details**: ratings, artwork and file info | **Library**: filters by status and genre |
+| ![Player](docs/screenshots/web-player.webp) | ![Live TV guide](docs/screenshots/web-live.webp) |
+| **Player**: direct play, remux or on-the-fly transcoding | **Live TV**: virtual channels built from the library |
+
+### TV interface
+
+| | |
+|---|---|
+| ![TV home](docs/screenshots/tv-home.webp) | ![TV movie details](docs/screenshots/tv-movie.webp) |
+| **Home** on a TV, driven by the remote's D-pad | **Movie details** at 10-foot scale |
+
+![TV Live TV guide](docs/screenshots/tv-live.webp)
+
+<sub>The screenshots show public-domain silent films (1903–1927). Nosferatu plays from the CC0 copy on the [Internet Archive](https://archive.org/details/Nosferatu1922). Metadata, period posters and film stills come from [TMDB](https://www.themoviedb.org/); Kinora is not endorsed or certified by TMDB.</sub>
+
 ## Requirements
 
 | Component | Why |
