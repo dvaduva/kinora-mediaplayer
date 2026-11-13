@@ -1,6 +1,7 @@
 import { readShellLaunch } from "../host";
 import { bridgeBackend } from "./bridge";
 import { html5Backend } from "./html5";
+import { tizenBackend } from "./tizen";
 import { webosBackend } from "./webos";
 import type { PlayerBackend } from "./types";
 
@@ -9,14 +10,15 @@ export type { AudioTrackInfo, PlayerAdapter, PlayerBackend, PlayerEvent, PlayerS
 let backend: PlayerBackend | null = null;
 
 /**
- * The player this TV uses: the shell's native one when it offers it (AVPlay in the Tizen package),
- * the <video> on LG's native pipeline in the webOS package, otherwise the HTML5 <video> with hls.js.
+ * The player this TV uses: the <video> on the TV's native pipeline in the Tizen and webOS packages
+ * (on Tizen the shell offers AVPlay, but playback stays in the <video>, as in Jellyfin; see ./tizen),
+ * the shell's native player for any other bridge, otherwise the HTML5 <video> with hls.js.
  * Fixed for the life of the page.
  */
 export function playerBackend(): PlayerBackend {
   if (!backend) {
     const offered = readShellLaunch().player;
-    backend = offered === "webos" ? webosBackend : offered ? bridgeBackend(offered) : html5Backend;
+    backend = offered === "webos" ? webosBackend : offered === "avplay" ? tizenBackend : offered ? bridgeBackend(offered) : html5Backend;
   }
   return backend;
 }

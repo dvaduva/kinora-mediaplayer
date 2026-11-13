@@ -46,7 +46,7 @@ export interface PlayerAdapter {
 }
 
 export interface PlayerBackend {
-  name: "html5" | "avplay" | "webos" | "exoplayer-bridge";
+  name: "html5" | "avplay" | "tizen" | "webos" | "exoplayer-bridge";
   /** What this backend decodes on this device, as sent to the server. A bridge asks the shell, hence the promise. */
   capabilities(): CapabilityProfile | Promise<CapabilityProfile>;
   /**
