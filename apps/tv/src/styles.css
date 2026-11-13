@@ -852,6 +852,14 @@ code {
   bottom: 7.5rem;
 }
 
+.visualizer-notice {
+  display: block;
+  margin-top: 0.35rem;
+  font-family: "Outfit", system-ui, sans-serif;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 @media (max-width: 900px) {
   .album-dossier {
     grid-template-columns: 1fr;
@@ -1747,6 +1755,30 @@ code {
   gap: 1rem;
   background: rgba(0, 0, 0, 0.55);
   text-align: center;
+}
+
+.player-wait {
+  justify-items: center;
+}
+
+.spinner {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 0.3rem solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent, #d2ae62);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The picture of a native player is on the video plane; the empty <video> must not draw anything over it. */
+.player-video.is-native {
+  visibility: hidden;
 }
 
 .empty {

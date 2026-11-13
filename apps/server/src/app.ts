@@ -717,7 +717,13 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       reply.code(206);
       reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
       reply.header("Content-Length", String(end - start + 1));
-      return reply.send(fs.createReadStream(filePath, { start, end }));
+      // How much a player read and from where: a native player that never starts shows here as one long read.
+      const opened = Date.now();
+      const body = fs.createReadStream(filePath, { start, end });
+      reply.raw.on("close", () => {
+        request.log.info({ range, sent: body.bytesRead, size: stat.size, seconds: (Date.now() - opened) / 1000 }, "stream read");
+      });
+      return reply.send(body);
     }
     reply.header("Content-Length", String(stat.size));
     return reply.send(fs.createReadStream(filePath));

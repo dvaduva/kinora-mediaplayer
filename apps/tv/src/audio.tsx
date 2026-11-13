@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { Focusable } from "./components/Focusable";
 import { useLocale } from "./i18n";
+import { remoteAction } from "./remote";
 import { imageUrl, useAudioEngine, type AudioClips, type NowPlaying } from "@kinora/client";
 import { MiniSpectrum, Visualizer } from "@kinora/media-ui";
 
@@ -27,6 +28,33 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const { play, pause, toggle, previous, next, attachClips } = engine;
   const location = useLocation();
   const { t } = useLocale();
+
+  /**
+   * Over the visualizer the remote's Back closes it (the page under it must not go back too), and the
+   * media keys drive the music. Capture phase on window: this runs before any page's own key handler.
+   */
+  useEffect(() => {
+    if (!visual) return;
+    const onKey = (event: KeyboardEvent) => {
+      const action = remoteAction(event);
+      if (!action) return;
+      if (action === "back" || action === "stop") setVisual(false);
+      else if (action === "playPause") toggle();
+      else if (action === "play") toggle();
+      else if (action === "pause") pause();
+      else if (action === "next" || action === "fastForward") next();
+      else if (action === "previous" || action === "rewind") previous();
+      else return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [visual, setVisual, toggle, pause, next, previous]);
+
+  const [clipError, setClipError] = useState<string | null>(null);
+  const clipKeyForError = current?.clip?.kind === "video" ? current.clip.key : null;
+  useEffect(() => setClipError(null), [clipKeyForError]);
 
   // Video / live players take over the screen — pause music so both don't fight.
   useEffect(() => {
@@ -92,6 +120,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               artist={current.artist}
               clipKey={clipKey}
               playing={playing}
+              lite
+              onClipError={setClipError}
+              notice={clipError ? <small className="visualizer-notice">{t.clipFailed} ({clipError})</small> : null}
               closeLabel={t.close}
               onClose={() => setVisual(false)}
               actions={

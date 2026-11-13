@@ -38,6 +38,26 @@
   filter: blur(40px) brightness(0.35) saturate(1.2);
 }
 
+/*
+ * Lite (TV): a blur's cost grows with the area it covers. Blurred at a tenth of the size and scaled up by
+ * the compositor, it looks the same and costs next to nothing.
+ */
+.visualizer.is-lite .visualizer-backdrop {
+  inset: auto;
+  left: -1%;
+  top: -1%;
+  width: 10.2%;
+  height: 10.2%;
+  transform-origin: 0 0;
+  transform: scale(10);
+  filter: blur(4px) brightness(0.35) saturate(1.2);
+}
+
+/* Its own layer: the pulse (a transform each frame) then moves pixels instead of repainting them. */
+.visualizer.is-lite .visualizer-cover {
+  will-change: transform;
+}
+
 .visualizer canvas {
   position: absolute;
   inset: 0;

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ClipLoop } from "./clipLoop";
 
 const BRASS = [210, 174, 98] as const;
+/** Brightness levels the spectrum bars are drawn in, one stroke each. */
+const ALPHA_BUCKETS = 6;
 
 /** Splits the analyser's linear bins into log-spaced bands, 0..1 each. */
 export function bands(data: Uint8Array, count: number, out: Float32Array) {
@@ -45,7 +47,7 @@ export function syntheticSpectrum(data: Uint8Array, time: number) {
  * Calls `draw` every frame with the analyser's spectrum. With `playing` given, an analyser that stays
  * silent while the music plays is replaced by `syntheticSpectrum`, so the visuals still move.
  */
-export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void, playing?: boolean) {
+export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void, playing?: boolean, maxFps = 60) {
   const drawRef = useRef(draw);
   drawRef.current = draw;
   const playingRef = useRef(playing);
@@ -55,7 +57,13 @@ export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array
     const data = new Uint8Array(analyser.frequencyBinCount);
     let frame = 0;
     let silent = 0;
+    let last = 0;
+    // A frame budget under the display's: on a TV the same CPU also has to answer the remote.
+    const interval = 1000 / maxFps - 2;
     const tick = (time: number) => {
+      frame = requestAnimationFrame(tick);
+      if (time - last < interval) return;
+      last = time;
       analyser.getByteFrequencyData(data);
       let heard = false;
       for (let bin = 0; bin < data.length && !heard; bin += 4) heard = data[bin] !== 0;
@@ -63,15 +71,18 @@ export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array
       else if (playingRef.current === true) silent += 1;
       if (!heard && silent >= DEAF_FRAMES && playingRef.current === true) syntheticSpectrum(data, time);
       drawRef.current(data);
-      frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [analyser]);
+  }, [analyser, maxFps]);
 }
 
-export function fitCanvas(canvas: HTMLCanvasElement) {
-  const ratio = window.devicePixelRatio || 1;
+/**
+ * Sizes the canvas backing store to its box. A `scale` under 1 draws fewer pixels, stretched by the
+ * compositor: the full-screen visual at half resolution is a quarter of the work.
+ */
+export function fitCanvas(canvas: HTMLCanvasElement, scale = 1) {
+  const ratio = (window.devicePixelRatio || 1) * scale;
   const width = Math.round(canvas.clientWidth * ratio);
   const height = Math.round(canvas.clientHeight * ratio);
   if (canvas.width !== width || canvas.height !== height) {
@@ -113,7 +124,7 @@ export function MiniSpectrum(props: { analyser: AnalyserNode | null; onClick: ()
       const bar = Math.max(2, level * height);
       context.fillRect(index * step + step * 0.2, height - bar, step * 0.6, bar);
     });
-  }, props.playing);
+  }, props.playing, 30);
   return (
     <button className="mini-spectrum" type="button" onClick={props.onClick} aria-label={props.label} title={props.label}>
       <canvas ref={canvasRef} />
@@ -139,7 +150,22 @@ export function Visualizer(props: {
   onClose: () => void;
   actions?: ReactNode;
   controls?: ReactNode;
+  /**
+   * For a TV: a half-resolution canvas at 30 fps and a cheap backdrop blur, so the remote stays
+   * responsive and the animation even.
+   */
+  lite?: boolean;
+  /** The music video could not play: a YouTube error code, or "api" when YouTube's player did not load. */
+  onClipError?: (code: string) => void;
+  /** Shown under the caption, e.g. why the music video is missing. */
+  notice?: ReactNode;
 }) {
+  const lite = props.lite === true;
+  const fps = lite ? 30 : 60;
+  /** Per-frame motion was tuned at 60 fps; fewer frames move further each. */
+  const frameStep = 60 / fps;
+  const glowRef = useRef<{ key: string; gradient: CanvasGradient } | null>(null);
+  const coverSize = useRef(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const coverRef = useRef<HTMLDivElement>(null);
   const levels = useRef(new Float32Array(96));
@@ -169,13 +195,13 @@ export function Visualizer(props: {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    const { width, height, ratio } = fitCanvas(canvas);
+    const { width, height, ratio } = fitCanvas(canvas, lite ? 0.5 : 1);
     const count = levels.current.length;
     bands(data, count, levels.current);
     const low = bass(data);
-    smoothBass.current += (low - smoothBass.current) * 0.25;
+    smoothBass.current += (low - smoothBass.current) * Math.min(1, 0.25 * frameStep);
     const pulse = calm.current ? 0 : smoothBass.current;
-    if (!calm.current) rotation.current += 0.0015 + pulse * 0.01;
+    if (!calm.current) rotation.current += (0.0015 + pulse * 0.01) * frameStep;
 
     if (stripRef.current) {
       drawStrip(context, width, height, ratio, levels.current);
@@ -184,43 +210,70 @@ export function Visualizer(props: {
 
     const cx = width / 2;
     const cy = height / 2;
-    const radius = Math.min(width, height) * 0.2 * (1 + pulse * 0.08);
+    const base = Math.min(width, height) * 0.2;
+    const growth = 1 + pulse * 0.08;
+    const radius = base * growth;
     const reach = Math.min(width, height) * 0.16;
 
     context.clearRect(0, 0, width, height);
-    const glow = context.createRadialGradient(cx, cy, radius * 0.5, cx, cy, radius + reach * 1.6);
-    glow.addColorStop(0, `rgba(${BRASS.join(",")},${0.08 + smoothBass.current * 0.35})`);
-    glow.addColorStop(1, "rgba(20,18,26,0)");
-    context.fillStyle = glow;
+    // One gradient per canvas size; the bass only changes how strongly it is laid on.
+    const glowKey = `${width}x${height}`;
+    if (glowRef.current?.key !== glowKey) {
+      const gradient = context.createRadialGradient(cx, cy, base * 0.5, cx, cy, base + reach * 1.6);
+      gradient.addColorStop(0, `rgb(${BRASS.join(",")})`);
+      gradient.addColorStop(1, `rgba(${BRASS.join(",")},0)`);
+      glowRef.current = { key: glowKey, gradient };
+    }
+    context.globalAlpha = Math.min(1, 0.08 + smoothBass.current * 0.35);
+    context.fillStyle = glowRef.current.gradient;
     context.fillRect(0, 0, width, height);
+    context.globalAlpha = 1;
 
+    // Bars grouped by brightness: a handful of strokes per frame instead of one per bar.
     context.lineCap = "round";
-    context.lineWidth = Math.max(2, ((Math.PI * 2 * radius) / (count * 2)) * 0.55);
-    for (let index = 0; index < count * 2; index += 1) {
-      const level = levels.current[index < count ? index : count * 2 - 1 - index] ?? 0;
-      const angle = rotation.current + (index / (count * 2)) * Math.PI * 2 - Math.PI / 2;
-      const length = 4 * ratio + level * level * reach;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      context.strokeStyle = `rgba(${BRASS.join(",")},${0.35 + level * 0.65})`;
+    context.lineWidth = Math.max(2 * (lite ? 0.5 : 1), ((Math.PI * 2 * radius) / (count * 2)) * 0.55);
+    context.strokeStyle = `rgb(${BRASS.join(",")})`;
+    const inner = radius + 6 * ratio;
+    for (let bucket = 0; bucket < ALPHA_BUCKETS; bucket += 1) {
+      let any = false;
       context.beginPath();
-      context.moveTo(cx + cos * (radius + 6 * ratio), cy + sin * (radius + 6 * ratio));
-      context.lineTo(cx + cos * (radius + 6 * ratio + length), cy + sin * (radius + 6 * ratio + length));
+      for (let index = 0; index < count * 2; index += 1) {
+        const level = levels.current[index < count ? index : count * 2 - 1 - index] ?? 0;
+        if (Math.min(ALPHA_BUCKETS - 1, Math.floor(level * ALPHA_BUCKETS)) !== bucket) continue;
+        const angle = rotation.current + (index / (count * 2)) * Math.PI * 2 - Math.PI / 2;
+        const length = 4 * ratio + level * level * reach;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        context.moveTo(cx + cos * inner, cy + sin * inner);
+        context.lineTo(cx + cos * (inner + length), cy + sin * (inner + length));
+        any = true;
+      }
+      if (!any) continue;
+      context.globalAlpha = 0.35 + ((bucket + 0.5) / ALPHA_BUCKETS) * 0.65;
       context.stroke();
     }
+    context.globalAlpha = 1;
 
+    // The cover keeps its size (an image resized every frame is re-scaled every frame); the pulse is a transform.
     const coverBox = coverRef.current;
     if (coverBox) {
-      const size = (radius * 2) / ratio;
-      coverBox.style.width = `${size}px`;
-      coverBox.style.height = `${size}px`;
+      const size = Math.round((base * 2) / ratio);
+      if (size !== coverSize.current) {
+        coverSize.current = size;
+        coverBox.style.width = `${size}px`;
+        coverBox.style.height = `${size}px`;
+      }
+      coverBox.style.transform = `translate(-50%, -50%) scale(${growth.toFixed(3)})`;
     }
-  }, props.playing);
+  }, props.playing, fps);
 
+  const className = ["visualizer", clipShown ? "with-clip" : "", lite ? "is-lite" : ""].filter(Boolean).join(" ");
   return (
-    <div className={clipShown ? "visualizer with-clip" : "visualizer"} role="dialog" aria-label={props.title}>
+    <div className={className} role="dialog" aria-label={props.title}>
       {props.cover ? <div className="visualizer-backdrop" style={{ backgroundImage: `url("${props.cover}")` }} /> : null}
-      {props.clipKey ? <ClipLoop key={props.clipKey} videoKey={props.clipKey} playing={props.playing} onVisible={setClipShown} /> : null}
+      {props.clipKey ? (
+        <ClipLoop key={props.clipKey} videoKey={props.clipKey} playing={props.playing} onVisible={setClipShown} onError={props.onClipError} />
+      ) : null}
       <div className="clip-shade" />
       <canvas ref={canvasRef} />
       <div className="visualizer-cover" ref={coverRef}>
@@ -231,6 +284,7 @@ export function Visualizer(props: {
         <div>
           <div>{props.title}</div>
           <small className="muted">{props.artist}</small>
+          {props.notice}
         </div>
       </div>
       <div className="visualizer-actions">

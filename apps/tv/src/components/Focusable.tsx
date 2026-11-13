@@ -35,9 +35,13 @@ export function Focusable(props: Props) {
     activate();
   }
 
+  /**
+   * Enter (OK on the remote) reaches `onEnterPress` through spatial navigation already; handling it here too
+   * ran every action twice (play then pause again, two history entries). Only Space, for a keyboard.
+   */
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (!props.onEnterPress) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.key !== " ") return;
     event.preventDefault();
     activate();
   }

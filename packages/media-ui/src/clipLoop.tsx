@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 const LOOP_SECONDS = 12;
 /** Where the excerpt starts, as a share of the clip: past intros and label cards. */
 const LOOP_AT = 0.35;
+/** A clip that has not started playing by then is given up on (YouTube may show its own error page in the frame). */
+const START_TIMEOUT_MS = 15_000;
 
 export interface YTPlayer {
   playVideo(): void;
@@ -107,13 +109,15 @@ function embedUrl(videoKey: string) {
  *
  * Builds the iframe with referrerpolicy before src so YouTube gets a Referer.
  */
-export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible: (visible: boolean) => void }) {
+export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible: (visible: boolean) => void; onError?: (code: string) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const playingRef = useRef(props.playing);
   playingRef.current = props.playing;
   const [visible, setVisible] = useState(false);
   const { onVisible } = props;
+  const onErrorRef = useRef(props.onError);
+  onErrorRef.current = props.onError;
 
   useEffect(() => onVisible(visible), [visible, onVisible]);
 
@@ -121,7 +125,16 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
     let disposed = false;
     let timer = 0;
     let segment: { start: number; end: number } | null = null;
+    let started = false;
     setVisible(false);
+    const fail = (code: string) => {
+      if (disposed) return;
+      setVisible(false);
+      onErrorRef.current?.(code);
+    };
+    const startTimer = window.setTimeout(() => {
+      if (!started) fail("timeout");
+    }, START_TIMEOUT_MS);
 
     const host = hostRef.current;
     if (!host) return;
@@ -162,6 +175,7 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
               if (!disposed) setVisible(true);
             },
             onStateChange: (event) => {
+              if (event.data === PLAYING) started = true;
               if (event.data === PLAYING || event.data === BUFFERING) {
                 ensureSegment(event.target);
                 hideCaptions(event.target);
@@ -176,15 +190,14 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
               }
             },
             // 101/150/153: embed blocked; keep the cover visualizer.
-            onError: () => {
-              if (!disposed) setVisible(false);
-            },
+            onError: (event) => fail(String(event.data)),
           },
         });
         playerRef.current = player;
         timer = window.setInterval(() => {
           if (typeof player.getCurrentTime !== "function" || typeof player.getPlayerState !== "function") return;
           const state = player.getPlayerState();
+          if (state === PLAYING) started = true;
           if (state === PLAYING || state === BUFFERING) {
             ensureSegment(player);
             setVisible(true);
@@ -196,11 +209,12 @@ export function ClipLoop(props: { videoKey: string; playing: boolean; onVisible:
           if (playingRef.current && state !== PLAYING && state !== BUFFERING) player.playVideo();
         }, 200);
       })
-      .catch(() => undefined);
+      .catch(() => fail("api"));
 
     return () => {
       disposed = true;
       window.clearInterval(timer);
+      window.clearTimeout(startTimer);
       try {
         playerRef.current?.destroy();
       } catch {

@@ -40,6 +40,9 @@ export function PlayerPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [delay, setDelay] = useState(0);
   const [audioTracks, setAudioTracks] = useState<AudioTrackInfo[]>([]);
+  /** The picture is moving: until then a loading screen covers the (black) video. */
+  const [rolling, setRolling] = useState(false);
+  const [buffering, setBuffering] = useState<number | null>(null);
   const audioKey = useRef("");
   const resumed = useRef(false);
   const hideTimer = useRef(0);
@@ -61,7 +64,7 @@ export function PlayerPage() {
     const video = videoRef.current;
     if (!video) return;
     const player = backend.create(video, {
-      onFatal: () => setErrorRef.current("playback_failed"),
+      onFatal: (code) => setErrorRef.current(code ? `playback_failed: ${code}` : "playback_failed"),
       onUnsupported: () => setErrorRef.current("playback_failed"),
     });
     playerRef.current = player;
@@ -76,10 +79,14 @@ export function PlayerPage() {
     resumed.current = false;
     subtitleDirty.current = false;
     setSubsOpen(false);
+    setRolling(false);
+    setBuffering(null);
   }, [fileId]);
 
   const selectedTrack = view?.subtitles.find((track) => track.id === selected && track.textBased && track.available) ?? null;
   const showExternalTrack = Boolean(selectedTrack && selectedTrack.origin !== "embedded");
+  // Embedded text subtitles are read from the file by the server a minute at a time and drawn by the overlay, on every backend.
+  const showEmbeddedTrack = Boolean(selectedTrack && selectedTrack.origin === "embedded");
 
   useEffect(() => {
     const player = playerRef.current;
@@ -94,8 +101,22 @@ export function PlayerPage() {
     };
     const report = () => reportPlaybackProgress(fileId, player, view, { dirty: subtitleDirty.current, selected, delay: delayRef.current });
 
+    // Rolling once the clock moves forward by small steps: a native player reports "playing" before its
+    // first frame, and a seek (the resume point) jumps the clock without anything on screen yet.
+    let lastTime = Number.NaN;
+    const onTime = () => {
+      const time = player.currentTime;
+      if (Number.isFinite(lastTime) && time > lastTime && time - lastTime < 3) {
+        setRolling(true);
+        // The clock moves, so the picture does: a buffering report that never got its "complete" must not cover it.
+        setBuffering(null);
+      }
+      lastTime = time;
+    };
     const off = [
       player.on("loadedmetadata", onMeta),
+      player.on("timeupdate", onTime),
+      player.on("buffering", () => setBuffering(player.buffering ?? null)),
       player.on("pause", report),
       player.on("play", () => setPaused(false)),
       player.on("pause", () => setPaused(true)),
@@ -178,8 +199,13 @@ export function PlayerPage() {
 
   function seekBy(delta: number) {
     const player = playerRef.current;
-    if (!player || !Number.isFinite(player.duration)) return;
-    player.seek(Math.max(0, Math.min(player.duration - 1, player.currentTime + delta)));
+    if (!player) return;
+    // A native player may not know the length yet (or not report it): the library's duration stands in.
+    const length = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : (view?.duration ?? Number.NaN);
+    if (!Number.isFinite(length)) return;
+    const target = Math.max(0, Math.min(length - 1, player.currentTime + delta));
+    player.seek(target);
+    setPosition(target);
     showChrome();
   }
 
@@ -230,13 +256,15 @@ export function PlayerPage() {
         return;
       }
       if (subsOpen) return;
+      // A focused button (Back, CC) takes Enter itself, through spatial navigation.
+      const onButton = (event.target as HTMLElement | null)?.closest?.("[role=button]") != null;
       if (event.key === "c" || event.key === "C") {
         event.preventDefault();
         setSubsOpen(true);
         showChrome();
         return;
       }
-      if (event.key === "Enter" || event.key === " " || event.key === "k") {
+      if ((event.key === "Enter" || event.key === " " || event.key === "k") && !onButton) {
         event.preventDefault();
         togglePlay();
         return;
@@ -285,6 +313,8 @@ export function PlayerPage() {
   }
 
   const waiting = preparing && !play.started;
+  // Before the first frame, and again while a native player refills its buffer after a stall or a seek.
+  const loading = !waiting && (!rolling || buffering != null);
   const progress = duration > 0 ? position / duration : 0;
   const textTracks = view.subtitles.filter((track) => track.textBased);
 
@@ -303,7 +333,14 @@ export function PlayerPage() {
       }}
     >
       {backend.textTracks ? <style>{cueStyleSheet("video.player-video", view.subtitleStyle)}</style> : null}
-      <video ref={videoRef} className="player-video" playsInline autoPlay crossOrigin="anonymous">
+      <video
+        ref={videoRef}
+        // A native player draws under the page: the empty element would only draw its own placeholder over the picture.
+        className={backend.textTracks ? "player-video" : "player-video is-native"}
+        playsInline
+        autoPlay
+        crossOrigin="anonymous"
+      >
         {backend.textTracks && showExternalTrack && selectedTrack ? (
           <track
             key={selectedTrack.id}
@@ -316,9 +353,17 @@ export function PlayerPage() {
           />
         ) : null}
       </video>
-      {!backend.textTracks ? (
+      {!backend.textTracks || showEmbeddedTrack ? (
         <SubtitleOverlay
-          url={showExternalTrack && selectedTrack ? subtitleUrl(fileId, selectedTrack.id) : null}
+          source={
+            !selectedTrack
+              ? null
+              : showEmbeddedTrack
+                ? { kind: "embedded", fileId, subtitleId: selectedTrack.id }
+                : !backend.textTracks
+                  ? { kind: "file", url: subtitleUrl(fileId, selectedTrack.id) }
+                  : null
+          }
           delay={delay}
           style={view.subtitleStyle}
           currentTime={() => playerRef.current?.currentTime ?? 0}
@@ -326,8 +371,15 @@ export function PlayerPage() {
       ) : null}
       {waiting ? (
         <div className="player-wait">
+          <div className="spinner" />
           <p>{t.preparing}</p>
           {play.status?.progress != null ? <p className="hint">{Math.round(play.status.progress * 100)}%</p> : null}
+        </div>
+      ) : loading ? (
+        <div className="player-wait">
+          <div className="spinner" />
+          <p>{t.loading}</p>
+          {buffering != null && buffering > 0 ? <p className="hint">{Math.round(buffering)}%</p> : null}
         </div>
       ) : null}
       <div className={chromeVisible || waiting || subsOpen ? "player-chrome is-visible" : "player-chrome"}>
@@ -368,17 +420,17 @@ export function PlayerPage() {
                     focusKey={`sub-${track.id}`}
                     focusOnMount={selected === track.id}
                     onEnterPress={() => {
-                      if (!track.available || track.origin === "embedded") return;
+                      if (!track.available) return;
                       subtitleDirty.current = true;
                       setSelected(track.id);
                     }}
                   >
                     {subtitleLabel(track, locale)}
-                    {!track.available || track.origin === "embedded" ? " *" : ""}
+                    {!track.available ? " *" : ""}
                   </Focusable>
                 ))}
               </div>
-              {selectedTrack && selectedTrack.origin !== "embedded" ? (
+              {selectedTrack ? (
                 <div className="player-subs-delay">
                   <p className="player-subs-title">{t.subtitleDelay}</p>
                   <div className="player-subs-delay-row">

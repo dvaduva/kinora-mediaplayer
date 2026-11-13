@@ -40,6 +40,8 @@ export interface Avplay {
   setSelectTrack(type: string, index: number): void;
   suspend?(): void;
   restore?(): void;
+  /** How much AVPlay buffers before it starts ("PLAYER_BUFFER_FOR_PLAY") or resumes after a stall; IDLE state only. */
+  setBufferingParam?(type: string, unit: string, amount: number): void;
 }
 
 export interface AvplayOptions {
@@ -52,6 +54,24 @@ export interface AvplayOptions {
 /** AVPlay's display rectangle is in a 1920×1080 space whatever the page's resolution. */
 const SCREEN = { width: 1920, height: 1080 };
 const TIME_REPORT_MS = 250;
+/**
+ * Seconds of picture AVPlay holds before it starts and after a stall. Its default fills a large byte buffer
+ * first, which for a high-bitrate file from a network share is a long black screen.
+ */
+const START_BUFFER_SECONDS = 3;
+const RESUME_BUFFER_SECONDS = 6;
+/** Some firmware never answers a seek (before the first play, on a file without an index): carry on without it. */
+const SEEK_TIMEOUT_MS = 5000;
+/** While a source has not started, AVPlay's state is logged this often. */
+const WATCH_MS = 3000;
+
+function describe(error: unknown) {
+  if (error && typeof error === "object") {
+    const record = error as { name?: unknown; message?: unknown; code?: unknown };
+    return [record.name, record.code, record.message].filter((part) => part != null && part !== "").join(" ") || String(error);
+  }
+  return String(error);
+}
 
 function seconds(milliseconds: number) {
   return Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds / 1000 : 0;
@@ -90,6 +110,20 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
   let pendingPlay = false;
   let lastTime = 0;
   let suspended = false;
+  /** A seek AVPlay has not answered yet; AVPlay refuses a second seek, or play(), meanwhile. */
+  let seeking = false;
+  let queuedSeek: number | null = null;
+  let watch: ReturnType<typeof setInterval> | null = null;
+  let opened = 0;
+
+  function log(message: string) {
+    options.send({ event: "log", session, message: `[${((now() - opened) / 1000).toFixed(1)}s] ${message}` });
+  }
+
+  function stopWatch() {
+    if (watch != null) clearInterval(watch);
+    watch = null;
+  }
 
   function state() {
     try {
@@ -139,9 +173,13 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
   function close() {
     if (!open) return;
     open = false;
+    stopWatch();
+    log("close");
     prepared = false;
     pendingSeek = null;
     pendingPlay = false;
+    seeking = false;
+    queuedSeek = null;
     try {
       avplay.stop();
     } catch {
@@ -155,16 +193,47 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
     setActive(false);
   }
 
-  /** A refused seek is not fatal: HLS of a growing transcode refuses seeks past the encoded part, and playback goes on. */
+  /**
+   * A refused seek is not fatal: HLS of a growing transcode refuses seeks past the encoded part, and playback goes on.
+   * One seek at a time: presses of → while one runs are folded into the last target, sent when it is done.
+   */
   function seekNow(milliseconds: number) {
+    if (seeking) {
+      queuedSeek = milliseconds;
+      return;
+    }
     const at = session;
-    const report = () => {
-      if (at === session && open) options.send({ event: "time", session: at, time: seconds(safeTime()), duration: duration() });
-    };
+    seeking = true;
+    let answered = false;
+    log(`seek ${Math.round(milliseconds)}ms`);
+    const timer = setTimeout(() => done("timeout"), SEEK_TIMEOUT_MS);
+    function done(how: string) {
+      if (answered) return;
+      answered = true;
+      log(`seek ${how}, state ${state()}`);
+      clearTimeout(timer);
+      if (at !== session || !open) return;
+      seeking = false;
+      if (queuedSeek != null) {
+        const next = queuedSeek;
+        queuedSeek = null;
+        seekNow(next);
+        return;
+      }
+      options.send({ event: "time", session: at, time: seconds(safeTime()), duration: duration() });
+      if (pendingPlay) {
+        pendingPlay = false;
+        playNow();
+      }
+    }
     try {
-      avplay.seekTo(Math.max(0, Math.round(milliseconds)), report, report);
-    } catch {
-      report();
+      avplay.seekTo(
+        Math.max(0, Math.round(milliseconds)),
+        () => done("done"),
+        (error) => done(`failed ${describe(error)}`),
+      );
+    } catch (error) {
+      done(`threw ${describe(error)}`);
     }
   }
 
@@ -179,8 +248,10 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
   function playNow() {
     try {
       avplay.play();
+      log(`play, state ${state()}`);
       options.send({ event: "playing", session });
-    } catch {
+    } catch (error) {
+      log(`play threw ${describe(error)}, state ${state()}`);
       options.send({ event: "error", session, code: "play_failed" });
     }
   }
@@ -191,56 +262,90 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
     const at = session;
     lastTime = 0;
     pendingSeek = command.start > 0 ? command.start * 1000 : null;
+    opened = now();
+    log(`open ${command.kind} ${command.url.replace(/token=[^&]+/, "token=…")}`);
     try {
       avplay.open(command.url);
       open = true;
       setActive(true);
       avplay.setDisplayMethod("PLAYER_DISPLAY_MODE_LETTER_BOX");
       avplay.setDisplayRect(0, 0, SCREEN.width, SCREEN.height);
+      try {
+        avplay.setBufferingParam?.("PLAYER_BUFFER_FOR_PLAY", "PLAYER_BUFFER_SIZE_IN_SECOND", START_BUFFER_SECONDS);
+        avplay.setBufferingParam?.("PLAYER_BUFFER_FOR_RESUME", "PLAYER_BUFFER_SIZE_IN_SECOND", RESUME_BUFFER_SECONDS);
+      } catch (error) {
+        // Older firmware: AVPlay's own buffer sizes.
+        log(`setBufferingParam threw ${describe(error)}`);
+      }
       avplay.setListener({
         oncurrentplaytime: (milliseconds) => {
           if (at !== session) return;
+          stopWatch();
           const time = now();
           if (time - lastTime < TIME_REPORT_MS) return;
           lastTime = time;
           options.send({ event: "time", session: at, time: seconds(milliseconds), duration: duration() });
         },
+        onbufferingstart: () => {
+          if (at === session) log("buffering start");
+          if (at === session) options.send({ event: "buffering", session: at, percent: 0 });
+        },
+        onbufferingprogress: (percent) => {
+          if (at === session) options.send({ event: "buffering", session: at, percent: Number(percent) || 0 });
+        },
         onbufferingcomplete: () => {
-          if (at === session && state() === "PLAYING") options.send({ event: "playing", session: at });
+          if (at !== session) return;
+          log(`buffering complete, state ${state()}`);
+          options.send({ event: "buffering", session: at, percent: null });
+          if (state() === "PLAYING") options.send({ event: "playing", session: at });
         },
         onstreamcompleted: () => {
           if (at !== session) return;
           options.send({ event: "ended", session: at });
           close();
         },
+        onevent: (type, data) => {
+          if (at === session) log(`event ${type} ${data ?? ""}`);
+        },
         onerror: (type) => {
+          if (at === session) log(`error ${type}`);
           if (at === session) options.send({ event: "error", session: at, code: String(type || "player_error") });
         },
       });
-    } catch {
+    } catch (error) {
+      log(`open threw ${describe(error)}`);
       close();
       options.send({ event: "error", session: at, code: "open_failed" });
       return;
     }
+    watch = setInterval(() => {
+      if (at === session && open) log(`waiting, state ${state()}, prepared ${prepared}, seeking ${seeking}, play ${pendingPlay}, time ${safeTime()}`);
+    }, WATCH_MS);
+    // Only a diagnostic: it must not keep a test process (Node) alive.
+    (watch as { unref?: () => void }).unref?.();
+    log("prepareAsync");
     avplay.prepareAsync(
       () => {
         if (at !== session || !open) return;
         prepared = true;
+        log(`prepared, state ${state()}, duration ${duration()}s, play ${pendingPlay}`);
         if (pendingSeek != null) {
           seekNow(pendingSeek);
           pendingSeek = null;
         }
         options.send({ event: "ready", session: at, duration: duration() });
         options.send({ event: "tracks", session: at, tracks: audioTracks() });
-        if (pendingPlay) {
+        // While the start seek runs, play() waits for it (seekNow plays when it is done).
+        if (pendingPlay && !seeking) {
           pendingPlay = false;
           playNow();
         }
       },
-      () => {
+      (error) => {
         if (at !== session) return;
+        log(`prepare failed ${describe(error)}`);
         close();
-        options.send({ event: "error", session: at, code: "unsupported" });
+        options.send({ event: "error", session: at, code: `unsupported ${describe(error)}`.trim() });
       },
     );
   }
@@ -252,7 +357,8 @@ export function createAvplayController(avplay: Avplay, options: AvplayOptions) {
     if (command.session !== session || !open) return;
     if (command.command === "unload") return close();
     if (command.command === "play") {
-      if (!prepared) {
+      log(`play asked, prepared ${prepared}, seeking ${seeking}, state ${state()}`);
+      if (!prepared || seeking) {
         pendingPlay = true;
         return;
       }

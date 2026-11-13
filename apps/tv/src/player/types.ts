@@ -14,13 +14,13 @@ export type PlayerSource =
   /** The HLS stream of a remux or transcode, from `start` seconds. */
   | { kind: "hls"; url: string; start: number };
 
-export type PlayerEvent = "loadedmetadata" | "playing" | "play" | "pause" | "timeupdate" | "ended";
+export type PlayerEvent = "loadedmetadata" | "playing" | "play" | "pause" | "timeupdate" | "buffering" | "ended";
 
 export type AudioTrackInfo = BridgeAudioTrack;
 
 export interface PlayerCallbacks {
-  /** The stream cannot play (decoder or network error). */
-  onFatal: () => void;
+  /** The stream cannot play (decoder or network error); `code` is the player's own reason when it gives one. */
+  onFatal: (code?: string) => void;
   /** This backend cannot play the source at all (no HLS support). */
   onUnsupported: () => void;
 }
@@ -36,6 +36,8 @@ export interface PlayerAdapter {
   /** Seconds; NaN until known, Infinity for a growing stream. */
   readonly duration: number;
   readonly paused: boolean;
+  /** Percent of the start buffer while a native player fills it, null otherwise (or when the player does not say). */
+  readonly buffering?: number | null;
   audioTracks(): AudioTrackInfo[];
   selectAudioTrack(id: string): void;
   /** Returns the unsubscribe function. */

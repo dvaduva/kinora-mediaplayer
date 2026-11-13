@@ -6,7 +6,7 @@ import {
   type PlayerCommand,
   type PlayerReportMessage,
 } from "@kinora/shared";
-import { getApiConfig } from "@kinora/client";
+import { api, getApiConfig } from "@kinora/client";
 import type { AudioTrackInfo, PlayerAdapter, PlayerBackend, PlayerCallbacks, PlayerEvent, PlayerSource } from "./types";
 
 /**
@@ -23,7 +23,23 @@ const CAPABILITIES_TIMEOUT = 3000;
 let sessions = 0;
 let requests = 0;
 
+/** Lines for the server log, sent a batch at a time: a TV has no console to read. */
+let pending: string[] = [];
+let flushTimer = 0;
+function remoteLog(line: string) {
+  pending.push(line);
+  if (pending.length > 200) pending = pending.slice(-200);
+  if (flushTimer) return;
+  flushTimer = window.setTimeout(() => {
+    flushTimer = 0;
+    const lines = pending.splice(0, 50);
+    if (lines.length) void api("/api/devices/me/log", { method: "POST", body: JSON.stringify({ lines }) }).catch(() => undefined);
+    if (pending.length) remoteLog(pending.shift() as string);
+  }, 1000);
+}
+
 function send(command: PlayerCommand) {
+  if (command.command !== "capabilities") remoteLog(`ui → ${command.command}${"session" in command ? ` #${command.session}` : ""}${command.command === "seek" ? ` ${command.seconds.toFixed(1)}s` : ""}`);
   // The shell's page is packaged with the app (file://), so there is no origin to name.
   window.parent.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...command }, "*");
 }
@@ -66,7 +82,8 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
   let duration = Number.NaN;
   let paused = true;
   let tracks: AudioTrackInfo[] = [];
-  const handlers: Record<PlayerEvent, Array<() => void>> = { loadedmetadata: [], playing: [], play: [], pause: [], timeupdate: [], ended: [] };
+  let buffering: number | null = null;
+  const handlers: Record<PlayerEvent, Array<() => void>> = { loadedmetadata: [], playing: [], play: [], pause: [], timeupdate: [], buffering: [], ended: [] };
 
   function emit(event: PlayerEvent) {
     for (const handler of handlers[event].slice()) handler();
@@ -86,6 +103,13 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
 
   const onMessage = (event: MessageEvent) => {
     const report = fromShell(event);
+    if (report?.event === "log") {
+      remoteLog(`avplay #${report.session} ${report.message}`);
+      return;
+    }
+    if (report && report.event !== "capabilities" && report.event !== "time" && report.event !== "tracks") {
+      remoteLog(`ui ← ${report.event} #${report.session}${report.event === "error" ? ` ${report.code}` : ""}${report.event === "buffering" ? ` ${report.percent}` : ""}${report.event === "ready" ? ` ${report.duration}s` : ""}`);
+    }
     if (!report || report.event === "capabilities" || report.session !== session || session === 0) return;
     switch (report.event) {
       case "ready":
@@ -106,6 +130,10 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
         if (!Number.isNaN(report.duration)) duration = report.duration;
         emit("timeupdate");
         break;
+      case "buffering":
+        buffering = report.percent;
+        emit("buffering");
+        break;
       case "tracks":
         tracks = report.tracks;
         break;
@@ -114,7 +142,7 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
         emit("ended");
         break;
       case "error":
-        callbacks.onFatal();
+        callbacks.onFatal(report.code);
         break;
     }
   };
@@ -126,6 +154,7 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
     session = 0;
     paused = true;
     tracks = [];
+    buffering = null;
     setActive(false);
   }
 
@@ -137,6 +166,7 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
       time = source.kind === "hls" ? source.start : 0;
       duration = Number.NaN;
       paused = true;
+      buffering = null;
       setActive(true);
       send({
         command: "load",
@@ -171,6 +201,9 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
     },
     get paused() {
       return paused;
+    },
+    get buffering() {
+      return buffering;
     },
     audioTracks() {
       return tracks;

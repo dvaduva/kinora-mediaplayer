@@ -80,7 +80,9 @@ function setup() {
   const active: boolean[] = [];
   let clock = 0;
   const controller = createAvplayController(fake.avplay, {
-    send: (report) => reports.push(report),
+    send: (report) => {
+      if (report.event !== "log") reports.push(report);
+    },
     onActive: (value) => active.push(value),
     now: () => clock,
   });
@@ -170,7 +172,7 @@ test("a file AVPlay cannot open is reported, and the plane is released", () => {
   const { fake, reports, active, controller } = setup();
   controller.handle({ command: "load", session: 5, kind: "file", url: "http://tv.lan/a", start: 0 });
   fake.fail();
-  assert.deepEqual(reports, [{ event: "error", session: 5, code: "unsupported" }]);
+  assert.deepEqual(reports, [{ event: "error", session: 5, code: "unsupported Error PLAYER_ERROR_NOT_SUPPORTED_FILE" }]);
   assert.deepEqual(active, [true, false]);
 });
 
@@ -200,4 +202,42 @@ test("bridge messages are checked before the shell acts on them", () => {
   assert.equal(isPlayerCommand({ source, command: "capabilities", request: 2 }), true);
   assert.equal(isPlayerReport({ source, event: "time", session: 1, time: 3, duration: 9 }), true);
   assert.equal(isPlayerReport({ source, event: "bogus", session: 1 }), false);
+});
+
+test("one seek at a time: presses during a seek fold into the last one, and play waits for it", () => {
+  const { fake, reports, controller } = setup();
+  const pending: Array<() => void> = [];
+  fake.avplay.seekTo = (ms, ok) => {
+    fake.calls.push(`seek ${ms}`);
+    if (ok) pending.push(ok);
+  };
+  controller.handle({ command: "load", session: 6, kind: "file", url: "http://tv.lan/a", start: 0 });
+  fake.prepare();
+  controller.handle({ command: "seek", session: 6, seconds: 10 });
+  controller.handle({ command: "seek", session: 6, seconds: 20 });
+  controller.handle({ command: "seek", session: 6, seconds: 30 });
+  controller.handle({ command: "play", session: 6 });
+  assert.deepEqual(fake.calls.filter((call) => call.startsWith("seek")), ["seek 10000"]);
+  assert.equal(fake.calls.includes("play"), false, "play waits for the seek");
+  pending.shift()!();
+  assert.deepEqual(fake.calls.filter((call) => call.startsWith("seek")), ["seek 10000", "seek 30000"]);
+  pending.shift()!();
+  assert.ok(fake.calls.includes("play"));
+  assert.ok(reports.some((report) => report.event === "playing"));
+});
+
+test("buffering is reported while AVPlay fills its buffer", () => {
+  const { fake, reports, controller } = setup();
+  controller.handle({ command: "load", session: 7, kind: "file", url: "http://tv.lan/a", start: 0 });
+  fake.listener().onbufferingstart?.();
+  fake.listener().onbufferingprogress?.(40);
+  fake.listener().onbufferingcomplete?.();
+  assert.deepEqual(
+    reports.filter((report) => report.event === "buffering"),
+    [
+      { event: "buffering", session: 7, percent: 0 },
+      { event: "buffering", session: 7, percent: 40 },
+      { event: "buffering", session: 7, percent: null },
+    ],
+  );
 });

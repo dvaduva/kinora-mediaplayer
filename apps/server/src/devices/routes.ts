@@ -84,6 +84,17 @@ export function registerDevices(app: FastifyInstance) {
   app.get("/api/devices/me", async (request) => ({ device: request.device }));
 
   // The TV app reports what it decodes each time it starts, so a firmware update or a new player is picked up.
+  // What the TV's native player did (open, prepare, seek, errors): a TV has no console to read.
+  app.post("/api/devices/me/log", async (request, reply) => {
+    const lines = asRecord(request.body).lines;
+    if (!Array.isArray(lines)) return reply.code(400).send({ error: "bad_log" });
+    const device = request.device ? `${request.device.name} (${request.device.id})` : "browser";
+    for (const line of lines.slice(0, 50)) {
+      if (typeof line === "string") request.log.info({ device }, `tv: ${line.slice(0, 500)}`);
+    }
+    return reply.code(204).send();
+  });
+
   app.put("/api/devices/me/capabilities", async (request, reply) => {
     if (!request.device) return reply.code(400).send({ error: "not_a_device" });
     if (JSON.stringify(request.body ?? null).length > MAX_CAPABILITIES_JSON) return reply.code(413).send({ error: "too_large" });

@@ -45,15 +45,19 @@ export type PlayerReport =
   | { event: "playing"; session: number }
   | { event: "paused"; session: number }
   | { event: "time"; session: number; time: number; duration: number }
+  /** The player is filling its buffer: `percent` 0..100 while loading, null once it plays on. */
+  | { event: "buffering"; session: number; percent: number | null }
   | { event: "tracks"; session: number; tracks: BridgeAudioTrack[] }
   | { event: "ended"; session: number }
-  | { event: "error"; session: number; code: string };
+  | { event: "error"; session: number; code: string }
+  /** What the native player did, for the server log: there is no console to read on a TV. */
+  | { event: "log"; session: number; message: string };
 
 export type PlayerCommandMessage = PlayerCommand & { source: typeof PLAYER_BRIDGE_SOURCE };
 export type PlayerReportMessage = PlayerReport & { source: typeof PLAYER_BRIDGE_SOURCE };
 
 const COMMANDS = ["capabilities", "load", "play", "pause", "seek", "audio", "unload"];
-const EVENTS = ["capabilities", "ready", "playing", "paused", "time", "tracks", "ended", "error"];
+const EVENTS = ["capabilities", "ready", "playing", "paused", "time", "buffering", "tracks", "ended", "error", "log"];
 
 function message(value: unknown) {
   if (!value || typeof value !== "object") return null;
