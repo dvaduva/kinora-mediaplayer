@@ -151,6 +151,15 @@ async function connect(url: string) {
     return startPairing(url);
   }
   if (me.status !== 200) return showOffline(url);
+  // Signed in with the shared access key: trade it for a device token, so the server knows what this TV decodes.
+  if (!isDeviceToken(server.token)) {
+    const token = await pairWithKey(url, server.token);
+    if (gen !== generation) return;
+    if (token) {
+      setToken(url, token);
+      return openApp(url, token);
+    }
+  }
   openApp(url, server.token);
 }
 
@@ -355,6 +364,28 @@ async function runScan(gen: number, autoConnect: boolean) {
 
 // ---------------------------------------------------------------- pairing
 
+/** Device tokens are issued by pairing; anything else the shell holds is the shared access key. */
+function isDeviceToken(token: string) {
+  return token.startsWith("kd_");
+}
+
+/**
+ * Pairs this TV with the access key standing in for the approval on a phone. Without a device token the
+ * server cannot tell a TV from a browser: it serves the browser profile and transcodes what AVPlay plays.
+ */
+async function pairWithKey(url: string, key: string): Promise<string | null> {
+  const name = deviceName(platform, webos ? await webos : null);
+  const capabilities = await safeCapabilities();
+  const started = await request("POST", `${url}/api/pair`, { body: { name, platform, capabilities }, timeout: HEALTH_TIMEOUT });
+  if (started.status !== 201) return null;
+  const pair = started.body as PairStart;
+  const approved = await request("POST", `${url}/api/pair/${pair.code}/approve`, { token: key, body: {}, timeout: HEALTH_TIMEOUT });
+  if (approved.status !== 200) return null;
+  const polled = await request("GET", `${url}/api/pair/${pair.code}?secret=${encodeURIComponent(pair.secret)}`, { timeout: HEALTH_TIMEOUT });
+  const result = polled.status === 200 ? (polled.body as PairPoll) : null;
+  return result?.status === "approved" ? result.token : null;
+}
+
 /** What this TV decodes, sent with the pairing request; the TV UI sends it again on every start. */
 async function safeCapabilities() {
   try {
@@ -432,11 +463,13 @@ async function startPairing(url: string) {
   onSubmit("#key-form", (value) => {
     const key = value.trim();
     if (!key) return;
-    void request("GET", `${url}/api/devices/me`, { token: key, timeout: HEALTH_TIMEOUT }).then((response) => {
+    void request("GET", `${url}/api/devices/me`, { token: key, timeout: HEALTH_TIMEOUT }).then(async (response) => {
       if (gen !== generation) return;
       if (response.status === 200) {
-        setToken(url, key);
-        openApp(url, key);
+        const token = (await pairWithKey(url, key)) ?? key;
+        if (gen !== generation) return;
+        setToken(url, token);
+        openApp(url, token);
       } else setText("#key-status", response.status === 0 ? fill(t.offlineHelp, { server: hostOf(url) }) : t.wrongKey, "error");
     });
   });

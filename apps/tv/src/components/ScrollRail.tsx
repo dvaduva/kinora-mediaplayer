@@ -15,9 +15,20 @@ export function ScrollRail(props: { className?: string; children: ReactNode }) {
     const end = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
     // Use a small tolerance: subpixel rounding can hide a real overflow.
     const hasOverflow = el.scrollWidth > el.clientWidth + 2;
-    setEdges({ start, end });
+    // Only on a real change: a new object per scroll event re-rendered every card in the rail while it scrolled.
+    setEdges((previous) => (previous.start === start && previous.end === end ? previous : { start, end }));
     setOverflow(hasOverflow);
   }, []);
+
+  const frame = useRef(0);
+  const onScroll = useCallback(() => {
+    if (frame.current) return;
+    frame.current = window.requestAnimationFrame(() => {
+      frame.current = 0;
+      update();
+    });
+  }, [update]);
+  useEffect(() => () => window.cancelAnimationFrame(frame.current), []);
 
   useLayoutEffect(() => {
     update();
@@ -57,7 +68,7 @@ export function ScrollRail(props: { className?: string; children: ReactNode }) {
       >
         ‹
       </button>
-      <div ref={ref} className={`rail-track no-scrollbar ${props.className ?? ""}`.trim()} onScroll={update}>
+      <div ref={ref} className={`rail-track no-scrollbar ${props.className ?? ""}`.trim()} onScroll={onScroll}>
         {props.children}
       </div>
       <button

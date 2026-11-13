@@ -22,15 +22,46 @@ export function bass(data: Uint8Array) {
   return sum / (7 * 255);
 }
 
-export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void) {
+/** Frames of all-zero spectrum, while the music plays, after which the analyser is taken to be deaf. */
+const DEAF_FRAMES = 90;
+
+/**
+ * Stand-in spectrum: slow waves over the bands and a kick on the low end at 120 bpm. Used where
+ * <audio> plays through a hardware pipeline that Web Audio cannot tap (Samsung Tizen, some webOS),
+ * so the analyser reads silence although the music plays.
+ */
+export function syntheticSpectrum(data: Uint8Array, time: number) {
+  const seconds = time / 1000;
+  const kick = Math.pow(Math.max(0, Math.sin(seconds * Math.PI * 2)), 8);
+  for (let bin = 0; bin < data.length; bin += 1) {
+    const falloff = Math.max(0, 1 - bin / 360);
+    const wave = 0.5 + 0.25 * Math.sin(seconds * 1.7 + bin * 0.11) + 0.2 * Math.sin(seconds * 0.63 - bin * 0.047);
+    const low = bin < 10 ? kick * 0.45 : 0;
+    data[bin] = Math.round(255 * Math.min(1, falloff * wave * 0.85 + low));
+  }
+}
+
+/**
+ * Calls `draw` every frame with the analyser's spectrum. With `playing` given, an analyser that stays
+ * silent while the music plays is replaced by `syntheticSpectrum`, so the visuals still move.
+ */
+export function useFrames(analyser: AnalyserNode | null, draw: (data: Uint8Array) => void, playing?: boolean) {
   const drawRef = useRef(draw);
   drawRef.current = draw;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
   useEffect(() => {
     if (!analyser) return;
     const data = new Uint8Array(analyser.frequencyBinCount);
     let frame = 0;
-    const tick = () => {
+    let silent = 0;
+    const tick = (time: number) => {
       analyser.getByteFrequencyData(data);
+      let heard = false;
+      for (let bin = 0; bin < data.length && !heard; bin += 4) heard = data[bin] !== 0;
+      if (heard) silent = 0;
+      else if (playingRef.current === true) silent += 1;
+      if (!heard && silent >= DEAF_FRAMES && playingRef.current === true) syntheticSpectrum(data, time);
       drawRef.current(data);
       frame = requestAnimationFrame(tick);
     };
@@ -66,7 +97,7 @@ function drawStrip(context: CanvasRenderingContext2D, width: number, height: num
 }
 
 /** Small spectrum strip for the now-playing bar. */
-export function MiniSpectrum(props: { analyser: AnalyserNode | null; onClick: () => void; label: string }) {
+export function MiniSpectrum(props: { analyser: AnalyserNode | null; onClick: () => void; label: string; playing?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const levels = useRef(new Float32Array(24));
   useFrames(props.analyser, (data) => {
@@ -82,7 +113,7 @@ export function MiniSpectrum(props: { analyser: AnalyserNode | null; onClick: ()
       const bar = Math.max(2, level * height);
       context.fillRect(index * step + step * 0.2, height - bar, step * 0.6, bar);
     });
-  });
+  }, props.playing);
   return (
     <button className="mini-spectrum" type="button" onClick={props.onClick} aria-label={props.label} title={props.label}>
       <canvas ref={canvasRef} />
@@ -184,7 +215,7 @@ export function Visualizer(props: {
       coverBox.style.width = `${size}px`;
       coverBox.style.height = `${size}px`;
     }
-  });
+  }, props.playing);
 
   return (
     <div className={clipShown ? "visualizer with-clip" : "visualizer"} role="dialog" aria-label={props.title}>

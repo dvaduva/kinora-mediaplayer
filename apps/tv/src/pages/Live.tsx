@@ -46,8 +46,13 @@ import { remoteAction } from "../remote";
 
 const MINUTE = 60_000;
 /** Grid scale: pixels per minute; ~3 hours fit a desktop-width TV browser. */
-const PPM = 7;
-const CHANNEL_COLUMN = 220;
+/** Guide geometry at a 16px root; scaled with the root font size, which grows with the screen (styles.css). */
+const BASE_PPM = 7;
+const BASE_CHANNEL_COLUMN = 220;
+
+function remScale() {
+  return (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16) / 16;
+}
 /** Programmes this far outside the visible time range are not mounted (a full day of 200+ channels is thousands of focusables). */
 const GUIDE_OVERSCAN = 2 * 60 * MINUTE;
 /** The visible range is tracked in steps of this size, so horizontal scrolling re-renders rarely. */
@@ -254,6 +259,9 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
   const scroller = useRef<HTMLDivElement>(null);
   const scrolledFor = useRef<number | null>(null);
   const programs = useMemo(() => byChannel(guide.programs), [guide.programs]);
+  const scale = useMemo(remScale, []);
+  const PPM = BASE_PPM * scale;
+  const CHANNEL_COLUMN = Math.round(BASE_CHANNEL_COLUMN * scale);
   const width = ((to - from) / MINUTE) * PPM;
   const nowX = now >= from && now < to ? ((now - from) / MINUTE) * PPM : null;
   const slots = useMemo(() => {
@@ -271,7 +279,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
     const start = from + Math.floor(toTime(element.scrollLeft) / GUIDE_STEP) * GUIDE_STEP;
     const end = from + Math.ceil(toTime(element.scrollLeft + element.clientWidth - CHANNEL_COLUMN) / GUIDE_STEP) * GUIDE_STEP;
     setView((previous) => (previous && previous.start === start && previous.end === end ? previous : { start, end }));
-  }, [from]);
+  }, [from, PPM, CHANNEL_COLUMN]);
 
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -282,7 +290,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
       element.scrollLeft = Math.max(0, target);
     }
     updateView();
-  }, [from, nowX, updateView]);
+  }, [from, nowX, updateView, PPM]);
 
   const frame = useRef(0);
   const onScroll = () => {
@@ -381,7 +389,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
                     <Focusable
                       className="guide-program empty"
                       focusKey={`guide-empty-${channel.id}`}
-                      style={{ left: Math.max(0, (nowX ?? 0) - 20), width: Math.max(140, 45 * PPM) }}
+                      style={{ left: Math.max(0, (nowX ?? 0) - 20), width: Math.max(140 * scale, 45 * PPM) }}
                       onFocus={onRowFocus}
                       onEnterPress={() => navigate(`/live/${channel.id}`)}
                     >

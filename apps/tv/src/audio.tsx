@@ -72,6 +72,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
             {analyser ? (
               <MiniSpectrum
                 analyser={visual ? null : analyser}
+                playing={playing}
                 onClick={() => setVisual(true)}
                 label={clipKey ? t.visualizeClip : t.visualize}
               />

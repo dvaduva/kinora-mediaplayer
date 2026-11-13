@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { HomeView } from "@kinora/shared";
 import { api } from "../api";
+import { useAudio } from "../audio";
 import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { Rail } from "../components/Rail";
@@ -13,6 +14,7 @@ export function HomePage() {
   const [home, setHome] = useState<HomeView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const audio = useAudio();
 
   useEffect(() => {
     api<HomeView>("/api/home")
@@ -72,6 +74,12 @@ export function HomePage() {
               focusKey={`continue-${item.fileId}`}
               focusOnMount={!home.featured && index === 0}
               to={`/play/${item.fileId}`}
+              // A song resumes in the music player; the video player cannot play it.
+              onEnterPress={
+                item.kind === "track"
+                  ? () => audio.play({ fileId: item.fileId, title: item.title, artist: item.subtitle ?? "", cover: item.posterPath })
+                  : undefined
+              }
               title={item.title}
               meta={item.subtitle}
               src={item.posterPath}

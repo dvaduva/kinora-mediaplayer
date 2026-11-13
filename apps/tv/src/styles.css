@@ -26,6 +26,20 @@ body,
   margin: 0;
 }
 
+/*
+ * 10-foot type: everything is sized in rem, and the root grows with the screen, 24px on a 1920px TV
+ * (the size TV guidelines ask for body text read from a sofa). Narrow windows (development) keep 16px.
+ */
+html {
+  font-size: 1.25vw;
+}
+
+@media (max-width: 1280px) {
+  html {
+    font-size: 16px;
+  }
+}
+
 body {
   overflow-x: hidden;
 }
@@ -762,7 +776,6 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(12, 15, 22, 0.94);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(10px);
 }
 
 .now-bar.is-hidden {

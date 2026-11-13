@@ -6,7 +6,7 @@
   "main": "index.html",
   "title": "Kinora",
   "icon": "icon.png",
-  "largeIcon": "icon.png",
+  "largeIcon": "largeIcon.png",
   "resolution": "1920x1080",
   "requiredPermissions": [
     "network.client"

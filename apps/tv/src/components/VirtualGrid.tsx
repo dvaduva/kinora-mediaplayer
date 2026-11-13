@@ -36,6 +36,12 @@ export function VirtualGrid<T>(props: Props<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [focus, setFocus] = useState(0);
+  // Re-render only when focus moves to another row: the window is made of rows.
+  const colsRef = useRef(1);
+  colsRef.current = layout?.cols ?? 1;
+  const focusItem = useCallback((index: number) => {
+    setFocus((previous) => (Math.floor(previous / colsRef.current) === Math.floor(index / colsRef.current) ? previous : index));
+  }, []);
 
   const measure = useCallback(() => {
     const element = ref.current;
@@ -70,7 +76,7 @@ export function VirtualGrid<T>(props: Props<T>) {
   const render = (index: number) => {
     const item = items[index]!;
     children.push(
-      <Fragment key={props.getKey(item)}>{props.renderItem(item, index, () => setFocus(index))}</Fragment>,
+      <Fragment key={props.getKey(item)}>{props.renderItem(item, index, () => focusItem(index))}</Fragment>,
     );
   };
 

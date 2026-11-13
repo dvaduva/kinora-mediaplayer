@@ -19,7 +19,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webosDir = path.join(root, "apps/tv/webos");
 const outDir = path.join(webosDir, "dist");
 const stage = path.join(outDir, "app");
-const FILES = ["appinfo.json", "icon.png", "index.html", "shell.js", "shell.css"];
+const FILES = ["appinfo.json", "icon.png", "largeIcon.png", "index.html", "shell.js", "shell.css"];
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
