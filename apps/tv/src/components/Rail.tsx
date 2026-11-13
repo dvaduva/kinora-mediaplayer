@@ -2,7 +2,7 @@ import { FocusContext, useFocusable } from "@noriginmedia/norigin-spatial-naviga
 import type { ReactNode } from "react";
 import { ScrollRail } from "./ScrollRail";
 
-export function Rail(props: { title: string; focusKey: string; children: ReactNode }) {
+export function Rail(props: { title: string; focusKey: string; trackClassName?: string; children: ReactNode }) {
   const { ref, focusKey, focusSelf } = useFocusable({
     focusKey: props.focusKey,
     trackChildren: true,
@@ -13,7 +13,7 @@ export function Rail(props: { title: string; focusKey: string; children: ReactNo
     <FocusContext.Provider value={focusKey}>
       <section className="rail" ref={ref} onMouseEnter={() => focusSelf()}>
         <h2>{props.title}</h2>
-        <ScrollRail>{props.children}</ScrollRail>
+        <ScrollRail className={props.trackClassName}>{props.children}</ScrollRail>
       </section>
     </FocusContext.Provider>
   );

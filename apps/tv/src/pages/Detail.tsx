@@ -295,7 +295,7 @@ function ReviewsBlock(props: {
       ) : items.length === 0 ? (
         <p className="hint">{t.noReviews}</p>
       ) : (
-        <Rail title={t.ratingsReviews} focusKey="rail-reviews">
+        <Rail title={t.ratingsReviews} focusKey="rail-reviews" trackClassName="reviews-track">
           {items.map((review) => (
             <Focusable key={review.id} className="review-tile" focusKey={`review-${review.id}`}>
               <header>
@@ -315,7 +315,7 @@ function CastRail(props: { title: string; people: CastMember[] }) {
   const navigate = useNavigate();
   if (props.people.length === 0) return null;
   return (
-    <Rail title={props.title} focusKey="rail-cast">
+    <Rail title={props.title} focusKey="rail-cast" trackClassName="cast-track">
       {props.people.slice(0, 16).map((person, index) => {
         const photo = imageUrl(person.profilePath, "w185");
         const canOpen = Boolean(person.tmdbPersonId);

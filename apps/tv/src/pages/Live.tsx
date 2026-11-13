@@ -40,6 +40,7 @@ import {
 import { api } from "../api";
 import { Focusable } from "../components/Focusable";
 import { ScrollRail } from "../components/ScrollRail";
+import { VirtualGrid } from "../components/VirtualGrid";
 import { useLocale, type Copy, type Locale } from "../i18n";
 import { remoteAction } from "../remote";
 
@@ -47,6 +48,10 @@ const MINUTE = 60_000;
 /** Grid scale: pixels per minute; ~3 hours fit a desktop-width TV browser. */
 const PPM = 7;
 const CHANNEL_COLUMN = 220;
+/** Programmes this far outside the visible time range are not mounted (a full day of 200+ channels is thousands of focusables). */
+const GUIDE_OVERSCAN = 2 * 60 * MINUTE;
+/** The visible range is tracked in steps of this size, so horizontal scrolling re-renders rarely. */
+const GUIDE_STEP = 30 * MINUTE;
 const FILTER_KEY = "kinora.tv.liveFilter";
 const TAB_KEY = "kinora.tv.liveTab";
 
@@ -101,7 +106,8 @@ export function LivePage() {
 
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 60_000);
+    // The guide is large; the clock ticks separately, so the schedule only needs an occasional refresh.
+    const timer = window.setInterval(load, 5 * 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
@@ -189,15 +195,20 @@ export function LivePage() {
 
       {shown && shown.channels.length > 0 ? (
         tab === "whatson" ? (
-          <div className="live-list">
-            {shown.channels.map((channel, index) => {
+          <VirtualGrid
+            className="live-list"
+            items={shown.channels}
+            getKey={(channel) => channel.id}
+            before={6}
+            after={10}
+            renderItem={(channel, index, onFocus) => {
               const { current, next } = currentAndNext(programs.get(channel.id) ?? [], now);
               return (
                 <Focusable
-                  key={channel.id}
                   className="live-row"
                   focusKey={`live-now-${channel.id}`}
                   focusOnMount={index === 0}
+                  onFocus={onFocus}
                   onEnterPress={() => navigate(`/live/${channel.id}`)}
                 >
                   <ChannelLogo channel={channel} />
@@ -227,8 +238,8 @@ export function LivePage() {
                   </span>
                 </Focusable>
               );
-            })}
-          </div>
+            }}
+          />
         ) : (
           <GuideGrid guide={shown} from={from} to={to} now={now} locale={locale} t={t} />
         )
@@ -251,20 +262,46 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
     return list;
   }, [from, to]);
 
+  // The time range currently scrolled into view, rounded out to GUIDE_STEP.
+  const [view, setView] = useState<{ start: number; end: number } | null>(null);
+  const updateView = useCallback(() => {
+    const element = scroller.current;
+    if (!element) return;
+    const toTime = (x: number) => (Math.max(0, x) / PPM) * MINUTE;
+    const start = from + Math.floor(toTime(element.scrollLeft) / GUIDE_STEP) * GUIDE_STEP;
+    const end = from + Math.ceil(toTime(element.scrollLeft + element.clientWidth - CHANNEL_COLUMN) / GUIDE_STEP) * GUIDE_STEP;
+    setView((previous) => (previous && previous.start === start && previous.end === end ? previous : { start, end }));
+  }, [from]);
+
   useLayoutEffect(() => {
     const element = scroller.current;
-    if (!element || scrolledFor.current === from) return;
-    scrolledFor.current = from;
-    const target = nowX == null ? 0 : nowX - 30 * PPM;
-    element.scrollLeft = Math.max(0, target);
-  }, [from, nowX]);
+    if (!element) return;
+    if (scrolledFor.current !== from) {
+      scrolledFor.current = from;
+      const target = nowX == null ? 0 : nowX - 30 * PPM;
+      element.scrollLeft = Math.max(0, target);
+    }
+    updateView();
+  }, [from, nowX, updateView]);
+
+  const frame = useRef(0);
+  const onScroll = () => {
+    if (frame.current) return;
+    frame.current = window.requestAnimationFrame(() => {
+      frame.current = 0;
+      updateView();
+    });
+  };
+  useEffect(() => () => window.cancelAnimationFrame(frame.current), []);
+
+  const inView = (program: ChannelProgram) =>
+    view != null && program.end > view.start - GUIDE_OVERSCAN && program.start < view.end + GUIDE_OVERSCAN;
 
   const style = { "--guide-width": `${width}px`, "--channel-column": `${CHANNEL_COLUMN}px` } as CSSProperties;
-  let firstFocus = true;
 
   return (
     <div className="guide" style={style}>
-      <div className="guide-scroll" ref={scroller}>
+      <div className="guide-scroll" ref={scroller} onScroll={onScroll}>
         <div className="guide-times" aria-hidden="true">
           <span className="guide-corner" />
           <div className="guide-time-track">
@@ -275,17 +312,26 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
             ))}
           </div>
         </div>
-        <div className="guide-body">
-          {guide.channels.map((channel) => {
+        <VirtualGrid
+          className="guide-body"
+          items={guide.channels}
+          getKey={(channel) => channel.id}
+          before={6}
+          after={10}
+          trailing={
+            nowX != null ? (
+              <span className="guide-now" data-vskip="" style={{ left: CHANNEL_COLUMN + nowX }} aria-hidden="true" />
+            ) : null
+          }
+          renderItem={(channel, index, onRowFocus) => {
             const channelPrograms = programs.get(channel.id) ?? [];
-            const focusThis = firstFocus;
-            if (firstFocus) firstFocus = false;
             return (
-              <div className="guide-row" key={channel.id}>
+              <div className="guide-row">
                 <Focusable
                   className="guide-channel"
                   focusKey={`guide-ch-${channel.id}`}
-                  focusOnMount={focusThis}
+                  focusOnMount={index === 0}
+                  onFocus={onRowFocus}
                   onEnterPress={() => navigate(`/live/${channel.id}`)}
                 >
                   <ChannelLogo channel={channel} />
@@ -293,7 +339,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
                   <span className="guide-channel-name">{channel.name}</span>
                 </Focusable>
                 <div className="guide-track">
-                  {channelPrograms.map((program) => {
+                  {channelPrograms.filter(inView).map((program) => {
                     const left = ((Math.max(program.start, from) - from) / MINUTE) * PPM;
                     const right = ((Math.min(program.end, to) - from) / MINUTE) * PPM;
                     const live = program.start <= now && now < program.end;
@@ -319,6 +365,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
                         className={`guide-program${live ? " live" : ""}${past ? " past" : ""}${filler ? " filler" : ""}`}
                         focusKey={`guide-p-${program.id}`}
                         style={{ left, width: widthPx }}
+                        onFocus={onRowFocus}
                         onEnterPress={() => navigate(`/live/${channel.id}`)}
                       >
                         <strong>{title}</strong>
@@ -335,6 +382,7 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
                       className="guide-program empty"
                       focusKey={`guide-empty-${channel.id}`}
                       style={{ left: Math.max(0, (nowX ?? 0) - 20), width: Math.max(140, 45 * PPM) }}
+                      onFocus={onRowFocus}
                       onEnterPress={() => navigate(`/live/${channel.id}`)}
                     >
                       <strong>{t.liveNoProgram}</strong>
@@ -343,9 +391,8 @@ function GuideGrid(props: { guide: LiveGuide; from: number; to: number; now: num
                 </div>
               </div>
             );
-          })}
-          {nowX != null ? <span className="guide-now" style={{ left: CHANNEL_COLUMN + nowX }} aria-hidden="true" /> : null}
-        </div>
+          }}
+        />
       </div>
     </div>
   );

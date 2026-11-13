@@ -370,11 +370,12 @@ code {
   -webkit-box-orient: vertical;
 }
 
-.rail-track:has(.review-tile) {
+/* Classes, not :has() (Chromium 105+): TV browsers drop the whole rule. */
+.rail-track.reviews-track {
   grid-auto-columns: 18rem;
 }
 
-.rail-track:has(.cast-card) {
+.rail-track.cast-track {
   grid-auto-columns: var(--poster-w);
 }
 
@@ -530,7 +531,7 @@ code {
 }
 
 .rail-arrow:hover:not(:disabled),
-.rail-arrow:focus-visible:not(:disabled) {
+.rail-arrow:focus:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -602,6 +603,7 @@ code {
   margin: 0;
   font-family: "Fraunces", Georgia, serif;
   font-weight: 600;
+  font-size: 3.2rem;
   font-size: clamp(2rem, 4vw, 3.2rem);
 }
 
@@ -1186,6 +1188,7 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 28rem;
   max-width: min(100%, 28rem);
 }
 
@@ -1334,6 +1337,7 @@ code {
 .live-filler-card h1 {
   margin: 0;
   font-family: "Fraunces", Georgia, serif;
+  font-size: 2.4rem;
   font-size: clamp(1.6rem, 3vw, 2.4rem);
 }
 
@@ -1467,6 +1471,7 @@ code {
 }
 
 .connect-card {
+  width: 34rem;
   width: min(34rem, 100%);
   padding: 2rem;
   border-radius: 1.25rem;
@@ -1640,6 +1645,7 @@ code {
 
 .player-subs {
   justify-self: start;
+  width: 28rem;
   width: min(28rem, 100%);
   padding: 1rem;
   border-radius: 0.9rem;
@@ -1754,6 +1760,7 @@ code {
 }
 
 .exit-card {
+  width: 32rem;
   width: min(32rem, 90vw);
   padding: 2rem;
   border-radius: 1.25rem;
@@ -1794,4 +1801,50 @@ html.avplay-active .player-video {
   text-align: center;
   text-shadow: 0 0 0.12em #000, 0 0.05em 0.12em #000;
   white-space: pre-wrap;
+}
+
+/*
+ * Samsung 2021 TVs (Tizen 6.0) run Chromium 76. What it lacks, and the fallback used here:
+ * - aspect-ratio (Chromium 88): fixed heights or the padding-top ratio box, below.
+ * - gap on flex containers (Chromium 84): margins generated at build time (vite.config.ts) under
+ *   html.no-flex-gap, a class main.tsx sets after testing the browser.
+ * - :has() (105), :focus-visible (86), clamp()/min()/max() (79): not used without a fallback.
+ */
+@supports not (aspect-ratio: 1) {
+  .detail-poster {
+    height: 18rem;
+  }
+
+  .album-cover {
+    height: 11rem;
+  }
+
+  .poster-art,
+  .cast-photo,
+  .album-cover-lg {
+    height: 0;
+    padding-top: 150%;
+  }
+
+  .album-cover-lg {
+    padding-top: 100%;
+  }
+
+  .poster-fallback,
+  .cast-photo > span {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* The generated flex-gap margins must not cancel a deliberate push to the right. */
+.no-flex-gap .mini-spectrum {
+  margin-left: auto;
 }

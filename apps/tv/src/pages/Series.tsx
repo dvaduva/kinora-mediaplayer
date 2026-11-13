@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { SeriesSummary } from "@kinora/shared";
 import { api } from "../api";
 import { PosterCard } from "../components/Poster";
+import { VirtualGrid } from "../components/VirtualGrid";
 import { useLocale } from "../i18n";
 
 export function SeriesPage() {
@@ -29,19 +30,22 @@ export function SeriesPage() {
       {series.length === 0 ? (
         <p className="hint">{t.noSeries}</p>
       ) : (
-        <div className="grid">
-          {series.map((show, index) => (
+        <VirtualGrid
+          className="grid"
+          items={series}
+          getKey={(show) => show.id}
+          renderItem={(show, index, onFocus) => (
             <PosterCard
-              key={show.id}
               focusKey={`series-${show.id}`}
               focusOnMount={index === 0}
+              onFocus={onFocus}
               to={`/series/${show.id}`}
               title={show.title}
               meta={show.year ? String(show.year) : null}
               src={show.posterPath}
             />
-          ))}
-        </div>
+          )}
+        />
       )}
     </div>
   );

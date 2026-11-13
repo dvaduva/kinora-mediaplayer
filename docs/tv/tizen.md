@@ -53,8 +53,8 @@ The UI itself is not in the package: it is loaded from the Kinora server, so aft
 **Remote inspector** (DevTools for the app on the TV):
 
 ```bash
-tizen run -p KinoraTV.Kinora                # or start it from the TV
-sdb shell 0 debug KinoraTV.Kinora           # prints "... port: 7011"
+tizen run -p KinoraTVap.Kinora                # or start it from the TV
+sdb shell 0 debug KinoraTVap.Kinora           # prints "... port: 7011"
 sdb forward tcp:7011 tcp:7011
 ```
 

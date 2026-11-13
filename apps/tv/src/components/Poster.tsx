@@ -11,6 +11,7 @@ type Props = {
   focusKey?: string;
   focusOnMount?: boolean;
   progress?: number | null;
+  onFocus?: () => void;
 };
 
 export function PosterCard(props: Props) {
@@ -21,6 +22,7 @@ export function PosterCard(props: Props) {
       className="poster"
       focusKey={props.focusKey}
       focusOnMount={props.focusOnMount}
+      onFocus={props.onFocus}
       onEnterPress={() => navigate(props.to)}
     >
       <div className="poster-art" style={poster ? { backgroundImage: `url(${poster})` } : undefined}>

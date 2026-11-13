@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MovieSummary } from "@kinora/shared";
 import { api } from "../api";
 import { PosterCard } from "../components/Poster";
+import { VirtualGrid } from "../components/VirtualGrid";
 import { useLocale } from "../i18n";
 
 export function MoviesPage() {
@@ -29,19 +30,22 @@ export function MoviesPage() {
       {movies.length === 0 ? (
         <p className="hint">{t.noMovies}</p>
       ) : (
-        <div className="grid">
-          {movies.map((movie, index) => (
+        <VirtualGrid
+          className="grid"
+          items={movies}
+          getKey={(movie) => movie.id}
+          renderItem={(movie, index, onFocus) => (
             <PosterCard
-              key={movie.id}
               focusKey={`movie-${movie.id}`}
               focusOnMount={index === 0}
+              onFocus={onFocus}
               to={`/movies/${movie.id}`}
               title={movie.title}
               meta={movie.year ? String(movie.year) : null}
               src={movie.posterPath}
             />
-          ))}
-        </div>
+          )}
+        />
       )}
     </div>
   );

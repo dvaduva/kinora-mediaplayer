@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useAudio } from "../audio";
 import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
+import { VirtualGrid } from "../components/VirtualGrid";
 import { useLocale } from "../i18n";
 import { formatClock, imageUrl } from "@kinora/client";
 
@@ -46,37 +47,43 @@ export function MusicPage() {
       {albums.length > 0 ? (
         <>
           <h2 className="section-title">{t.albums}</h2>
-          <div className="grid">
-            {albums.map((album, index) => (
+          <VirtualGrid
+            className="grid"
+            items={albums}
+            getKey={(album) => album.id}
+            renderItem={(album, index, onFocus) => (
               <PosterCard
-                key={album.id}
                 focusKey={`album-${album.id}`}
                 focusOnMount={index === 0}
+                onFocus={onFocus}
                 to={`/music/albums/${album.id}`}
                 title={album.title}
                 meta={album.artistName}
                 src={album.coverPath}
                 badge={album.matched ? null : t.unmatched}
               />
-            ))}
-          </div>
+            )}
+          />
         </>
       ) : null}
       {artists.length > 0 ? (
         <>
           <h2 className="section-title">{t.artists}</h2>
-          <div className="grid">
-            {artists.map((artist) => (
+          <VirtualGrid
+            className="grid"
+            items={artists}
+            getKey={(artist) => artist.id}
+            renderItem={(artist, _index, onFocus) => (
               <PosterCard
-                key={artist.id}
                 focusKey={`artist-${artist.id}`}
+                onFocus={onFocus}
                 to={`/music/artists/${artist.id}`}
                 title={artist.name}
                 meta={null}
                 src={null}
               />
-            ))}
-          </div>
+            )}
+          />
         </>
       ) : null}
     </div>

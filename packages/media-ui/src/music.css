@@ -123,6 +123,9 @@
   position: absolute;
   left: 50%;
   top: 50%;
+  /* Plain sizes first: max() is Chromium 79+, and TVs are 16:9 anyway. */
+  width: 100vw;
+  height: 100vh;
   width: max(100vw, 177.78vh);
   height: max(100vh, 56.25vw);
   transform: translate(-50%, -50%) scale(1.18);

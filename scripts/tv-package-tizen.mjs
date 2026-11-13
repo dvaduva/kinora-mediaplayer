@@ -20,7 +20,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tizenDir = path.join(root, "apps/tv/tizen");
 const outDir = path.join(tizenDir, "dist");
 const stage = path.join(outDir, "app");
-const APP_ID = "KinoraTV.Kinora";
+const APP_ID = "KinoraTVap.Kinora";
 const WGT = "Kinora.wgt";
 const FILES = ["config.xml", "icon.png", "index.html", "shell.js", "shell.css"];
 
@@ -101,6 +101,6 @@ console.log(`✔ ${path.relative(root, wgt)}`);
 // 4. Optionally install and start it on the TV connected with sdb.
 if (flag("--install") || flag("--run")) {
   console.log("› Installing on the TV");
-  run(cli, ["install", "-n", WGT, ...(target ? ["-t", target] : []), "--", outDir]);
-  if (flag("--run")) run(cli, ["run", "-p", APP_ID, ...(target ? ["-t", target] : [])]);
+  run(cli, ["install", "-n", WGT, ...(target ? ["-s", target] : []), "--", outDir]);
+  if (flag("--run")) run(cli, ["run", "-p", APP_ID, ...(target ? ["-s", target] : [])]);
 }

@@ -8,6 +8,7 @@ type Props = {
   focusOnMount?: boolean;
   onEnterPress?: () => void;
   onArrowPress?: (direction: string) => boolean;
+  onFocus?: () => void;
   style?: CSSProperties;
 };
 
@@ -16,6 +17,7 @@ export function Focusable(props: Props) {
     focusKey: props.focusKey,
     onEnterPress: props.onEnterPress,
     onArrowPress: props.onArrowPress,
+    onFocus: props.onFocus ? () => props.onFocus?.() : undefined,
   });
 
   useEffect(() => {
