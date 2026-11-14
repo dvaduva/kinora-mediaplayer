@@ -4,6 +4,7 @@ data
 *.log
 .DS_Store
 .env
+.claude
 # Built by apps/tv-shell (pnpm tv:shell)
 apps/tv/tizen/index.html
 apps/tv/tizen/shell.js
