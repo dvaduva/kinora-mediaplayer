@@ -68,7 +68,9 @@ KINORA_RELEASE_KEY_PASSWORD=…
 
 Environment variables with the same names work too (CI), and `build-apk.bat` asks for them when neither is set. **Back up the keystore and its passwords**: an APK signed with another key cannot update an installed one; you would have to uninstall first (`adb uninstall com.kinora.tv`), which also forgets the pairing.
 
-The version is in `apps/android-tv/gradle.properties` (`kinora.versionName`, `kinora.versionCode`).
+The version is in `apps/android-tv/gradle.properties` (`kinora.versionName`, `kinora.versionCode`), written by `pnpm version:set` from the root `package.json`; do not edit it by hand. The versionCode is `MAJOR * 1000000 + MINOR * 1000 + PATCH`.
+
+**From CI.** A `v*` tag builds the APK on GitHub Actions and attaches it to the release (`.github/workflows/release.yml`). It is release-signed when the repository has the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (and optionally `ANDROID_KEY_PASSWORD`) secrets, and debug-signed otherwise. Use the same keystore as for local release builds, or CI APKs will not install over yours.
 
 ## 5. Debugging
 

@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 to 4 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay; on webOS through LG's native `<video>` pipeline, HLS included; on Android TV and Fire TV through ExoPlayer, in `apps/android-tv`). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen`, `apps/tv/webos` and the Android app's assets, and handles discovery, pairing, the offline screen and the version check; every platform still has to pass the checklist on real devices.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 to 5 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay; on webOS through LG's native `<video>` pipeline, HLS included; on Android TV and Fire TV through ExoPlayer, in `apps/android-tv`). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen`, `apps/tv/webos` and the Android app's assets, and handles discovery, pairing, the offline screen and the version check; every platform still has to pass the checklist on real devices.
 
 ## Client–server or standalone?
 
@@ -220,6 +220,19 @@ The same checklist passes on an Android TV device, and the APK starts on a Fire 
 
 - GitHub Actions: build the APK and webOS IPK on tags, attach them to the release.
 - One version number shared by the server, the shell and the apps; `apiVersion` bumped only on breaking API changes.
+
+### How it was built
+
+Status: implemented; the version script and the shell build are tested locally, the workflows have not yet run on GitHub.
+
+- **One version.** The root `package.json` holds it. `scripts/version.mjs` (`pnpm version:set X.Y.Z`, `pnpm version:check`) copies it into every workspace `package.json` (so the server's `/api/health` and mDNS keep reading `apps/server/package.json`), `apps/tv/tizen/config.xml`, `apps/tv/webos/appinfo.json` and `apps/android-tv/gradle.properties`. Versions are plain `MAJOR.MINOR.PATCH`, because Tizen and webOS accept nothing else; the Android `versionCode` is `MAJOR * 1000000 + MINOR * 1000 + PATCH`, so each release installs over the previous one.
+- **The shell knows its version.** `apps/tv-shell/build.mjs` defines `KINORA_APP_VERSION` from the root `package.json`; the version-mismatch screen shows the app's and the server's versions, so the user knows what to update.
+- **CI** (`.github/workflows/ci.yml`, every push to main and every pull request): version check, typecheck, tests (with ffmpeg installed, so the transcode tests run), build.
+- **Releases** (`.github/workflows/release.yml`, on a `vX.Y.Z` tag): checks the tag against the version, runs typecheck and tests, then builds the webOS IPK (`@webos-tools/cli`; no certificate needed) and the Android APK (JDK 17, the runner's Android SDK) in parallel and attaches both to a GitHub release with generated notes. The APK is release-signed from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets, and debug-signed (with a warning) without them. A manual run builds the packages as workflow artifacts without a release.
+- **Not in CI:** the Tizen `.wgt`, which must be signed with a Samsung author and distributor certificate tied to the TV's DUID; it stays a local build (`pnpm tv:package:tizen`). A server bundle or Docker image belongs to the *Always-on server* phase.
+
+### Done when
+A `v*` tag produces a GitHub release with the IPK and the APK, and `pnpm version:check` passes in CI.
 
 ## Later phases
 

@@ -14,6 +14,8 @@ const dist = path.join(here, "dist");
 const tvDir = path.resolve(here, "../tv");
 const androidAssets = path.resolve(here, "../android-tv/app/src/main/assets/shell");
 const serve = process.argv.includes("--serve");
+/** The project version (root package.json, see scripts/version.mjs), shown by the shell on the version-mismatch screen. */
+const version = JSON.parse(fs.readFileSync(path.resolve(here, "../../package.json"), "utf8")).version;
 
 /** Per platform: extra script tags the platform needs before the shell runs. */
 const PLATFORMS = {
@@ -64,6 +66,7 @@ const options = {
   sourcemap: serve ? "inline" : false,
   outdir: dist,
   logLevel: "info",
+  define: { KINORA_APP_VERSION: JSON.stringify(version) },
 };
 
 /** The dev server writes only dist/, so the TV packages always hold a production build. */

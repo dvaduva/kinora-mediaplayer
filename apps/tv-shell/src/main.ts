@@ -335,6 +335,9 @@ function showOffline(url: string) {
 
 // ---------------------------------------------------------------- incompatible
 
+/** Replaced at build time with the project version (apps/tv-shell/build.mjs). */
+declare const KINORA_APP_VERSION: string;
+
 function showIncompatible(url: string, info: HealthInfo) {
   enter("incompatible");
   const message = compatibility(info) === "server-too-old" ? t.serverTooOld : t.appTooOld;
@@ -342,6 +345,7 @@ function showIncompatible(url: string, info: HealthInfo) {
     `<p class="eyebrow">Kinora · ${escapeHtml(hostOf(url))}</p>
      <h1>${escapeHtml(t.incompatibleTitle)}</h1>
      <p class="lede">${fill(message, { version: info.serverVersion })}</p>
+     <p class="note">${fill(t.versions, { app: KINORA_APP_VERSION, server: info.serverVersion })}</p>
      <div class="actions">
        <button id="retry" class="primary">${escapeHtml(t.retry)}</button>
        <button id="change">${escapeHtml(t.changeServer)}</button>

@@ -1,0 +1,127 @@
+# A tag vMAJOR.MINOR.PATCH builds the TV apps and attaches them to a GitHub release:
+#   kinora-tv-<version>-release.apk (or -debug.apk when no signing key is set up) and com.kinora.tv_<version>_all.ipk.
+#
+#   pnpm version:set 1.2.0 && git commit -am "release 1.2.0" && git tag v1.2.0 && git push --follow-tags
+#
+# The tag must match the root package.json version. Run it by hand (Actions → Release → Run workflow) to build
+# the packages as workflow artifacts without publishing a release.
+#
+# Android signing, from repository secrets (Settings → Secrets and variables → Actions):
+#   ANDROID_KEYSTORE_BASE64          the release keystore, base64-encoded (`base64 -w0 kinora-tv-release.jks`)
+#   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (optional: defaults to the store password)
+# Without them the release carries a debug-signed APK, which still sideloads but cannot update a release-signed one.
+#
+# Tizen is not built here: a .wgt must be signed with a Samsung certificate tied to each TV (docs/tv/tizen.md).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Versions match the tag
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then node scripts/version.mjs check --tag "$GITHUB_REF_NAME"; else node scripts/version.mjs check; fi
+          echo "version=$(node scripts/version.mjs)" >> "$GITHUB_OUTPUT"
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  webos:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install the webOS CLI
+        run: npm install -g @webos-tools/cli
+      - run: pnpm tv:package:webos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webos
+          path: apps/tv/webos/dist/*.ipk
+          if-no-files-found: error
+
+  android:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Build the APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KINORA_RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KINORA_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KINORA_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            export KINORA_RELEASE_STORE_FILE="$RUNNER_TEMP/kinora-tv-release.jks"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KINORA_RELEASE_STORE_FILE"
+            pnpm tv:package:android -- --release
+            rm -f "$KINORA_RELEASE_STORE_FILE"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: building a debug-signed APK."
+            pnpm tv:package:android
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: apps/android-tv/dist/*.apk
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [verify, webos, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          ls -l packages
+          # A re-run replaces the files of the release it already made.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" packages/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" packages/* --repo "$GITHUB_REPOSITORY" --title "Kinora $VERSION" --generate-notes
+          fi

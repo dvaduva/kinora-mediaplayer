@@ -250,6 +250,21 @@ pnpm typecheck   # server, UIs and TV shell
 
 Tests that start ffmpeg are skipped automatically when ffmpeg is missing. A new test file must be added to the `test` script in [apps/server/package.json](apps/server/package.json) (or [apps/tv-shell/package.json](apps/tv-shell/package.json)).
 
+## Versions and releases
+
+The whole project carries one version, in the root `package.json`. `pnpm version:set 1.2.0` writes it into every package, the Tizen `config.xml`, the webOS `appinfo.json` and the Android app (`versionName`, and a `versionCode` derived from it); `pnpm version:check` fails when a file disagrees. The server reports it in `/api/health`, and the TV shell shows its own next to the server's when the two cannot talk. `apiVersion` (`API_VERSION` in `packages/shared`) is separate and changes only on a breaking API change.
+
+To release:
+
+```bash
+pnpm version:set 1.2.0
+git commit -am "release 1.2.0"
+git tag v1.2.0
+git push --follow-tags
+```
+
+The tag starts `.github/workflows/release.yml`: it checks that the tag matches the version, runs the typecheck and tests, builds the webOS IPK and the Android TV APK, and attaches both to a GitHub release. Tizen packages are not built in CI, since they must be signed with a Samsung certificate tied to each TV ([docs/tv/tizen.md](docs/tv/tizen.md)). Every push and pull request runs `.github/workflows/ci.yml` (version check, typecheck, tests, build).
+
 ## Documentation
 
 - [docs/smart-tv.md](docs/smart-tv.md): Smart TV apps (Tizen, webOS, Android TV), architecture and phased plan

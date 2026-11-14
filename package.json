@@ -1,5 +1,6 @@
 {
   "name": "kinora",
+  "version": "0.0.1",
   "private": true,
   "packageManager": "pnpm@10.15.0",
   "pnpm": {
@@ -17,6 +18,8 @@
     "tv:shell": "corepack pnpm --filter @kinora/tv-shell build",
     "tv:package:tizen": "node scripts/tv-package-tizen.mjs",
     "tv:package:webos": "node scripts/tv-package-webos.mjs",
-    "tv:package:android": "node scripts/tv-package-android.mjs"
+    "tv:package:android": "node scripts/tv-package-android.mjs",
+    "version:check": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set"
   }
 }
