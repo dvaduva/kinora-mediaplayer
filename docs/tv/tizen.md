@@ -48,17 +48,17 @@ The script builds the shell (`pnpm tv:shell`), copies only the app's files (`con
 
 The UI itself is not in the package: it is loaded from the Kinora server, so after a server update the TV gets the new UI on its next start without reinstalling. Reinstall only when the shell or `config.xml` changes.
 
-**From CI.** A `v*` tag also builds and signs the `.wgt` on GitHub Actions (`kinora-tv-<version>.wgt` in the release) when the repository has these secrets, each the base64 of a file from `SamsungCertificate/<profile>/`:
+**From CI.** A `v*` tag also builds and signs the `.wgt` on GitHub Actions (`kinora-tv-<version>.wgt` in the release) when the repository has these secrets: the two certificates from `SamsungCertificate/<profile>/` (base64) and their passwords.
 
 ```bash
 D=~/SamsungCertificate/kinora
 base64 -w0 $D/author.p12      | gh secret set TIZEN_AUTHOR_P12
-base64 -w0 $D/author.pwd      | gh secret set TIZEN_AUTHOR_PWD
 base64 -w0 $D/distributor.p12 | gh secret set TIZEN_DISTRIBUTOR_P12
-base64 -w0 $D/distributor.pwd | gh secret set TIZEN_DISTRIBUTOR_PWD
+gh secret set TIZEN_AUTHOR_PASSWORD         # asks for it
+gh secret set TIZEN_DISTRIBUTOR_PASSWORD    # only when it differs from the author's
 ```
 
-The `.pwd` files hold the passwords as Tizen Studio encrypts them. The package installs only on the TVs whose DUIDs are in the distributor certificate: after adding a TV, update `TIZEN_DISTRIBUTOR_P12` and `TIZEN_DISTRIBUTOR_PWD`.
+The `.pwd` files next to the certificates cannot be used instead: Tizen Studio encrypts them for the PC that wrote them, and the CLI on another machine rejects them (`Invaild password`). The job creates the profile on the runner with `tizen security-profiles add`. The package installs only on the TVs whose DUIDs are in the distributor certificate: after adding a TV, update `TIZEN_DISTRIBUTOR_P12`.
 
 ## 5. Debugging
 

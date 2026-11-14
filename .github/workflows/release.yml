@@ -14,8 +14,11 @@
 #
 # Tizen signing: a Samsung TV installs only a .wgt signed with a Samsung author + distributor certificate, and the
 # distributor certificate lists the DUIDs of the TVs it may install on, so kinora-tv-<version>.wgt runs only on those.
-# Secrets (base64 of the files Tizen Studio's Certificate Manager wrote into SamsungCertificate/<profile>/):
-#   TIZEN_AUTHOR_P12, TIZEN_AUTHOR_PWD, TIZEN_DISTRIBUTOR_P12, TIZEN_DISTRIBUTOR_PWD
+# Secrets, from what Tizen Studio's Certificate Manager wrote into SamsungCertificate/<profile>/:
+#   TIZEN_AUTHOR_P12, TIZEN_DISTRIBUTOR_P12   base64 of author.p12 and distributor.p12
+#   TIZEN_AUTHOR_PASSWORD                      the author certificate's password
+#   TIZEN_DISTRIBUTOR_PASSWORD                 the distributor certificate's password (optional: defaults to the author's)
+# The .pwd files next to them are encrypted for that PC and cannot be used here.
 # Without them the Tizen job is skipped with a warning.
 name: Release
 
@@ -112,7 +115,7 @@ jobs:
     env:
       TIZEN_STUDIO_VERSION: "6.1"
       TIZEN_HOME: /home/runner/tizen-studio
-      CERTS: ${{ secrets.TIZEN_AUTHOR_P12 != '' && secrets.TIZEN_DISTRIBUTOR_P12 != '' }}
+      CERTS: ${{ secrets.TIZEN_AUTHOR_P12 != '' && secrets.TIZEN_DISTRIBUTOR_P12 != '' && secrets.TIZEN_AUTHOR_PASSWORD != '' }}
     steps:
       - if: env.CERTS != 'true'
         run: echo "::warning::No TIZEN_* certificate secrets, so the release carries no Tizen package."
@@ -145,29 +148,16 @@ jobs:
         name: Set up the signing profile
         env:
           AUTHOR_P12: ${{ secrets.TIZEN_AUTHOR_P12 }}
-          AUTHOR_PWD: ${{ secrets.TIZEN_AUTHOR_PWD }}
+          AUTHOR_PASSWORD: ${{ secrets.TIZEN_AUTHOR_PASSWORD }}
           DISTRIBUTOR_P12: ${{ secrets.TIZEN_DISTRIBUTOR_P12 }}
-          DISTRIBUTOR_PWD: ${{ secrets.TIZEN_DISTRIBUTOR_PWD }}
+          DISTRIBUTOR_PASSWORD: ${{ secrets.TIZEN_DISTRIBUTOR_PASSWORD }}
         run: |
           certs="$RUNNER_TEMP/tizen-cert"
           mkdir -p "$certs"
           echo "$AUTHOR_P12" | base64 -d > "$certs/author.p12"
-          echo "$AUTHOR_PWD" | base64 -d > "$certs/author.pwd"
           echo "$DISTRIBUTOR_P12" | base64 -d > "$certs/distributor.p12"
-          echo "$DISTRIBUTOR_PWD" | base64 -d > "$certs/distributor.pwd"
-          data=$(sed -n 's/^TIZEN_SDK_DATA_PATH=//p' "$TIZEN_HOME/sdk.info")
-          mkdir -p "$data/profile"
-          cat > "$data/profile/profiles.xml" <<EOF
-          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-          <profiles active="kinora" version="3.1">
-          <profile name="kinora">
-          <profileitem ca="" distributor="0" key="$certs/author.p12" password="$certs/author.pwd" rootca=""/>
-          <profileitem ca="" distributor="1" key="$certs/distributor.p12" password="$certs/distributor.pwd" rootca=""/>
-          <profileitem ca="" distributor="2" key="" password="" rootca=""/>
-          </profile>
-          </profiles>
-          EOF
-          sed -i 's/^ *//' "$data/profile/profiles.xml"
+          # The CLI encrypts the passwords for this machine (.pwd files from another one do not open here).
+          "$TIZEN_HOME/tools/ide/bin/tizen" security-profiles add -n kinora             -a "$certs/author.p12" -p "$AUTHOR_PASSWORD"             -d "$certs/distributor.p12" -dp "${DISTRIBUTOR_PASSWORD:-$AUTHOR_PASSWORD}"
       - if: env.CERTS == 'true'
         name: Build the .wgt
         run: |
@@ -179,7 +169,6 @@ jobs:
         run: |
           data=$(sed -n 's/^TIZEN_SDK_DATA_PATH=//p' "$TIZEN_HOME/sdk.info")
           tail -n 80 "$data/cli/logs/cli.log" || true
-          sed 's/password="[^"]*"/password="…"/g' "$data/profile/profiles.xml" || true
       - if: env.CERTS == 'true'
         uses: actions/upload-artifact@v7
         with:
