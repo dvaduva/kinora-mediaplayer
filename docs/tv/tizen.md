@@ -48,6 +48,18 @@ The script builds the shell (`pnpm tv:shell`), copies only the app's files (`con
 
 The UI itself is not in the package: it is loaded from the Kinora server, so after a server update the TV gets the new UI on its next start without reinstalling. Reinstall only when the shell or `config.xml` changes.
 
+**From CI.** A `v*` tag also builds and signs the `.wgt` on GitHub Actions (`kinora-tv-<version>.wgt` in the release) when the repository has these secrets, each the base64 of a file from `SamsungCertificate/<profile>/`:
+
+```bash
+D=~/SamsungCertificate/kinora
+base64 -w0 $D/author.p12      | gh secret set TIZEN_AUTHOR_P12
+base64 -w0 $D/author.pwd      | gh secret set TIZEN_AUTHOR_PWD
+base64 -w0 $D/distributor.p12 | gh secret set TIZEN_DISTRIBUTOR_P12
+base64 -w0 $D/distributor.pwd | gh secret set TIZEN_DISTRIBUTOR_PWD
+```
+
+The `.pwd` files hold the passwords as Tizen Studio encrypts them. The package installs only on the TVs whose DUIDs are in the distributor certificate: after adding a TV, update `TIZEN_DISTRIBUTOR_P12` and `TIZEN_DISTRIBUTOR_PWD`.
+
 ## 5. Debugging
 
 **Remote inspector** (DevTools for the app on the TV):

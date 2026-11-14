@@ -263,7 +263,7 @@ git tag v1.2.0
 git push --follow-tags
 ```
 
-The tag starts `.github/workflows/release.yml`: it checks that the tag matches the version, runs the typecheck and tests, builds the webOS IPK and the Android TV APK, and attaches both to a GitHub release. Tizen packages are not built in CI, since they must be signed with a Samsung certificate tied to each TV ([docs/tv/tizen.md](docs/tv/tizen.md)). Every push and pull request runs `.github/workflows/ci.yml` (version check, typecheck, tests, build).
+The tag starts `.github/workflows/release.yml`: it checks that the tag matches the version, runs the typecheck and tests, builds the webOS IPK, the Android TV APK and the Tizen WGT, and attaches them to a GitHub release. The Tizen package is signed with the Samsung certificate from the `TIZEN_*` secrets, so it installs only on the TVs listed in that certificate ([docs/tv/tizen.md](docs/tv/tizen.md)). Every push and pull request runs `.github/workflows/ci.yml` (version check, typecheck, tests, build).
 
 ## Documentation
 

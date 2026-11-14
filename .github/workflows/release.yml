@@ -1,5 +1,6 @@
 # A tag vMAJOR.MINOR.PATCH builds the TV apps and attaches them to a GitHub release:
-#   kinora-tv-<version>-release.apk (or -debug.apk when no signing key is set up) and com.kinora.tv_<version>_all.ipk.
+#   kinora-tv-<version>-release.apk (or -debug.apk when no signing key is set up), com.kinora.tv_<version>_all.ipk
+#   and kinora-tv-<version>.wgt (when the Tizen certificate secrets are set).
 #
 #   pnpm version:set 1.2.0 && git commit -am "release 1.2.0" && git tag v1.2.0 && git push --follow-tags
 #
@@ -11,7 +12,11 @@
 #   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (optional: defaults to the store password)
 # Without them the release carries a debug-signed APK, which still sideloads but cannot update a release-signed one.
 #
-# Tizen is not built here: a .wgt must be signed with a Samsung certificate tied to each TV (docs/tv/tizen.md).
+# Tizen signing: a Samsung TV installs only a .wgt signed with a Samsung author + distributor certificate, and the
+# distributor certificate lists the DUIDs of the TVs it may install on, so kinora-tv-<version>.wgt runs only on those.
+# Secrets (base64 of the files Tizen Studio's Certificate Manager wrote into SamsungCertificate/<profile>/):
+#   TIZEN_AUTHOR_P12, TIZEN_AUTHOR_PWD, TIZEN_DISTRIBUTOR_P12, TIZEN_DISTRIBUTOR_PWD
+# Without them the Tizen job is skipped with a warning.
 name: Release
 
 on:
@@ -101,9 +106,84 @@ jobs:
           path: apps/android-tv/dist/*.apk
           if-no-files-found: error
 
+  tizen:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      TIZEN_STUDIO_VERSION: "6.1"
+      TIZEN_HOME: /home/runner/tizen-studio
+      CERTS: ${{ secrets.TIZEN_AUTHOR_P12 != '' && secrets.TIZEN_DISTRIBUTOR_P12 != '' }}
+    steps:
+      - if: env.CERTS != 'true'
+        run: echo "::warning::No TIZEN_* certificate secrets, so the release carries no Tizen package."
+      - if: env.CERTS == 'true'
+        uses: actions/checkout@v7
+      - if: env.CERTS == 'true'
+        uses: pnpm/action-setup@v6
+      - if: env.CERTS == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: env.CERTS == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: env.CERTS == 'true'
+        name: Cache the Tizen CLI
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.TIZEN_HOME }}
+          key: tizen-cli-${{ env.TIZEN_STUDIO_VERSION }}-${{ runner.os }}
+      - if: env.CERTS == 'true' && steps.cache.outputs.cache-hit != 'true'
+        name: Install the Tizen CLI
+        run: |
+          installer="web-cli_Tizen_Studio_${TIZEN_STUDIO_VERSION}_ubuntu-64.bin"
+          curl -fsSL -o "$RUNNER_TEMP/$installer" "https://download.tizen.org/sdk/Installer/tizen-studio_${TIZEN_STUDIO_VERSION}/$installer"
+          chmod +x "$RUNNER_TEMP/$installer"
+          "$RUNNER_TEMP/$installer" --accept-license "$TIZEN_HOME"
+      - if: env.CERTS == 'true'
+        name: Set up the signing profile
+        env:
+          AUTHOR_P12: ${{ secrets.TIZEN_AUTHOR_P12 }}
+          AUTHOR_PWD: ${{ secrets.TIZEN_AUTHOR_PWD }}
+          DISTRIBUTOR_P12: ${{ secrets.TIZEN_DISTRIBUTOR_P12 }}
+          DISTRIBUTOR_PWD: ${{ secrets.TIZEN_DISTRIBUTOR_PWD }}
+        run: |
+          certs="$RUNNER_TEMP/tizen-cert"
+          mkdir -p "$certs"
+          echo "$AUTHOR_P12" | base64 -d > "$certs/author.p12"
+          echo "$AUTHOR_PWD" | base64 -d > "$certs/author.pwd"
+          echo "$DISTRIBUTOR_P12" | base64 -d > "$certs/distributor.p12"
+          echo "$DISTRIBUTOR_PWD" | base64 -d > "$certs/distributor.pwd"
+          data=$(sed -n 's/^TIZEN_SDK_DATA_PATH=//p' "$TIZEN_HOME/sdk.info")
+          mkdir -p "$data/profile"
+          cat > "$data/profile/profiles.xml" <<EOF
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <profiles active="kinora" version="3.1">
+          <profile name="kinora">
+          <profileitem ca="" distributor="0" key="$certs/author.p12" password="$certs/author.pwd" rootca=""/>
+          <profileitem ca="" distributor="1" key="$certs/distributor.p12" password="$certs/distributor.pwd" rootca=""/>
+          <profileitem ca="" distributor="2" key="" password="" rootca=""/>
+          </profile>
+          </profiles>
+          EOF
+          sed -i 's/^ *//' "$data/profile/profiles.xml"
+      - if: env.CERTS == 'true'
+        name: Build the .wgt
+        run: |
+          TIZEN_CLI="$TIZEN_HOME/tools/ide/bin/tizen" TIZEN_PROFILE=kinora pnpm tv:package:tizen
+          mv apps/tv/tizen/dist/Kinora.wgt "apps/tv/tizen/dist/kinora-tv-$(node scripts/version.mjs).wgt"
+          rm -rf "$RUNNER_TEMP/tizen-cert"
+      - if: env.CERTS == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tizen
+          path: apps/tv/tizen/dist/*.wgt
+          if-no-files-found: error
+
   release:
     if: github.ref_type == 'tag'
-    needs: [verify, webos, android]
+    needs: [verify, webos, android, tizen]
     runs-on: ubuntu-latest
     permissions:
       contents: write
