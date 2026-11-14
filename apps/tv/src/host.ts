@@ -1,11 +1,11 @@
-import { LAUNCH_PLAYERS, SHELL_MESSAGE_SOURCE, type LaunchPlayer, type ShellMessageType } from "@kinora/shared";
+import { isShellKeyMessage, LAUNCH_PLAYERS, SHELL_MESSAGE_SOURCE, type LaunchPlayer, type ShellMessageType } from "@kinora/shared";
 
 const SHELL_KEY = "kinora.tv.inShell";
 const PLAYER_KEY = "kinora.tv.shellPlayer";
 
 /**
  * What the TV shell passed in the URL hash when it opened this UI: `#shell=1&token=…`, plus
- * `&player=avplay` when the shell offers a native player (see `PlayerCommand` in @kinora/shared), or
+ * `&player=avplay` or `&player=exoplayer` when the shell offers a native player (see `PlayerCommand` in @kinora/shared), or
  * `&player=webos` in the LG package (the <video> here is already native; see `LaunchPlayer`).
  * The hash never reaches the server; it is read once at start and removed from the address bar.
  */
@@ -46,6 +46,19 @@ export function readShellLaunch(): ShellLaunch {
 
 export function inShell() {
   return readShellLaunch().inShell;
+}
+
+/**
+ * Media and channel keys the shell took from the remote (the Android TV app does, before its WebView),
+ * replayed here as a `keydown` on the focused element, so `remoteAction` sees them like any other key.
+ */
+export function listenForShellKeys() {
+  if (!inShell()) return;
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent || !isShellKeyMessage(event.data)) return;
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: event.data.key, bubbles: true, cancelable: true }));
+  });
 }
 
 export function notifyShell(type: ShellMessageType) {

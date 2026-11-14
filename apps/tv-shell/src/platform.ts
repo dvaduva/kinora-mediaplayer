@@ -13,6 +13,7 @@ type Host = Window & {
   webapis?: WebApis;
   PalmSystem?: unknown;
   PalmServiceBridge?: new () => PalmBridge;
+  KinoraAndroid?: unknown;
   KINORA_PLATFORM?: string;
 };
 
@@ -21,11 +22,12 @@ const host = window as Host;
 export function detectPlatform(): DevicePlatform {
   if (host.tizen || host.KINORA_PLATFORM === "tizen") return "tizen";
   if (host.PalmSystem || host.PalmServiceBridge || host.KINORA_PLATFORM === "webos") return "webos";
+  if (host.KinoraAndroid || host.KINORA_PLATFORM === "android") return "android";
   return "browser";
 }
 
-/** `webos`: what Luna said about the TV (see `webosInfo`), for its model name. */
-export function deviceName(platform: DevicePlatform, webos?: WebosInfo | null) {
+/** `webos`: what Luna said about the TV (see `webosInfo`), for its model name. `native`: the name the Android app gives. */
+export function deviceName(platform: DevicePlatform, webos?: WebosInfo | null, native?: string | null) {
   if (platform === "tizen") {
     try {
       const model = host.webapis?.productinfo?.getRealModel?.() ?? host.webapis?.productinfo?.getModel?.();
@@ -36,6 +38,7 @@ export function deviceName(platform: DevicePlatform, webos?: WebosInfo | null) {
     return "Samsung TV";
   }
   if (platform === "webos") return webos?.modelName ? `LG TV ${webos.modelName}` : "LG TV";
+  if (platform === "android") return native || "Android TV";
   return "Browser";
 }
 
@@ -156,7 +159,7 @@ export function exitApp() {
   window.close();
 }
 
-/** Back on the remote: 10009 on Tizen, 461 on webOS, Escape or Backspace on a keyboard. */
+/** Back on the remote: 10009 on Tizen, 461 on webOS, Escape or Backspace on a keyboard (the Android app sends Escape). */
 export function isBackKey(event: KeyboardEvent) {
   if (event.keyCode === 10009 || event.keyCode === 461 || event.key === "Escape" || event.key === "GoBack") return true;
   if (event.key !== "Backspace") return false;

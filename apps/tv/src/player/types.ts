@@ -4,7 +4,7 @@ import type { BridgeAudioTrack, CapabilityProfile } from "@kinora/shared";
  * The TV's video player behind one interface, so the UI does not care what plays the file:
  * `html5` (the <video> element, with hls.js for converted streams), `avplay` (Samsung's native player,
  * run by the Tizen shell outside this frame), `webos` (the <video> on LG's native pipeline, HLS included)
- * and later `exoplayer-bridge` (Android TV). Each backend
+ * and `exoplayer-bridge` (Media3 in the Android TV app, run outside this frame). Each backend
  * reports the capabilities of its own pipeline.
  */
 

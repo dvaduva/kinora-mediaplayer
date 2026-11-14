@@ -16,6 +16,7 @@
     "build": "corepack pnpm --filter @kinora/web --filter @kinora/tv --filter @kinora/tv-shell build",
     "tv:shell": "corepack pnpm --filter @kinora/tv-shell build",
     "tv:package:tizen": "node scripts/tv-package-tizen.mjs",
-    "tv:package:webos": "node scripts/tv-package-webos.mjs"
+    "tv:package:webos": "node scripts/tv-package-webos.mjs",
+    "tv:package:android": "node scripts/tv-package-android.mjs"
   }
 }

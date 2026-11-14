@@ -1,5 +1,5 @@
 // Builds the TV shell into one classic script and stylesheet, then copies it into each TV package.
-//   node build.mjs           build dist/ and apps/tv/tizen, apps/tv/webos
+//   node build.mjs           build dist/ and apps/tv/tizen, apps/tv/webos, apps/android-tv (assets/shell)
 //   node build.mjs --serve   rebuild on change and serve dist/ on http://localhost:5175
 //
 // A classic (non-module) script on purpose: packaged TV apps load from file://, where Chromium refuses
@@ -12,6 +12,7 @@ import * as esbuild from "esbuild";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(here, "dist");
 const tvDir = path.resolve(here, "../tv");
+const androidAssets = path.resolve(here, "../android-tv/app/src/main/assets/shell");
 const serve = process.argv.includes("--serve");
 
 /** Per platform: extra script tags the platform needs before the shell runs. */
@@ -20,6 +21,8 @@ const PLATFORMS = {
   // webapis.js gives the shell the TV's IP address (subnet scan) and model name.
   tizen: { dir: path.join(tvDir, "tizen"), head: '<script src="$WEBAPIS/webapis/webapis.js"></script>' },
   webos: { dir: path.join(tvDir, "webos"), head: "" },
+  // The Android TV app's WebView loads it from its assets (http://appassets.androidplatform.net/assets/shell/).
+  android: { dir: androidAssets, head: "" },
 };
 
 function html(platform, head) {
@@ -77,5 +80,5 @@ if (serve) {
   fs.rmSync(dist, { recursive: true, force: true });
   await esbuild.build(options);
   writePages();
-  console.log("Shell copied into apps/tv/tizen and apps/tv/webos.");
+  console.log("Shell copied into apps/tv/tizen, apps/tv/webos and apps/android-tv.");
 }

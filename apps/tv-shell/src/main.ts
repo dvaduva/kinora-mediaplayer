@@ -1,11 +1,24 @@
-import { detectLocale, isPlayerCommand, isShellMessage, PLAYER_BRIDGE_SOURCE, type HealthInfo, type PairPoll, type PairStart, type PlayerReport } from "@kinora/shared";
+import {
+  detectLocale,
+  isPlayerCommand,
+  isShellMessage,
+  PLAYER_BRIDGE_SOURCE,
+  SHELL_MESSAGE_SOURCE,
+  type HealthInfo,
+  type PairPoll,
+  type PairStart,
+  type PlayerCommand,
+  type PlayerReport,
+  type ShellKeyMessage,
+} from "@kinora/shared";
 import { shellCopy } from "@kinora/client/shell-copy";
 import { detectAvplayCapabilities, detectCapabilities, detectWebosCapabilities, hasAvplay, type WebosInfo } from "@kinora/client/capabilities";
-import { createAvplayController, type Avplay, type AvplayController } from "./avplay";
+import { createAndroidHost, type AndroidHost } from "./android";
+import { createAvplayController, type Avplay } from "./avplay";
 import { compatibility, isHealth, scan, scanTargets, type Found } from "./discovery";
 import { focusFirst, focusRoot, handleFocusKey } from "./focus";
 import { request } from "./net";
-import { detectPlatform, deviceName, exitApp, isBackKey, localAddress, registerKeys, webosInfo } from "./platform";
+import { detectPlatform, deviceName, exitApp as exitPlatformApp, isBackKey, localAddress, registerKeys, webosInfo } from "./platform";
 import { qrSvg } from "./qr";
 import { clearCurrent, currentServer, hostOf, knownServers, normalizeServerUrl, rememberServer, setToken } from "./servers";
 import "./styles.css";
@@ -18,6 +31,9 @@ const PROBE_TIMEOUT = 1500;
 const HEARTBEAT_MS = 10_000;
 const OFFLINE_RETRY_S = 5;
 const PAIR_POLL_MS = 2000;
+/** How long the Android app's NSD browse may take to find a server before the subnet scan starts. */
+const NSD_WAIT_MS = 3000;
+const NSD_POLL_MS = 250;
 
 const view = document.getElementById("view") as HTMLElement;
 const frame = document.getElementById("frame") as HTMLIFrameElement;
@@ -30,11 +46,23 @@ let generation = 0;
 let timers: number[] = [];
 let activeUrl: string | null = null;
 
+/** A player that exists only in this page; the UI in the frame drives it by message (`PlayerCommand`). */
+interface NativePlayer {
+  handle(command: PlayerCommand): void;
+  /** Stops whatever is playing: the shell is leaving the UI (offline, pairing, server list). */
+  stop(): void;
+}
+
+/** The native side of the Android TV app (ExoPlayer, NSD, the remote's keys), when this page runs in it. */
+const android: AndroidHost | null = platform === "android" ? createAndroidHost() : null;
+
 /**
  * Samsung's native player, when this is the Tizen package: it plays MKV, HEVC, HDR and Dolby audio the
- * <video> element cannot. It exists only in this page, so the UI in the frame drives it by message.
+ * <video> element cannot; or ExoPlayer, in the Android TV app.
  */
-const avplay: AvplayController | null = platform === "tizen" && hasAvplay() ? setupAvplay() : null;
+const avplay: NativePlayer | null = platform === "tizen" && hasAvplay() ? setupAvplay() : null;
+const exoplayer: NativePlayer | null = android ? setupExoplayer(android) : null;
+const nativePlayer = avplay ?? exoplayer;
 
 /**
  * On webOS the UI's own <video> plays through LG's native pipeline (MKV, HEVC, HDR, Dolby audio, HLS),
@@ -44,7 +72,17 @@ const avplay: AvplayController | null = platform === "tizen" && hasAvplay() ? se
 const webos: Promise<WebosInfo> | null = platform === "webos" ? webosInfo() : null;
 
 /** The player the UI is told to use, in the launch hash. */
-const launchPlayer = avplay ? "avplay" : webos ? "webos" : null;
+const launchPlayer = avplay ? "avplay" : exoplayer ? "exoplayer" : webos ? "webos" : null;
+
+function setActive(active: boolean) {
+  if (active) document.documentElement.classList.add("avplay-active");
+  else document.documentElement.classList.remove("avplay-active");
+}
+
+function toFrame(report: PlayerReport) {
+  if (!frame.contentWindow || !activeUrl) return;
+  frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(activeUrl));
+}
 
 function setupAvplay() {
   const player = (window as unknown as { webapis: { avplay: Avplay } }).webapis.avplay;
@@ -53,18 +91,54 @@ function setupAvplay() {
   plane.id = "avplayer";
   plane.setAttribute("type", "application/avplayer");
   document.body.insertBefore(plane, frame);
-  const controller = createAvplayController(player, {
-    send: (report: PlayerReport) => {
-      if (!frame.contentWindow || !activeUrl) return;
-      frame.contentWindow.postMessage({ source: PLAYER_BRIDGE_SOURCE, ...report }, originOf(activeUrl));
-    },
-    onActive: (active) => {
-      if (active) document.documentElement.classList.add("avplay-active");
-      else document.documentElement.classList.remove("avplay-active");
-    },
-  });
+  const controller = createAvplayController(player, { send: toFrame, onActive: setActive });
   document.addEventListener("visibilitychange", () => controller.visibility(document.hidden));
   return controller;
+}
+
+/**
+ * ExoPlayer draws on a surface under the WebView, so the page turns transparent while a source is
+ * loaded, as with AVPlay. The activity pauses it when the app goes to the background.
+ */
+function setupExoplayer(host: AndroidHost): NativePlayer {
+  let session = 0;
+  host.onReport((report) => {
+    if (report.event === "ended" && report.session === session) setActive(false);
+    toFrame(report);
+  });
+  // Media keys reach the native side first; the UI replays them as key presses.
+  host.onKey((key) => {
+    if (screen !== "app" || !frame.contentWindow || !activeUrl) return;
+    const message: ShellKeyMessage = { source: SHELL_MESSAGE_SOURCE, type: "key", key };
+    frame.contentWindow.postMessage(message, originOf(activeUrl));
+  });
+  return {
+    handle(command) {
+      if (command.command === "load") {
+        session = command.session;
+        setActive(true);
+      } else if (command.command === "unload" && command.session === session) {
+        session = 0;
+        setActive(false);
+      }
+      host.command(command);
+    },
+    stop() {
+      if (session) host.command({ command: "unload", session });
+      session = 0;
+      setActive(false);
+    },
+  };
+}
+
+function exitApp() {
+  if (android) android.exit();
+  else exitPlatformApp();
+}
+
+/** The name shown in Settings → Devices. */
+async function nameOfDevice() {
+  return deviceName(platform, webos ? await webos : null, android?.deviceName());
 }
 
 function originOf(url: string) {
@@ -89,7 +163,7 @@ function enter(next: Screen) {
   timers = [];
   screen = next;
   if (next !== "app") {
-    avplay?.stop();
+    nativePlayer?.stop();
     frame.hidden = true;
     // Leaving the UI stops whatever it was playing.
     if (frame.getAttribute("src") !== "about:blank") frame.setAttribute("src", "about:blank");
@@ -205,7 +279,7 @@ window.addEventListener("message", (event) => {
   }
 });
 
-function handlePlayerCommand(command: Parameters<AvplayController["handle"]>[0]) {
+function handlePlayerCommand(command: PlayerCommand) {
   const url = activeUrl;
   if (!launchPlayer || !url || !frame.contentWindow) return;
   if (command.command === "capabilities") {
@@ -217,10 +291,10 @@ function handlePlayerCommand(command: Parameters<AvplayController["handle"]>[0])
     });
     return;
   }
-  if (!avplay) return;
+  if (!nativePlayer) return;
   // The player opens media from the connected server only, never an address the page made up.
   if (command.command === "load" && originOf(command.url) !== originOf(url)) return;
-  avplay.handle(command);
+  nativePlayer.handle(command);
 }
 
 // ---------------------------------------------------------------- offline
@@ -329,37 +403,58 @@ async function runScan(gen: number, autoConnect: boolean) {
   if (!found || !rescan) return;
   found.innerHTML = "";
   rescan.hidden = true;
-  const ip = await localAddress(platform);
-  if (gen !== generation) return;
-  const targets = ip ? scanTargets(ip, knownServers().map((server) => server.url)) : [];
-  if (targets.length === 0) {
-    setText("#scan-status", t.scanUnavailable);
-    return;
+  const probe = async (url: string) => {
+    const response = await request("GET", `${url}/api/health`, { timeout: PROBE_TIMEOUT });
+    return response.status === 200 ? response.body : null;
+  };
+  const options = {
+    cancelled: () => gen !== generation,
+    onProgress: (done: number, total: number) => setText("#scan-status", fill(t.scanning, { done, total })),
+    onFound: (entry: Found) => {
+      const holder = document.createElement("div");
+      holder.innerHTML = serverButton(entry.url, `Kinora ${entry.health.serverVersion}`);
+      const button = holder.firstElementChild as HTMLElement;
+      button.addEventListener("click", () => void connect(entry.url));
+      found.appendChild(button);
+    },
+  };
+  // The Android app browses mDNS (NSD): what it announces is checked first; the subnet scan runs only when that finds nothing.
+  let results: Found[] = [];
+  if (android) {
+    const announced = await nsdServers(android, gen);
+    if (gen !== generation) return;
+    if (announced.length) results = await scan(announced, probe, options);
+    if (gen !== generation) return;
   }
-  const results: Found[] = await scan(
-    targets,
-    async (url) => {
-      const response = await request("GET", `${url}/api/health`, { timeout: PROBE_TIMEOUT });
-      return response.status === 200 ? response.body : null;
-    },
-    {
-      cancelled: () => gen !== generation,
-      onProgress: (done, total) => setText("#scan-status", fill(t.scanning, { done, total })),
-      onFound: (entry) => {
-        const holder = document.createElement("div");
-        holder.innerHTML = serverButton(entry.url, `Kinora ${entry.health.serverVersion}`);
-        const button = holder.firstElementChild as HTMLElement;
-        button.addEventListener("click", () => void connect(entry.url));
-        found.appendChild(button);
-      },
-    },
-  );
+  if (results.length === 0) {
+    const ip = android ? android.localAddress() : await localAddress(platform);
+    if (gen !== generation) return;
+    const targets = ip ? scanTargets(ip, knownServers().map((server) => server.url)) : [];
+    if (targets.length === 0) {
+      setText("#scan-status", t.scanUnavailable);
+      return;
+    }
+    results = await scan(targets, probe, options);
+  }
   if (gen !== generation) return;
   rescan.hidden = false;
   setText("#scan-status", results.length === 0 ? t.scanNone : "");
   // A fresh TV that finds exactly one server goes straight on to pairing.
   if (autoConnect && results.length === 1) void connect(results[0]!.url);
   else if (results.length > 0 && document.activeElement === document.body) focusFirst("#found .server");
+}
+
+/** Waits for the Android app's NSD browse, which started with the activity: done at the first answer, or after NSD_WAIT_MS. */
+function nsdServers(host: AndroidHost, gen: number): Promise<string[]> {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const check = () => {
+      const servers = host.servers();
+      if (gen !== generation || servers.length > 0 || Date.now() - started >= NSD_WAIT_MS) return resolve(servers);
+      timers.push(window.setTimeout(check, NSD_POLL_MS));
+    };
+    check();
+  });
 }
 
 // ---------------------------------------------------------------- pairing
@@ -374,7 +469,7 @@ function isDeviceToken(token: string) {
  * server cannot tell a TV from a browser: it serves the browser profile and transcodes what AVPlay plays.
  */
 async function pairWithKey(url: string, key: string): Promise<string | null> {
-  const name = deviceName(platform, webos ? await webos : null);
+  const name = await nameOfDevice();
   const capabilities = await safeCapabilities();
   const started = await request("POST", `${url}/api/pair`, { body: { name, platform, capabilities }, timeout: HEALTH_TIMEOUT });
   if (started.status !== 201) return null;
@@ -390,6 +485,7 @@ async function pairWithKey(url: string, key: string): Promise<string | null> {
 async function safeCapabilities() {
   try {
     if (avplay) return detectAvplayCapabilities();
+    if (android) return android.capabilities() ?? detectCapabilities();
     if (webos) return detectWebosCapabilities(await webos);
     return detectCapabilities();
   } catch {
@@ -410,7 +506,7 @@ async function startPairing(url: string) {
   const gen = enter("pair");
   activeUrl = url;
   render(`<p class="eyebrow">Kinora · ${escapeHtml(hostOf(url))}</p><h1>${escapeHtml(t.pairTitle)}</h1><div class="spinner"></div>`);
-  const name = deviceName(platform, webos ? await webos : null);
+  const name = await nameOfDevice();
   const capabilities = await safeCapabilities();
   if (gen !== generation) return;
   const started = await request("POST", `${url}/api/pair`, { body: { name, platform, capabilities }, timeout: HEALTH_TIMEOUT });

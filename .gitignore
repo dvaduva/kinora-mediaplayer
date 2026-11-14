@@ -11,3 +11,13 @@ apps/tv/tizen/shell.css
 apps/tv/webos/index.html
 apps/tv/webos/shell.js
 apps/tv/webos/shell.css
+apps/android-tv/app/src/main/assets/shell/
+# Android TV (Gradle)
+apps/android-tv/.gradle/
+apps/android-tv/.kotlin/
+apps/android-tv/build/
+apps/android-tv/app/build/
+apps/android-tv/local.properties
+apps/android-tv/.idea/
+*.jks
+*.keystore

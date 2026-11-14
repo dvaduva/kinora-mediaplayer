@@ -10,10 +10,11 @@ import { api, getApiConfig } from "@kinora/client";
 import type { AudioTrackInfo, PlayerAdapter, PlayerBackend, PlayerCallbacks, PlayerEvent, PlayerSource } from "./types";
 
 /**
- * A native player that lives in the TV shell's page (AVPlay on Tizen), driven by message. The shell
- * reports state back; this side keeps the latest values so the getters answer synchronously.
- * The <video> element stays empty: the picture is on the TV's video plane under the page, and the
- * page clears its background (`avplay-active`) for as long as a source is loaded.
+ * A native player that lives outside this frame, driven by message through the TV shell: ExoPlayer in
+ * the Android TV app (`exoplayer-bridge`), or AVPlay on Tizen. The shell reports state back; this side
+ * keeps the latest values so the getters answer synchronously. The <video> element stays empty: the
+ * picture is drawn under the page (the TV's video plane, or Android's video surface under the WebView),
+ * and the page clears its background (`avplay-active`) for as long as a source is loaded.
  */
 
 const ACTIVE_CLASS = "avplay-active";
@@ -76,7 +77,7 @@ export function requestCapabilities(): Promise<CapabilityProfile> {
   });
 }
 
-function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks): PlayerAdapter {
+function createBridgePlayer(player: BridgePlayer, callbacks: PlayerCallbacks): PlayerAdapter {
   let session = 0;
   let time = 0;
   let duration = Number.NaN;
@@ -104,7 +105,7 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
   const onMessage = (event: MessageEvent) => {
     const report = fromShell(event);
     if (report?.event === "log") {
-      remoteLog(`avplay #${report.session} ${report.message}`);
+      remoteLog(`${player} #${report.session} ${report.message}`);
       return;
     }
     if (report && report.event !== "capabilities" && report.event !== "time" && report.event !== "tracks") {
@@ -230,9 +231,9 @@ function createBridgePlayer(_video: HTMLVideoElement, callbacks: PlayerCallbacks
 
 export function bridgeBackend(player: BridgePlayer): PlayerBackend {
   return {
-    name: player,
+    name: player === "exoplayer" ? "exoplayer-bridge" : player,
     capabilities: requestCapabilities,
     textTracks: false,
-    create: createBridgePlayer,
+    create: (_video, callbacks) => createBridgePlayer(player, callbacks),
   };
 }

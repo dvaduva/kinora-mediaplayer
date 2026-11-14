@@ -7,7 +7,7 @@
     "build": "node build.mjs",
     "dev": "node build.mjs --serve",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/discovery.test.ts src/avplay.test.ts"
+    "test": "tsx --test src/discovery.test.ts src/avplay.test.ts src/android.test.ts"
   },
   "dependencies": {
     "@kinora/client": "workspace:*",

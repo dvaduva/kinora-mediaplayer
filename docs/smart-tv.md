@@ -2,7 +2,7 @@
 
 Kinora on Samsung Tizen, LG webOS and Android TV / Google TV (Fire TV included). This document records why the TV apps are clients of a Kinora server, the decisions behind them, and the phased plan to build them.
 
-Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 to 3 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay; on webOS through LG's native `<video>` pipeline, HLS included). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen` and `apps/tv/webos` and handles discovery, pairing, the offline screen and the version check; it still has to pass the checklist on real TVs. There is no Android TV app yet.
+Current state (November 2026): `apps/tv` is a React (Vite) 10-foot UI with D-pad navigation (`@noriginmedia/norigin-spatial-navigation`). Phases 0 to 4 are implemented (capability profiles: TVs play directly what they decode; on Tizen through Samsung's native player, AVPlay; on webOS through LG's native `<video>` pipeline, HLS included; on Android TV and Fire TV through ExoPlayer, in `apps/android-tv`). Phase 0: `apps/tv-shell` is built into `apps/tv/tizen`, `apps/tv/webos` and the Android app's assets, and handles discovery, pairing, the offline screen and the version check; every platform still has to pass the checklist on real devices.
 
 ## Client–server or standalone?
 
@@ -199,6 +199,19 @@ The same checklist passes on an LG TV.
 - Codec detection through `MediaCodecList` for the profile.
 - `pnpm tv:package:android` (Gradle, debug or signed APK).
 - `docs/tv/android-tv.md`: building, sideloading with `adb`, Fire TV notes.
+
+### How it was built
+
+Status: implemented; the debug and release APKs build, and the app starts on the Android emulator and reaches the pairing screen (shell, native bridge, manual server address); playback through ExoPlayer is not yet tested, and it has not run on an Android TV or Fire TV device. How-to and quirks: [tv/android-tv.md](tv/android-tv.md).
+
+- **A thin app around the same shell.** `MainActivity` hosts one WebView that loads the shell from the APK's assets on `http://appassets.androidplatform.net` (`WebViewAssetLoader`: a real origin, so `localStorage` persists), and the shell loads the UI from the server in a frame, as on Tizen and webOS. `apps/tv-shell/build.mjs` copies the shell into `apps/android-tv/app/src/main/assets/shell/` (not in git), with `KINORA_PLATFORM = "android"`.
+- **The bridge.** `window.KinoraAndroid` (`ShellBridge.kt`) is visible to every frame, so every call carries a nonce from the shell's hash, which the UI's frame cannot read; replies come through `window.kinoraNative.receive`, run in the main frame only (`apps/tv-shell/src/android.ts`). Durations travel as seconds, null or `"live"` (JSON has no NaN or Infinity) and are turned back into the `PlayerReport` form.
+- **ExoPlayer.** `BridgePlayer` gained `exoplayer`; the shell launches the UI with `&player=exoplayer`, and the UI's existing bridge adapter (`exoplayer-bridge`) drives `NativePlayer.kt` exactly as it drives AVPlay. The picture is a `SurfaceView` under the transparent WebView, shown only while a source is loaded (an idle surface hid the page). Converted films open at the requested start, not at the live edge of the growing `EVENT` playlist. Embedded text tracks are disabled in ExoPlayer: Kinora's overlay draws the subtitles.
+- **Profile** (`Capabilities.kt`, `player: "exoplayer"`): ExoPlayer's containers; the hardware video decoders from `MediaCodecList` (bit depth from their profiles); AC-3/E-AC-3/DTS from the decoders or HDMI passthrough (Media3 `AudioCapabilities`); 4K from decoder and display modes; HDR from the display. Server quirk: TrueHD dropped.
+- **Discovery.** NSD browses `_kinora._tcp` while the app runs; the shell waits up to 3 s for it, then scans the /24 from the device's address (`ConnectivityManager`).
+- **Keys.** Back becomes Escape for the page. Media and channel keys are taken by the activity and handed to the UI through the shell (`ShellKeyMessage`, `SHELL_KEYS` in `@kinora/shared`), since not every WebView maps them to DOM keys; the UI replays them as `keydown` (`listenForShellKeys` in `apps/tv/src/host.ts`).
+- **Packaging**: `pnpm tv:package:android [-- --release --install --run --target <serial>]` builds the shell, runs the Gradle wrapper (AGP 8.13, Kotlin 2.2, Media3 1.11, compileSdk 36, minSdk 23), copies the APK to `apps/android-tv/dist/` and installs with `adb`. Release signing comes from `KINORA_RELEASE_*` in `~/.gradle/gradle.properties` (or the environment); the keystore never goes into git. `apps/android-tv/build-apk.bat` wraps it in a menu on Windows.
+- **Not done yet:** automatic fallback to transcode when ExoPlayer refuses a file it was expected to play (use **Always convert** meanwhile), refresh-rate switching to the film's frame rate, a MediaSession (voice "pause", Google Assistant), and seeking ahead within a growing transcode.
 
 ### Done when
 The same checklist passes on an Android TV device, and the APK starts on a Fire TV.

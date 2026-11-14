@@ -964,3 +964,33 @@ export function isShellMessage(value: unknown): value is ShellMessage {
   const message = value as Record<string, unknown>;
   return message.source === SHELL_MESSAGE_SOURCE && ["ready", "exit", "unauthorized", "change-server"].includes(String(message.type));
 }
+
+/**
+ * Media and channel keys a shell hands to the UI (shell → UI, `{ source, type: "key", key }`). The Android TV
+ * app takes them from the remote before its WebView does, since not every WebView turns them into DOM keys;
+ * the UI replays them as a `keydown` with this `KeyboardEvent.key`.
+ */
+export const SHELL_KEYS = [
+  "MediaPlay",
+  "MediaPause",
+  "MediaPlayPause",
+  "MediaStop",
+  "MediaFastForward",
+  "MediaRewind",
+  "MediaTrackNext",
+  "MediaTrackPrevious",
+  "ChannelUp",
+  "ChannelDown",
+] as const;
+export type ShellKey = (typeof SHELL_KEYS)[number];
+export interface ShellKeyMessage {
+  source: typeof SHELL_MESSAGE_SOURCE;
+  type: "key";
+  key: ShellKey;
+}
+
+export function isShellKeyMessage(value: unknown): value is ShellKeyMessage {
+  if (!value || typeof value !== "object") return false;
+  const message = value as Record<string, unknown>;
+  return message.source === SHELL_MESSAGE_SOURCE && message.type === "key" && (SHELL_KEYS as readonly string[]).includes(String(message.key));
+}

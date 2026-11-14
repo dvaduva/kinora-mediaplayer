@@ -2,7 +2,7 @@ import type { CapabilityProfile } from "./capabilities";
 
 /**
  * The player bridge: the TV UI runs in a frame loaded from the server, but a platform's native player
- * (AVPlay on Tizen, later ExoPlayer on Android TV) only exists in the shell's own page. The UI sends
+ * (AVPlay on Tizen, ExoPlayer on Android TV) only exists in the shell's own page. The UI sends
  * commands with `postMessage`; the shell drives the player and reports its state back.
  *
  * Every `load` carries a session number that the shell echoes on each report, so reports from a
@@ -10,8 +10,11 @@ import type { CapabilityProfile } from "./capabilities";
  */
 export const PLAYER_BRIDGE_SOURCE = "kinora-player";
 
-/** Native players a shell can offer, named in the launch hash (`#…&player=avplay`). */
-export type BridgePlayer = "avplay";
+/**
+ * Native players a shell can offer, named in the launch hash (`#…&player=avplay`). `exoplayer` is the
+ * Android TV app's Media3 player, drawn under its WebView; the shell passes the commands to it.
+ */
+export type BridgePlayer = "avplay" | "exoplayer";
 
 /**
  * What the launch hash may name: a bridged player, or `webos`. On webOS the frame's own <video> already
@@ -19,7 +22,7 @@ export type BridgePlayer = "avplay";
  * (the shell asks the TV, through Luna, for its model and panel, which the frame cannot).
  */
 export type LaunchPlayer = BridgePlayer | "webos";
-export const LAUNCH_PLAYERS: readonly LaunchPlayer[] = ["avplay", "webos"];
+export const LAUNCH_PLAYERS: readonly LaunchPlayer[] = ["avplay", "exoplayer", "webos"];
 
 export interface BridgeAudioTrack {
   id: string;

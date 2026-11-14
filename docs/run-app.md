@@ -58,8 +58,15 @@ corepack pnpm tv:package:webos -- --install --run
 
 Output: `apps/tv/webos/dist/com.kinora.tv_<version>_all.ipk`. Details in [tv/webos.md](tv/webos.md).
 
-## Android TV
+## Android TV / Fire TV app
 
-No native app yet (planned, see [smart-tv.md](smart-tv.md#phase-4--android-tv--fire-tv)). Open `http://<pc-ip>:3001/tv/` in the TV's browser instead (production server, network access enabled).
+One-time: Android SDK (Android Studio) and JDK 17+; on the device, developer options with ADB / USB debugging on. Then:
+
+```powershell
+adb connect <device-ip>:5555
+corepack pnpm tv:package:android -- --install --run
+```
+
+Output: `apps/android-tv/dist/kinora-tv-<version>-debug.apk`. Details in [tv/android-tv.md](tv/android-tv.md).
 
 For network access and running as a service, see the [README](../README.md#network-access) and [server-service.md](server-service.md).
