@@ -174,6 +174,12 @@ jobs:
           TIZEN_CLI="$TIZEN_HOME/tools/ide/bin/tizen" TIZEN_PROFILE=kinora pnpm tv:package:tizen
           mv apps/tv/tizen/dist/Kinora.wgt "apps/tv/tizen/dist/kinora-tv-$(node scripts/version.mjs).wgt"
           rm -rf "$RUNNER_TEMP/tizen-cert"
+      - if: failure() && env.CERTS == 'true'
+        name: Show the Tizen CLI log
+        run: |
+          data=$(sed -n 's/^TIZEN_SDK_DATA_PATH=//p' "$TIZEN_HOME/sdk.info")
+          tail -n 80 "$data/cli/logs/cli.log" || true
+          sed 's/password="[^"]*"/password="…"/g' "$data/profile/profiles.xml" || true
       - if: env.CERTS == 'true'
         uses: actions/upload-artifact@v7
         with:
