@@ -11,6 +11,7 @@ export type { NowPlaying } from "@kinora/client";
 type AudioApi = {
   play: (track: NowPlaying, queue?: NowPlaying[]) => void;
   pause: () => void;
+  stop: () => void;
   toggle: () => void;
   previous: () => void;
   next: () => void;
@@ -25,7 +26,7 @@ const AudioCtx = createContext<AudioApi | null>(null);
 export function AudioProvider({ children }: { children: ReactNode }) {
   const engine = useAudioEngine({ optimistic: true, fetchCrossOrigin: true });
   const { audioRef, current, position, active, playing, visual, setVisual, analyser, audioProps } = engine;
-  const { play, pause, toggle, previous, next, attachClips } = engine;
+  const { play, pause, stop, toggle, previous, next, attachClips } = engine;
   const location = useLocation();
   const { t } = useLocale();
 
@@ -64,8 +65,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }, [location.pathname, pause, setVisual]);
 
   const apiValue = useMemo<AudioApi>(
-    () => ({ play, pause, toggle, previous, next, attachClips, current, playing, active }),
-    [play, pause, toggle, previous, next, attachClips, current, playing, active],
+    () => ({ play, pause, stop, toggle, previous, next, attachClips, current, playing, active }),
+    [play, pause, stop, toggle, previous, next, attachClips, current, playing, active],
   );
 
   const cover = current?.cover ? imageUrl(current.cover, "w500") : null;
@@ -95,6 +96,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               </Focusable>
               <Focusable className="btn now-btn" focusKey="now-next" onEnterPress={next}>
                 ›
+              </Focusable>
+              <Focusable className="btn now-btn" focusKey="now-open" onEnterPress={() => setVisual(true)}>
+                {t.expand}
+              </Focusable>
+              <Focusable className="btn now-btn" focusKey="now-close" onEnterPress={stop}>
+                {t.close}
               </Focusable>
             </div>
             {analyser ? (
@@ -126,9 +133,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
               closeLabel={t.close}
               onClose={() => setVisual(false)}
               actions={
-                <Focusable className="btn" focusKey="visual-close" onEnterPress={() => setVisual(false)}>
-                  {t.close}
-                </Focusable>
+                <>
+                  <Focusable className="btn" focusKey="visual-close" onEnterPress={() => setVisual(false)}>
+                    {t.minimize}
+                  </Focusable>
+                  <Focusable className="btn" focusKey="visual-stop" onEnterPress={stop}>
+                    {t.close}
+                  </Focusable>
+                </>
               }
               controls={
                 <>

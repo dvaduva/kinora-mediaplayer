@@ -168,6 +168,23 @@ export function useAudioEngine(options: AudioEngineOptions = {}) {
     audioRef.current?.pause();
   }
 
+  /** Ends the music: the player and its bar go away until the next play(). */
+  function stop() {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    clearObjectUrl();
+    queueRef.current = { tracks: [], index: -1 };
+    currentRef.current = null;
+    setCurrent(null);
+    setPlaying(false);
+    setVisual(false);
+    setActive(false);
+  }
+
   function toggle() {
     const audio = audioRef.current;
     if (!audio || !currentRef.current) return;
@@ -202,7 +219,7 @@ export function useAudioEngine(options: AudioEngineOptions = {}) {
   }
 
   // Listeners and the returned callbacks are created once, so they reach the latest functions through a ref.
-  const impl = { play, pause, toggle, previous, step, attachClips, ensureGraph };
+  const impl = { play, pause, stop, toggle, previous, step, attachClips, ensureGraph };
   const implRef = useRef(impl);
   implRef.current = impl;
 
@@ -252,6 +269,7 @@ export function useAudioEngine(options: AudioEngineOptions = {}) {
       /** Plays `track`; with `queue` (e.g. the whole album), carries on through the tracks after it. */
       play: (track: NowPlaying, queue?: NowPlaying[]) => implRef.current.play(track, queue),
       pause: () => implRef.current.pause(),
+      stop: () => implRef.current.stop(),
       toggle: () => implRef.current.toggle(),
       previous: () => implRef.current.previous(),
       next: () => {

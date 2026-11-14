@@ -195,7 +195,10 @@ export function reportPlaybackProgress(
   view: PlaybackView,
   subtitles: ProgressSubtitles,
 ) {
-  const reportedDuration = view.plan.mode === "direct" ? media.duration : (view.duration ?? media.duration);
+  // A native player may not know (or report) a file's length: the library's duration stands in, so the
+  // position still reaches "Continue watching".
+  const known = Number.isFinite(media.duration) && media.duration > 0;
+  const reportedDuration = view.plan.mode === "direct" ? (known ? media.duration : view.duration) : (view.duration ?? media.duration);
   if (!fileId || !reportedDuration || !Number.isFinite(reportedDuration) || !Number.isFinite(media.currentTime)) return;
   void api("/api/playback/progress", {
     method: "POST",

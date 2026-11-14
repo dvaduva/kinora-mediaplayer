@@ -89,6 +89,14 @@ class MainActivity : Activity() {
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = false
             allowContentAccess = false
+            // The shell lays out at 1920 CSS px (its viewport meta); fit that to the screen whatever the box's density.
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            setSupportZoom(false)
+            builtInZoomControls = false
+            displayZoomControls = false
+            // Sizes come from the 10-foot layout, not from the system font scale.
+            textZoom = 100
             userAgentString = "$userAgentString KinoraAndroidTV/${BuildConfig.VERSION_NAME}"
         }
         // The shell is served from the assets on a real http origin, so its storage (known servers, tokens) persists.

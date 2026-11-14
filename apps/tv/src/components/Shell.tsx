@@ -21,10 +21,46 @@ function isActive(pathname: string, to: string) {
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
+/**
+ * The menu is its own focus container: moving up into it lands on the page you are on (not on Home,
+ * the first item), whichever item you left it from.
+ */
+function NavBar({ pathname }: { pathname: string }) {
+  const navigate = useNavigate();
+  const { t, toggle } = useLocale();
+  const active = NAV.find((item) => isActive(pathname, item.to))?.key ?? "nav-home";
+  const { ref, focusKey } = useFocusable({
+    focusKey: "nav",
+    preferredChildFocusKey: active,
+    saveLastFocusedChild: false,
+  });
+  return (
+    <FocusContext.Provider value={focusKey}>
+      <nav className="nav" ref={ref}>
+        {NAV.map((item) => (
+          <Focusable
+            key={item.key}
+            focusKey={item.key}
+            className={`nav-item${item.key === active ? " is-active" : ""}`}
+            onEnterPress={() => {
+              navigate(item.to);
+              setFocus(item.key);
+            }}
+          >
+            <span>{t[item.labelKey]}</span>
+          </Focusable>
+        ))}
+        <Focusable focusKey="nav-locale" className="nav-item" onEnterPress={toggle}>
+          <span>{t.language.slice(0, 2).toUpperCase()}</span>
+        </Focusable>
+      </nav>
+    </FocusContext.Provider>
+  );
+}
+
 export function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { t, toggle } = useLocale();
   const { ref, focusKey } = useFocusable({
     focusKey: "shell",
     trackChildren: true,
@@ -58,24 +94,7 @@ export function Shell() {
             <span className="brand-mark" />
             <strong>Kinora</strong>
           </div>
-          <nav className="nav">
-            {NAV.map((item) => (
-              <Focusable
-                key={item.key}
-                focusKey={item.key}
-                className={`nav-item${isActive(location.pathname, item.to) ? " is-active" : ""}`}
-                onEnterPress={() => {
-                  navigate(item.to);
-                  setFocus(item.key);
-                }}
-              >
-                <span>{t[item.labelKey]}</span>
-              </Focusable>
-            ))}
-            <Focusable focusKey="nav-locale" className="nav-item" onEnterPress={toggle}>
-              <span>{t.language.slice(0, 2).toUpperCase()}</span>
-            </Focusable>
-          </nav>
+          <NavBar pathname={location.pathname} />
         </header>
         <main className="main">
           <Outlet />

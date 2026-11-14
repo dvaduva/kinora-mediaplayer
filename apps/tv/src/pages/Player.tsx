@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { setFocus } from "@noriginmedia/norigin-spatial-navigation";
 import { SUBTITLE_DELAY_LIMIT } from "@kinora/shared";
 import { Focusable } from "../components/Focusable";
 import { SubtitleOverlay } from "../components/SubtitleOverlay";
@@ -23,6 +24,21 @@ import {
 } from "@kinora/client";
 
 const SEEK_STEP = 10;
+
+function knownLength(seconds: number | null | undefined): seconds is number {
+  return seconds != null && Number.isFinite(seconds) && seconds > 0;
+}
+
+/**
+ * The film's length for the progress bar and for seeking. A converted stream's playlist grows while it
+ * plays (the player reports only what is converted so far, or "live"), and a native player may not know
+ * the length of a file yet: the library's duration stands in for both.
+ */
+function filmLength(player: { duration: number }, view: { duration: number | null; plan: { mode: string } }) {
+  if (view.plan.mode !== "direct" && knownLength(view.duration)) return view.duration;
+  if (knownLength(player.duration)) return player.duration;
+  return knownLength(view.duration) ? view.duration : 0;
+}
 const DELAY_STEPS = [-0.5, -0.1, 0.1, 0.5];
 
 export function PlayerPage() {
@@ -124,7 +140,7 @@ export function PlayerPage() {
     const progress = window.setInterval(report, 5000);
     const clock = window.setInterval(() => {
       setPosition(player.currentTime);
-      setDuration(player.duration || view.duration || 0);
+      setDuration(filmLength(player, view));
       const tracks = player.audioTracks();
       const key = tracks.map((track) => `${track.id}${track.enabled ? "*" : ""}`).join(",");
       if (key !== audioKey.current) {
@@ -178,7 +194,13 @@ export function PlayerPage() {
   const showChrome = useCallback(() => {
     setChromeVisible(true);
     window.clearTimeout(hideTimer.current);
-    if (!subsOpen) hideTimer.current = window.setTimeout(() => setChromeVisible(false), 4000);
+    if (!subsOpen) {
+      hideTimer.current = window.setTimeout(() => {
+        setChromeVisible(false);
+        // Hidden buttons must not keep the focus: OK plays/pauses again, and Up/Down bring them back.
+        setFocus("player-surface");
+      }, 4000);
+    }
   }, [subsOpen]);
 
   function togglePlay() {
@@ -200,9 +222,8 @@ export function PlayerPage() {
   function seekBy(delta: number) {
     const player = playerRef.current;
     if (!player) return;
-    // A native player may not know the length yet (or not report it): the library's duration stands in.
-    const length = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : (view?.duration ?? Number.NaN);
-    if (!Number.isFinite(length)) return;
+    const length = view ? filmLength(player, view) : 0;
+    if (!length) return;
     const target = Math.max(0, Math.min(length - 1, player.currentTime + delta));
     player.seek(target);
     setPosition(target);
@@ -233,6 +254,7 @@ export function PlayerPage() {
         event.preventDefault();
         if (subsOpen) {
           setSubsOpen(false);
+          setFocus("player-cc");
           return;
         }
         leave();
@@ -256,6 +278,7 @@ export function PlayerPage() {
         return;
       }
       if (subsOpen) return;
+      showChrome();
       // A focused button (Back, CC) takes Enter itself, through spatial navigation.
       const onButton = (event.target as HTMLElement | null)?.closest?.("[role=button]") != null;
       if (event.key === "c" || event.key === "C") {
@@ -382,6 +405,24 @@ export function PlayerPage() {
           {buffering != null && buffering > 0 ? <p className="hint">{Math.round(buffering)}%</p> : null}
         </div>
       ) : null}
+      {/*
+        Holds the focus while no button does (at start, and when the controls hide): OK plays/pauses,
+        Left/Right seek (the page's key handler), Down reaches CC (subtitles, audio) and Up the Back button.
+      */}
+      <Focusable
+        className="player-surface"
+        focusKey="player-surface"
+        focusOnMount
+        onArrowPress={(direction) => {
+          if (direction === "down" || direction === "up") {
+            setFocus(direction === "down" ? "player-cc" : "player-back");
+            showChrome();
+          }
+          return false;
+        }}
+      >
+        {null}
+      </Focusable>
       <div className={chromeVisible || waiting || subsOpen ? "player-chrome is-visible" : "player-chrome"}>
         <div className="player-top">
           <Focusable

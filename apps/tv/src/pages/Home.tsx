@@ -7,7 +7,13 @@ import { Focusable } from "../components/Focusable";
 import { PosterCard } from "../components/Poster";
 import { Rail } from "../components/Rail";
 import { useLocale } from "../i18n";
-import { imageUrl } from "@kinora/client";
+import { formatClock, imageUrl } from "@kinora/client";
+
+function resumeLabel(position: number, duration: number) {
+  const at = formatClock(position, { hours: true, fallback: "" });
+  if (!at) return null;
+  return duration > 0 ? `${at} / ${formatClock(duration, { hours: true, fallback: "" })}` : at;
+}
 
 export function HomePage() {
   const { t } = useLocale();
@@ -81,7 +87,8 @@ export function HomePage() {
                   : undefined
               }
               title={item.title}
-              meta={item.subtitle}
+              // Where it stopped, next to the bar: "2024 · 1:02:15 / 2:10:00".
+              meta={[item.subtitle, resumeLabel(item.position, item.duration)].filter(Boolean).join(" · ")}
               src={item.posterPath}
               progress={item.duration > 0 ? item.position / item.duration : null}
             />
