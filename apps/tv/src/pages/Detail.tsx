@@ -59,6 +59,15 @@ export function MovieDetailPage() {
                 {t.rating}: {movie.rating.toFixed(1)}
               </p>
             ) : null}
+            {movie.lists.length > 0 ? (
+              // Shown only: lists are made and filled in the web app.
+              <p className="detail-lists">
+                <span>{t.inLists}</span>
+                {movie.lists.map((list) => (
+                  <span key={list.id} className="list-tag">{list.name}</span>
+                ))}
+              </p>
+            ) : null}
             {movie.tagline ? <p className="detail-tagline">{movie.tagline}</p> : null}
             {movie.overview ? <p className="lede detail-overview">{movie.overview}</p> : null}
             <div className="detail-credits">

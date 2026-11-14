@@ -4,6 +4,7 @@ import { api } from "../api";
 import { PosterCard } from "../components/Poster";
 import { VirtualGrid } from "../components/VirtualGrid";
 import { useLocale } from "../i18n";
+import { MovieTabs } from "./Lists";
 
 export function MoviesPage() {
   const { t } = useLocale();
@@ -27,6 +28,7 @@ export function MoviesPage() {
           {movies.length} {t.titles}
         </p>
       </header>
+      <MovieTabs />
       {movies.length === 0 ? (
         <p className="hint">{t.noMovies}</p>
       ) : (

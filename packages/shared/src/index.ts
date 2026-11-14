@@ -321,6 +321,37 @@ export interface MovieDetail extends MovieSummary {
   tmdbId: number | null;
   versions: MediaVersion[];
   defaultFileId: string | null;
+  /** The profile's lists that hold this movie, by name. */
+  lists: MovieListRef[];
+}
+
+/** Longest name a movie list may have. */
+export const MOVIE_LIST_NAME_MAX = 60;
+/** Movies sent with each list for the TV rails (`/api/lists?preview=1`). */
+export const MOVIE_LIST_PREVIEW = 20;
+
+export interface MovieListRef {
+  id: string;
+  name: string;
+}
+
+export interface MovieListSummary extends MovieListRef {
+  /** Movies in the list that are on disk now; missing files are left out until they return. */
+  count: number;
+  /** Posters of the first movies by title, at most four, for the cover collage. */
+  posters: (string | null)[];
+  /** The first MOVIE_LIST_PREVIEW movies by title, only when asked for. */
+  preview?: MovieSummary[];
+}
+
+export interface MovieListDetail extends MovieListRef {
+  movies: MovieSummary[];
+}
+
+/** Adds and removes movies in one list; ids already in (or not in) the list are ignored. */
+export interface MovieListChange {
+  add?: string[];
+  remove?: string[];
 }
 
 export interface EpisodeSummary {

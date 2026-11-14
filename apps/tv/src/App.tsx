@@ -16,6 +16,7 @@ import { IdentifyPage } from "./pages/Identify";
 import { LivePage, LivePlayerPage } from "./pages/Live";
 import { AlbumDetailPage, ArtistDetailPage, MusicPage } from "./pages/Music";
 import { MoviesPage } from "./pages/Movies";
+import { ListPage, ListsPage } from "./pages/Lists";
 import { PersonPage } from "./pages/Person";
 import { PlayerPage } from "./pages/Player";
 import { SearchPage } from "./pages/Search";
@@ -106,6 +107,8 @@ export function App() {
                 <Route index element={<HomePage />} />
                 <Route path="movies" element={<MoviesPage />} />
                 <Route path="movies/:id" element={<MovieDetailPage />} />
+                <Route path="lists" element={<ListsPage />} />
+                <Route path="lists/:id" element={<ListPage />} />
                 <Route path="series" element={<SeriesPage />} />
                 <Route path="series/:id" element={<SeriesDetailPage />} />
                 <Route path="people/:id" element={<PersonPage />} />

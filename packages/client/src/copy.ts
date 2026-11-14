@@ -102,6 +102,14 @@ const ro = {
   liveFillerAt: "la {time}",
   errIptvStream: "Sursa canalului nu răspunde.",
   errIptvFfmpeg: "Pentru IPTV e nevoie de ffmpeg.",
+  lists: "Liste",
+  allMovies: "Toate",
+  listCount: "{count} filme",
+  listCountOne: "1 film",
+  listsEmpty: "Nicio listă încă.",
+  listEmpty: "Lista nu are filme.",
+  seeAll: "Vezi tot ({count})",
+  inLists: "În liste",
 };
 
 export type BaseCopy = Record<keyof typeof ro, string>;
@@ -204,6 +212,14 @@ const en: BaseCopy = {
   liveFillerAt: "at {time}",
   errIptvStream: "The channel's source does not answer.",
   errIptvFfmpeg: "IPTV needs ffmpeg.",
+  lists: "Lists",
+  allMovies: "All",
+  listCount: "{count} movies",
+  listCountOne: "1 movie",
+  listsEmpty: "No lists yet.",
+  listEmpty: "This list has no movies.",
+  seeAll: "See all ({count})",
+  inLists: "In lists",
 };
 
 export const baseCopy: Record<Locale, BaseCopy> = { ro, en };

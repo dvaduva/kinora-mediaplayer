@@ -369,3 +369,25 @@ export const devices = sqliteTable("devices", {
 }, (table) => [
   uniqueIndex("devices_token_hash").on(table.tokenHash),
 ]);
+
+/** The profile's own movie lists ("Kids", "Adventure"), filled by hand. */
+export const movieLists = sqliteTable("movie_lists", {
+  id: text("id").primaryKey(),
+  profileId: text("profile_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("movie_lists_profile").on(table.profileId),
+]);
+
+/** Movies in a list; a movie can sit in any number of lists. */
+export const movieListItems = sqliteTable(
+  "movie_list_items",
+  {
+    listId: text("list_id").notNull().references(() => movieLists.id, { onDelete: "cascade" }),
+    movieId: text("movie_id").notNull().references(() => movies.id, { onDelete: "cascade" }),
+    addedAt: integer("added_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.listId, table.movieId] }), index("movie_list_items_movie").on(table.movieId)],
+);

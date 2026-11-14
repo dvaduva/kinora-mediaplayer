@@ -85,7 +85,7 @@ export function routeAccess(method: string, pathname: string): RouteAccess {
 
 /**
  * Device tokens can browse, play and match titles, but not manage the server:
- * no other devices, no pairing approvals, no settings, libraries, folders or caches.
+ * no other devices, no pairing approvals, no settings, libraries, folders or caches, and no changes to movie lists.
  */
 export function isDeviceForbidden(method: string, pathname: string) {
   if (pathname === "/api/devices/me") return false;
@@ -96,6 +96,8 @@ export function isDeviceForbidden(method: string, pathname: string) {
   if (pathname === "/api/settings" && method !== "GET") return true;
   if (pathname === "/api/folders" || pathname.startsWith("/api/cache/")) return true;
   if ((pathname === "/api/libraries" || pathname.startsWith("/api/libraries/")) && method !== "GET") return true;
+  // TVs show the movie lists; creating and filling them happens in the web app.
+  if ((pathname === "/api/lists" || pathname.startsWith("/api/lists/")) && method !== "GET") return true;
   return false;
 }
 

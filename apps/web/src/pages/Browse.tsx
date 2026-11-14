@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { WATCH_STATUSES, type AlbumSummary, type ArtistSummary, type HomeView, type MovieSummary, type SearchHit, type SeriesSummary, type WatchStatus } from "@kinora/shared";
 import { api, formatDate, formatRuntime, imageUrl } from "@kinora/client";
 import { useCached } from "../cache";
 import { useLocale, type Copy, type Locale } from "../i18n";
-import { PosterLink, ScrollRail, SkeletonGrid, statusLabel } from "../ui";
+import { PosterLink, ScrollRail, SelectCard, SkeletonGrid, statusLabel } from "../ui";
+import { ListPickerDialog, MovieTabs } from "../lists";
 
 export function HomePage() {
   const { t } = useLocale();
@@ -137,8 +138,57 @@ function sortMeta(movie: MovieSummary, sort: MovieSort, locale: Locale) {
 }
 
 export function MovieListPage() {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const [movies] = useCached<MovieSummary[]>("/api/movies", []);
+  const [picking, setPicking] = useState<{ mode: "add" | "remove"; ids: string[]; done: () => void } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  return (
+    <>
+      <h1>{t.movies}</h1>
+      <MovieTabs />
+      {notice ? <p className="list-notice" role="status">{notice}</p> : null}
+      <MovieBrowser
+        movies={movies}
+        emptyText={t.empty}
+        selectionActions={(ids, done) => (
+          <>
+            <button className="play" type="button" disabled={ids.length === 0} onClick={() => setPicking({ mode: "add", ids, done })}>{t.addToList}</button>
+            <button className="pill-button" type="button" disabled={ids.length === 0} onClick={() => setPicking({ mode: "remove", ids, done })}>{t.removeFromList}</button>
+          </>
+        )}
+      />
+      {picking ? (
+        <ListPickerDialog
+          mode={picking.mode}
+          movieIds={picking.ids}
+          onClose={() => setPicking(null)}
+          onDone={(message) => {
+            picking.done();
+            setPicking(null);
+            setNotice(message);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Status tabs, genre filter, sorting and a selection mode over a set of movies: the Movies page and each list's page.
+ * `selectionActions` fills the bar shown while selecting; `done` clears the selection and leaves the mode.
+ */
+export function MovieBrowser(props: {
+  movies: MovieSummary[] | undefined;
+  emptyText: string;
+  selectionActions: (ids: string[], done: () => void) => ReactNode;
+}) {
+  const { t, locale } = useLocale();
+  const { movies } = props;
   const [params, setParams] = useSearchParams();
   const stored = useMemo(readStoredSort, []);
   const sort = MOVIE_SORTS.find((item) => item === params.get("sort")) ?? stored?.sort ?? "title";
@@ -146,6 +196,7 @@ export function MovieListPage() {
   const direction: SortDirection = directionParam === "asc" || directionParam === "desc" ? directionParam : params.has("sort") ? DEFAULT_DIRECTION[sort] : stored?.direction ?? DEFAULT_DIRECTION[sort];
   const statusParam = params.get("status");
   const status: StatusFilter = statusParam === "new" || statusParam === "unwatched" || statusParam === "watched" ? statusParam : "all";
+  const [selected, setSelected] = useState<Set<string> | null>(null);
 
   const genre = params.get("genre") ?? "";
 
@@ -187,9 +238,19 @@ export function MovieListPage() {
     return sortMovies(filtered, sort, direction, locale);
   }, [inGenre, sort, direction, status, locale]);
 
+  // A movie that left the view (removed from the list, filtered away) no longer counts as selected.
+  const chosen = useMemo(() => (selected && visible ? visible.filter((movie) => selected.has(movie.id)).map((movie) => movie.id) : []), [selected, visible]);
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current ?? []);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const done = () => setSelected(null);
+
   return (
     <>
-      <h1>{t.movies}</h1>
       <div className="list-toolbar">
         <div className="filter-tabs" role="group" aria-label={t.filterStatus}>
           {(["all", ...WATCH_STATUSES] as StatusFilter[]).map((item) => (
@@ -227,28 +288,59 @@ export function MovieListPage() {
             {direction === "asc" ? "↑" : "↓"}
           </button>
         </label>
+        {visible && visible.length > 0 ? (
+          <button className="pill-button" type="button" aria-pressed={selected != null} onClick={() => setSelected(selected ? null : new Set())}>
+            {selected ? t.cancel : t.select}
+          </button>
+        ) : null}
       </div>
       {visible ? (
         visible.length > 0 ? (
           <div className="grid">
-            {visible.map((movie) => (
-              <PosterLink
-                key={movie.id}
-                to={`/movies/${movie.id}`}
-                src={movie.posterPath}
-                title={movie.title}
-                meta={sortMeta(movie, sort, locale)}
-                badge={movie.matched ? null : t.unmatched}
-                status={movie.watchStatus}
-              />
-            ))}
+            {visible.map((movie) =>
+              selected ? (
+                <SelectCard
+                  key={movie.id}
+                  src={movie.posterPath}
+                  title={movie.title}
+                  meta={sortMeta(movie, sort, locale)}
+                  checked={selected.has(movie.id)}
+                  onToggle={() => toggle(movie.id)}
+                />
+              ) : (
+                <PosterLink
+                  key={movie.id}
+                  to={`/movies/${movie.id}`}
+                  src={movie.posterPath}
+                  title={movie.title}
+                  meta={sortMeta(movie, sort, locale)}
+                  badge={movie.matched ? null : t.unmatched}
+                  status={movie.watchStatus}
+                />
+              ),
+            )}
           </div>
         ) : (
-          <p className="muted">{movies && movies.length > 0 ? t.nothingFiltered : t.empty}</p>
+          <p className="muted">{movies && movies.length > 0 ? t.nothingFiltered : props.emptyText}</p>
         )
       ) : (
         <SkeletonGrid />
       )}
+      {selected && visible ? (
+        <div className="selection-bar" role="region" aria-label={t.select}>
+          <strong>{t.selectedCount.replace("{count}", String(chosen.length))}</strong>
+          {chosen.length < visible.length ? (
+            <button className="text-button small" type="button" onClick={() => setSelected(new Set(visible.map((movie) => movie.id)))}>{t.selectAll}</button>
+          ) : (
+            <button className="text-button small" type="button" onClick={() => setSelected(new Set())}>{t.clearSelection}</button>
+          )}
+          <span className="spacer" />
+          {props.selectionActions(chosen, done)}
+          <button className="dialog-close static" type="button" aria-label={t.cancel} title={t.cancel} onClick={done}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

@@ -1935,3 +1935,45 @@ html.avplay-active .player-video {
 .no-flex-gap .mini-spectrum {
   margin-left: auto;
 }
+
+/* ---------- Movie lists ---------- */
+.movie-tabs {
+  margin: 0 0 1.25rem;
+}
+
+.lists-page .rail h2 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.see-all .poster-art {
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+}
+
+.see-all-label {
+  padding: 0 0.75rem;
+  text-align: center;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.detail-lists {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.list-tag {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--text);
+}

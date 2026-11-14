@@ -38,6 +38,7 @@ import { searchReleases } from "./metadata/musicbrainz.js";
 import { albumClips } from "./metadata/clips.js";
 import { fetchMovie, fetchPerson, fetchSeries, searchMovieCandidates, searchSeriesCandidates, TmdbNotConfiguredError, TmdbUnreachableError } from "./metadata/tmdb.js";
 import { repoRoot } from "./paths.js";
+import { changeMovieList, createMovieList, deleteMovieList, ListError, listMovieLists, movieListDetail, renameMovieList } from "./movieLists.js";
 import { EditError, movieArtwork, movieRatings, movieReviewList, saveOwnReview, updateMovie } from "./movieExtras.js";
 import { contentTypeFor } from "./playback/plan.js";
 import { materializeSubtitle, subtitleChunk } from "./playback/materialize.js";
@@ -363,6 +364,39 @@ export async function buildApp(options: { bindHost?: string; logger?: boolean } 
       return reply.code(502).send({ error: "tmdb_failed" });
     }
   });
+  /* The profile's own movie lists. Paired TVs only read them (see isDeviceForbidden). */
+  const listFailure = (reply: FastifyReply, error: unknown) => {
+    if (error instanceof ListError) return reply.code(error.message === "name_taken" ? 409 : 400).send({ error: error.message });
+    throw error;
+  };
+  app.get("/api/lists", async (request) => listMovieLists({ preview: (request.query as { preview?: string }).preview === "1" }));
+  app.post("/api/lists", async (request, reply) => {
+    try {
+      return reply.code(201).send(createMovieList(asRecord(request.body)));
+    } catch (error) {
+      return listFailure(reply, error);
+    }
+  });
+  app.get("/api/lists/:id", async (request, reply) => movieListDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
+  app.put("/api/lists/:id", async (request, reply) => {
+    try {
+      return renameMovieList((request.params as { id: string }).id, asRecord(request.body)) ?? reply.code(404).send({ error: "not_found" });
+    } catch (error) {
+      return listFailure(reply, error);
+    }
+  });
+  app.delete("/api/lists/:id", async (request, reply) => {
+    if (!deleteMovieList((request.params as { id: string }).id)) return reply.code(404).send({ error: "not_found" });
+    return reply.code(204).send();
+  });
+  app.post("/api/lists/:id/movies", async (request, reply) => {
+    try {
+      return changeMovieList((request.params as { id: string }).id, asRecord(request.body)) ?? reply.code(404).send({ error: "not_found" });
+    } catch (error) {
+      return listFailure(reply, error);
+    }
+  });
+
   app.get("/api/series", async () => listSeries());
   app.get("/api/series/:id", async (request, reply) => seriesDetail((request.params as { id: string }).id) ?? reply.code(404).send({ error: "not_found" }));
   app.get("/api/people/:id", async (request, reply) => {

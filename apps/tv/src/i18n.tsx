@@ -72,6 +72,7 @@ const tvRo = {
   connecting: "Se conectează…",
   errWrongKey: "Cheia de acces este greșită sau lipsește.",
   errUnreachable: "Nu pot contacta serverul. Verifică adresa și că Kinora ascultă în rețea.",
+  listsWebHint: "Creezi liste și adaugi filme în ele din aplicația web Kinora.",
 };
 
 const tvEn: Record<keyof typeof tvRo, string> = {
@@ -145,6 +146,7 @@ const tvEn: Record<keyof typeof tvRo, string> = {
   connecting: "Connecting…",
   errWrongKey: "The access key is wrong or missing.",
   errUnreachable: "Cannot reach the server. Check the address and that Kinora listens on the network.",
+  listsWebHint: "Create lists and add movies to them in the Kinora web app.",
 };
 
 const ro = { ...baseCopy.ro, ...tvRo };

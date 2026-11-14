@@ -10,6 +10,7 @@ import { remoteAction } from "../remote";
 const NAV = [
   { to: "/", labelKey: "home", key: "nav-home" },
   { to: "/movies", labelKey: "movies", key: "nav-movies" },
+  { to: "/lists", labelKey: "lists", key: "nav-lists" },
   { to: "/series", labelKey: "series", key: "nav-series" },
   { to: "/music", labelKey: "music", key: "nav-music" },
   { to: "/live", labelKey: "live", key: "nav-live" },

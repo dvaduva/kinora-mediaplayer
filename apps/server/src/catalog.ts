@@ -14,6 +14,7 @@ import type {
   LibraryView,
   MediaVersion,
   MovieDetail,
+  MovieListRef,
   MovieSummary,
   WatchStatus,
   PersonCredit,
@@ -34,6 +35,8 @@ import {
   episodes,
   libraries,
   mediaFiles,
+  movieListItems,
+  movieLists,
   movieReviews,
   movieStatus,
   movies,
@@ -100,7 +103,7 @@ type Presence = {
   artistNames: Map<string, string>;
 };
 
-function presence(): Presence {
+export function presence(): Presence {
   const movieFiles = new Map<string, MediaFileRow[]>();
   const episodeFiles = new Map<string, MediaFileRow[]>();
   const trackIds = new Set<string>();
@@ -251,7 +254,7 @@ type WatchContext = {
   now: number;
 };
 
-function watchContext(): WatchContext {
+export function watchContext(): WatchContext {
   const manual = new Map<string, WatchStatus>();
   for (const row of db.select().from(movieStatus).where(eq(movieStatus.profileId, PROFILE_ID)).all()) {
     if (isWatchStatus(row.status)) manual.set(row.movieId, row.status);
@@ -291,7 +294,7 @@ function watchStatusOf(movie: typeof movies.$inferSelect, context: WatchContext)
   return { status: "unwatched", manual: false };
 }
 
-function movieSummary(movie: typeof movies.$inferSelect, context = watchContext()): MovieSummary {
+export function movieSummary(movie: typeof movies.$inferSelect, context = watchContext()): MovieSummary {
   const watch = watchStatusOf(movie, context);
   return {
     id: movie.id,
@@ -376,7 +379,19 @@ export function movieDetail(id: string, client: CapabilityProfile | EffectivePro
     tmdbId: movie.tmdbId,
     versions,
     defaultFileId: versions[0]?.fileId ?? null,
+    lists: listsForMovie(id),
   };
+}
+
+/** The profile's lists holding a movie, by name. */
+function listsForMovie(movieId: string): MovieListRef[] {
+  return db
+    .select({ id: movieLists.id, name: movieLists.name })
+    .from(movieListItems)
+    .innerJoin(movieLists, eq(movieListItems.listId, movieLists.id))
+    .where(and(eq(movieListItems.movieId, movieId), eq(movieLists.profileId, PROFILE_ID)))
+    .all()
+    .sort((a, b) => a.name.localeCompare(b.name, "ro", { sensitivity: "base", numeric: true }));
 }
 
 /** Library titles whose stored cast lists this TMDB person (name match only for rows saved without person ids). */

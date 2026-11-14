@@ -67,3 +67,21 @@ test("upgrades a database from before migrations without losing rows", () => {
   assert.equal(runMigrations(sqlite).adopted, false);
   assert.equal((sqlite.prepare("SELECT count(*) AS c FROM __drizzle_migrations").get() as { c: number }).c, readMigrationFiles({ migrationsFolder }).length);
 });
+
+test("a movie leaving the library leaves its lists, and a deleted list keeps its movies", () => {
+  const sqlite = new Database(":memory:");
+  runMigrations(sqlite);
+  seed(sqlite);
+  sqlite.prepare("INSERT INTO movies (id, library_id, group_key, title, added_at) VALUES ('m2', 'lib', 'g2', 'Alt film', 0)").run();
+  sqlite.prepare("INSERT INTO movie_lists VALUES ('kids', 'home', 'Filme copii', 0, 0)").run();
+  sqlite.prepare("INSERT INTO movie_lists VALUES ('drama', 'home', 'Drame', 0, 0)").run();
+  sqlite.prepare("INSERT INTO movie_list_items VALUES ('kids', 'm1', 0), ('kids', 'm2', 0), ('drama', 'm2', 0)").run();
+  const count = (sql: string) => (sqlite.prepare(sql).get() as { c: number }).c;
+
+  sqlite.prepare("DELETE FROM movies WHERE id = 'm1'").run();
+  assert.equal(count("SELECT count(*) AS c FROM movie_list_items WHERE list_id = 'kids'"), 1);
+
+  sqlite.prepare("DELETE FROM movie_lists WHERE id = 'kids'").run();
+  assert.equal(count("SELECT count(*) AS c FROM movie_list_items"), 1, "only the Drama membership is left");
+  assert.equal(count("SELECT count(*) AS c FROM movies WHERE id = 'm2'"), 1, "the movie stays in the library");
+});

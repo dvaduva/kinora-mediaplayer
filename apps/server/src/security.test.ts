@@ -63,6 +63,12 @@ test("device tokens cannot manage the server", () => {
   assert.equal(isDeviceForbidden("DELETE", "/api/libraries/l1"), true);
   assert.equal(isDeviceForbidden("GET", "/api/folders"), true);
   assert.equal(isDeviceForbidden("POST", "/api/cache/transcode/clear"), true);
+  assert.equal(isDeviceForbidden("GET", "/api/lists"), false, "TVs show the movie lists");
+  assert.equal(isDeviceForbidden("GET", "/api/lists/x1"), false);
+  assert.equal(isDeviceForbidden("POST", "/api/lists"), true, "but do not change them");
+  assert.equal(isDeviceForbidden("PUT", "/api/lists/x1"), true);
+  assert.equal(isDeviceForbidden("DELETE", "/api/lists/x1"), true);
+  assert.equal(isDeviceForbidden("POST", "/api/lists/x1/movies"), true);
 });
 
 test("the query token is read only on GET and HEAD", () => {

@@ -4,6 +4,7 @@ import { WATCH_STATUSES, type CastMember, type ExternalTitleDetail, type MediaVe
 import { api, codecLabel, formatBytes, formatDate, formatRuntime, imageUrl, resolutionLabel, type Locale } from "@kinora/client";
 import { useLocale } from "../i18n";
 import { Poster, ScrollRail, statusLabel } from "../ui";
+import { MovieListsDialog } from "../lists";
 import { EditMovieDialog, RatingsBar, ReviewDialog, ReviewsSection, Stars, useExternalRatings, useMovieReviews } from "../movieExtras";
 
 export function MoviePage() {
@@ -14,6 +15,7 @@ export function MoviePage() {
   const [trailerOpen, setTrailerOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [listsOpen, setListsOpen] = useState(false);
   const external = useExternalRatings(movie);
   // Rotten Tomatoes audience reviews arrive with the ratings lookup, so reload the list when it finishes.
   const { reviews, setOwn } = useMovieReviews(movie?.id, String(external.ratings?.fetchedAt ?? ""));
@@ -70,7 +72,19 @@ export function MoviePage() {
         locale={locale}
         unmatched={movie.matched ? null : t.unmatched}
         ratingLabel={t.rating}
-        status={<WatchStatusControl movie={movie} onChange={(next) => setMovie((current) => (current ? { ...current, ...next } : current))} />}
+        status={
+          <>
+            <WatchStatusControl movie={movie} onChange={(next) => setMovie((current) => (current ? { ...current, ...next } : current))} />
+            {movie.lists.length > 0 ? (
+              <p className="movie-lists">
+                <span className="muted">{t.inLists}</span>
+                {movie.lists.map((list) => (
+                  <Link key={list.id} className="list-chip" to={`/lists/${list.id}`}>{list.name}</Link>
+                ))}
+              </p>
+            ) : null}
+          </>
+        }
         ratingsBar={
           <RatingsBar
             movie={movie}
@@ -86,6 +100,10 @@ export function MoviePage() {
                 <button className="pill-button" type="button" onClick={() => setEditOpen(true)}>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z M14 6l4 4" /></svg>
                   {t.edit}
+                </button>
+                <button className="pill-button" type="button" onClick={() => setListsOpen(true)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="1.5" /><path d="M6.5 5h11M9 2.5h6" /></svg>
+                  {t.lists}
                 </button>
               </>
             }
@@ -108,6 +126,15 @@ export function MoviePage() {
             setOwn(own);
             setMovie((current) => (current ? { ...current, userRating: own?.rating ?? null } : current));
           }}
+        />
+      ) : null}
+      {listsOpen ? (
+        <MovieListsDialog
+          movieId={movie.id}
+          title={movie.title}
+          current={movie.lists}
+          onClose={() => setListsOpen(false)}
+          onChange={(lists) => setMovie((current) => (current ? { ...current, lists } : current))}
         />
       ) : null}
       {editOpen ? <EditMovieDialog movie={movie} onClose={() => setEditOpen(false)} onSaved={setMovie} /> : null}

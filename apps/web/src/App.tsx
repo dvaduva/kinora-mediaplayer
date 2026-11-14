@@ -8,6 +8,7 @@ import { LocaleProvider, useLocale } from "./i18n";
 import { HomePage, MovieListPage, MusicPage, SearchPage, SeriesListPage } from "./pages/Browse";
 import { ExternalTitlePage, MoviePage, SeriesPage } from "./pages/Detail";
 import { PersonPage } from "./pages/Person";
+import { ListPage, ListsPage } from "./pages/Lists";
 import { AlbumPage, ArtistPage, IdentifyPage } from "./pages/Listen";
 import { PlayerPage } from "./pages/Player";
 import { LiveTvPage } from "./pages/LiveTv";
@@ -109,6 +110,7 @@ function Gate(props: { onSuccess: () => void }) {
 const MENU_DATA = {
   "/": ["/api/home"],
   "/movies": ["/api/movies"],
+  "/lists": ["/api/lists"],
   "/series": ["/api/series"],
   "/music": ["/api/albums", "/api/artists"],
   "/identify": ["/api/identify"],
@@ -270,6 +272,10 @@ function Shell(props: { ffprobe: boolean }) {
             <Icon name="movies" />
             <span>{t.movies}</span>
           </NavLink>
+          <NavLink to="/lists" title={t.lists} {...warm("/lists")}>
+            <Icon name="lists" />
+            <span>{t.lists}</span>
+          </NavLink>
           <NavLink to="/series" title={t.series} {...warm("/series")}>
             <Icon name="series" />
             <span>{t.series}</span>
@@ -291,6 +297,8 @@ function Shell(props: { ffprobe: boolean }) {
           <Route path="/" element={<HomePage />} />
           <Route path="/movies" element={<MovieListPage />} />
           <Route path="/movies/:id" element={<MoviePage />} />
+          <Route path="/lists" element={<ListsPage />} />
+          <Route path="/lists/:id" element={<ListPage />} />
           <Route path="/series" element={<SeriesListPage />} />
           <Route path="/series/:id" element={<SeriesPage />} />
           <Route path="/people/:id" element={<PersonPage />} />

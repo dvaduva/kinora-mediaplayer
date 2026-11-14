@@ -69,6 +69,13 @@ const ICONS = {
       <path d="M8 3.5v17M16 3.5v17M4 8h4M4 12h4M4 16h4M16 8h4M16 12h4M16 16h4" />
     </>
   ),
+  /* Stacked cards: the user's movie lists. */
+  lists: (
+    <>
+      <rect x="4" y="8" width="16" height="12" rx="1.5" />
+      <path d="M6.5 5h11M9 2.5h6" />
+    </>
+  ),
   series: (
     <>
       <rect x="3" y="6.5" width="18" height="12" rx="1.5" />
@@ -191,6 +198,22 @@ export function PosterLink(props: { to: string; src: string | null; title: strin
       {props.meta ? <small>{props.meta}</small> : null}
       {props.badge ? <small>{props.badge}</small> : null}
     </Link>
+  );
+}
+
+/** A poster that toggles a selection instead of opening the movie (selection mode of the movie grids). */
+export function SelectCard(props: { src: string | null; title: string; meta?: string | null; checked: boolean; onToggle: () => void }) {
+  return (
+    <button className={`poster-card select-card${props.checked ? " is-checked" : ""}`} type="button" aria-pressed={props.checked} onClick={props.onToggle}>
+      <div className="poster-frame">
+        <Poster src={props.src} alt="" />
+        <span className="select-check" aria-hidden="true">
+          <svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </div>
+      <span>{props.title}</span>
+      {props.meta ? <small>{props.meta}</small> : null}
+    </button>
   );
 }
 
