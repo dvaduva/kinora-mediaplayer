@@ -161,7 +161,6 @@ jobs:
           # Without a desktop keyring the CLI on Linux cannot keep the passwords it was given, and signing then
           # fails with "Invaild password"; profiles.xml also accepts the password itself, so write it there.
           profiles="$HOME/tizen-studio-data/profile/profiles.xml"
-          echo "What the CLI wrote (file names only):"; ls -l "$certs"; grep -o 'password="[^"]*\.pwd"' "$profiles" || echo "no .pwd paths in profiles.xml"
           export DISTRIBUTOR_PASSWORD="${DISTRIBUTOR_PASSWORD:-$AUTHOR_PASSWORD}"
           python3 - "$profiles" <<'PY'
           import os, sys, xml.etree.ElementTree as ET
