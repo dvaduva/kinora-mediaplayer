@@ -157,7 +157,20 @@ jobs:
           echo "$AUTHOR_P12" | base64 -d > "$certs/author.p12"
           echo "$DISTRIBUTOR_P12" | base64 -d > "$certs/distributor.p12"
           # The CLI encrypts the passwords for this machine (.pwd files from another one do not open here).
-          "$TIZEN_HOME/tools/ide/bin/tizen" security-profiles add -n kinora             -a "$certs/author.p12" -p "$AUTHOR_PASSWORD"             -d "$certs/distributor.p12" -dp "${DISTRIBUTOR_PASSWORD:-$AUTHOR_PASSWORD}"
+          "$TIZEN_HOME/tools/ide/bin/tizen" security-profiles add -n kinora -a "$certs/author.p12" -p "$AUTHOR_PASSWORD" -d "$certs/distributor.p12" -dp "${DISTRIBUTOR_PASSWORD:-$AUTHOR_PASSWORD}"
+          # Without a desktop keyring the CLI on Linux cannot keep the passwords it was given, and signing then
+          # fails with "Invaild password"; profiles.xml also accepts the password itself, so write it there.
+          profiles="$HOME/tizen-studio-data/profile/profiles.xml"
+          echo "What the CLI wrote (file names only):"; ls -l "$certs"; grep -o 'password="[^"]*\.pwd"' "$profiles" || echo "no .pwd paths in profiles.xml"
+          export DISTRIBUTOR_PASSWORD="${DISTRIBUTOR_PASSWORD:-$AUTHOR_PASSWORD}"
+          python3 - "$profiles" <<'PY'
+          import os, sys, xml.etree.ElementTree as ET
+          tree = ET.parse(sys.argv[1])
+          for item in tree.getroot().iter("profileitem"):
+              if item.get("distributor") == "0": item.set("password", os.environ["AUTHOR_PASSWORD"])
+              if item.get("distributor") == "1": item.set("password", os.environ["DISTRIBUTOR_PASSWORD"])
+          tree.write(sys.argv[1], encoding="UTF-8", xml_declaration=True)
+          PY
       - if: env.CERTS == 'true'
         name: Build the .wgt
         run: |
