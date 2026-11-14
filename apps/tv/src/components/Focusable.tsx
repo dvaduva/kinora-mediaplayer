@@ -10,6 +10,8 @@ type Props = {
   onArrowPress?: (direction: string) => boolean;
   onFocus?: () => void;
   style?: CSSProperties;
+  /** Accessible name and tooltip, for a button that shows only an icon. */
+  label?: string;
 };
 
 export function Focusable(props: Props) {
@@ -53,6 +55,8 @@ export function Focusable(props: Props) {
       tabIndex={props.onEnterPress ? 0 : undefined}
       className={[props.className, focused ? "is-focused" : ""].filter(Boolean).join(" ")}
       style={props.style}
+      aria-label={props.label}
+      title={props.label}
       data-focused={focused ? "true" : undefined}
       onClick={onClick}
       onKeyDown={onKeyDown}

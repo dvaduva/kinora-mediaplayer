@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { setFocus } from "@noriginmedia/norigin-spatial-navigation";
 import { useLocation } from "react-router-dom";
 import { Focusable } from "./components/Focusable";
 import { useLocale } from "./i18n";
@@ -12,6 +13,8 @@ type AudioApi = {
   play: (track: NowPlaying, queue?: NowPlaying[]) => void;
   pause: () => void;
   stop: () => void;
+  /** Opens the full-screen player. */
+  expand: () => void;
   toggle: () => void;
   previous: () => void;
   next: () => void;
@@ -53,6 +56,42 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [visual, setVisual, toggle, pause, next, previous]);
 
+  /**
+   * With the bar only (no full-screen player), the remote's media keys still drive the music on every
+   * page but the video and live players, which pause it and take those keys for themselves.
+   */
+  const onPlayerPage = location.pathname.startsWith("/play/") || location.pathname.startsWith("/live/");
+  useEffect(() => {
+    if (!active || visual || onPlayerPage) return;
+    const onKey = (event: KeyboardEvent) => {
+      const action = remoteAction(event);
+      if (action === "playPause" || action === "play") toggle();
+      else if (action === "pause") pause();
+      else if (action === "next" || action === "fastForward") next();
+      else if (action === "previous" || action === "rewind") previous();
+      else if (action === "stop") stop();
+      else return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [active, visual, onPlayerPage, toggle, pause, next, previous, stop]);
+
+  /**
+   * Minimize, Close or Stop removes the button that had the focus, which would leave the remote with
+   * nothing focused: minimized, the focus goes to "Now playing" in the menu; closed, to the menu's
+   * current page. The video and live players set their own focus.
+   */
+  const shown = useRef({ visual, active });
+  useEffect(() => {
+    const before = shown.current;
+    shown.current = { visual, active };
+    if (onPlayerPage) return;
+    if (before.active && !active) setFocus("nav");
+    else if (before.visual && !visual && active) setFocus("nav-now");
+  }, [visual, active, onPlayerPage]);
+
   const [clipError, setClipError] = useState<string | null>(null);
   const clipKeyForError = current?.clip?.kind === "video" ? current.clip.key : null;
   useEffect(() => setClipError(null), [clipKeyForError]);
@@ -65,8 +104,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   }, [location.pathname, pause, setVisual]);
 
   const apiValue = useMemo<AudioApi>(
-    () => ({ play, pause, stop, toggle, previous, next, attachClips, current, playing, active }),
-    [play, pause, stop, toggle, previous, next, attachClips, current, playing, active],
+    () => ({ play, pause, stop, expand: () => setVisual(true), toggle, previous, next, attachClips, current, playing, active }),
+    [play, pause, stop, setVisual, toggle, previous, next, attachClips, current, playing, active],
   );
 
   const cover = current?.cover ? imageUrl(current.cover, "w500") : null;

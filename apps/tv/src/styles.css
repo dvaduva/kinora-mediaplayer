@@ -163,6 +163,34 @@ code {
   color: var(--text);
 }
 
+.nav-item svg {
+  display: block;
+  width: 1.35rem;
+  height: 1.35rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Search and Settings: round icon buttons, the same height as the text items. */
+.nav-item.nav-icon {
+  padding: 0.7rem;
+}
+
+.nav-item.nav-now {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--accent);
+}
+
+.nav-item.nav-now svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
 .page-head {
   display: flex;
   align-items: baseline;
